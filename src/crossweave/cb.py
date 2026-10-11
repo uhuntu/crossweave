@@ -33,7 +33,8 @@ import subprocess
 import sys
 import time
 
-from .sessions import harden_console_output, read_json, _clip, _display_width
+from .common import harden_console_output, read_json
+from .render import _clip, _display_width
 
 CLI = "cli"
 VSCODE = "vscode"
