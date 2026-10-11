@@ -89,7 +89,13 @@ def _launcher_target(package_dir=None):
     against the installed package (-m crossweave.cli)."""
     if package_dir is None:
         package_dir = os.path.dirname(os.path.abspath(__file__))
-    bin_cw = os.path.join(os.path.dirname(package_dir), "bin", "cw")
+    # src layout: <repo>/src/crossweave -- the repo root is TWO dirs up,
+    # and its bin/cw is the installer's own target. One dirname short and
+    # the clone install misreads as pip, whose -m launchers then die on
+    # the system interpreter (seen live 2026-10-11: three launchers, one
+    # ModuleNotFoundError each).
+    repo_root = os.path.dirname(os.path.dirname(package_dir))
+    bin_cw = os.path.join(repo_root, "bin", "cw")
     if os.path.isfile(bin_cw):
         return "script", bin_cw
     return "module", None

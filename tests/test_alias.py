@@ -59,6 +59,27 @@ def manifest_names():
         return json.load(fh)["names"]
 
 
+# ---------- the layout probe itself ----------
+
+def test_the_probe_reads_a_src_layout_clone(tmp_path):
+    """The math that cost three launchers live: package_dir is
+    <repo>/src/crossweave, so the repo root -- where bin/cw lives -- is
+    two dirnames up, not one."""
+    pkg = tmp_path / "repo" / "src" / "crossweave"
+    pkg.mkdir(parents=True)
+    bin_cw = tmp_path / "repo" / "bin" / "cw"
+    bin_cw.parent.mkdir(parents=True)
+    bin_cw.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+
+    assert alias._launcher_target(str(pkg)) == ("script", str(bin_cw))
+
+
+def test_the_probe_reads_a_pip_layout_as_module(tmp_path):
+    pkg = tmp_path / "venv" / "Lib" / "site-packages" / "crossweave"
+    pkg.mkdir(parents=True)
+    assert alias._launcher_target(str(pkg)) == ("module", None)
+
+
 # ---------- add ----------
 
 def test_add_writes_a_launcher_pointing_at_the_clone(tmp_path):
