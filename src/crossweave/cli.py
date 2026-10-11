@@ -6,7 +6,7 @@ through; zcode has no terminal interface, so `cw zcode` only opens the app.
 import os
 import sys
 
-from . import __version__, search, sessions, update
+from . import __version__, doctor, search, sessions, update
 
 TOOLS = ("claude", "codex", "kimi", "step", "zcode", "codebuddy")
 
@@ -25,6 +25,7 @@ USAGE = f"""Usage: cw <{'|'.join(TOOLS)}> [common-options] [prompt] [-- extra na
        cw <N> <{'|'.join(TOOLS)}> [native-options]
        cw update [tools|all]
        cw stats [--tool T]
+       cw doctor [--tool T]
 
 Common options (translated per-tool, all optional):
   -p, --print              Non-interactive: print response and exit
@@ -74,13 +75,15 @@ Examples:
   cw search "katago" --judge codex   # judge with a different tool
   cw search "katago" --why           # each hit's reason, in full
   cw stats            # session counts per tool, oldest/newest, top directories
+  cw doctor           # per-tool store health: is each store readable, and
+                      #   how many sessions is it actually yielding
 """
 
 # Everything `cw <x>` accepts that is not a tool. The unknown-tool error names
 # this list, and the test asserts it matches what main() actually dispatches,
 # so adding a subcommand cannot leave the message stale the way it was when
 # `stats` and `step` were both missing from it.
-SUBCOMMANDS = ("sessions", "full", "search", "resume", "update", "stats")
+SUBCOMMANDS = ("sessions", "full", "search", "resume", "update", "stats", "doctor")
 
 
 class UsageError(Exception):
@@ -279,6 +282,8 @@ def main():
     if tool == "stats":
         sessions.cmd_stats(rest)
         return
+    if tool == "doctor":
+        sys.exit(doctor.cmd_doctor(rest))
 
     try:
         cmd = build_command(tool, rest)

@@ -101,6 +101,9 @@ cw search "..." --all                      # list every hit, not just the strong
 
 cw stats                    # session counts per tool, oldest/newest, top directories
 cw stats --tool claude      # stats for one tool only
+cw doctor                   # per-tool store health: is each store readable,
+                            #   and how many sessions is it actually yielding
+cw doctor --tool zcode      # one store only
 ```
 
 Sessions a tool started for itself are left out of `cw sessions` and `cw search`: Codex's command-approval reviews (one per command it asks you to approve), step's own `subagent-…` sessions, ZCode's subagent runs (sessions with a `parent_id` in its store), and `cw search`'s own judge runs. None of them is a conversation of yours, and a judge session literally contains every candidate's text, which makes it match nearly any topic. They stay reachable by id (`cw resume codex <id>`), and `cw sessions --all` lists them anyway.
@@ -169,6 +172,8 @@ Anything after a literal `--`, or any flag this wrapper doesn't recognize, passe
   That layout is the documented [session file format](https://pi.dev/docs/latest/session-format) shared by the pi-derived CLIs, so reading these files directly is the sanctioned route rather than a hack — the same reason claude's `projects/*.jsonl` and codex's `sessions/**` are read as they are.
 
 Titles are best-effort (scanned from the first user message / prompt in each session's log). Claude's cwd is read from the session content itself when available, falling back to a guess decoded from the project-directory name only if that's missing. Resuming a codex thread appends a *new* rollout file instead of extending the one it already had, so a single session id can own several; only the newest is read — for the row's timestamp, title, cwd, snippet, and any handoff. A codex fork or subagent thread has no prompt of its own, so it is named after the thread it forked from (`(fork) …`), the way a handoff is named after the session it continues. kimi names its own sessions too, and that name is used when its log holds no text prompt to read — but only when it is a real name, not the `[image]`/`New Session` placeholder it uses until it has one. A message relayed by a bridge (openclaw) behind its `Conversation info: ⟦openclaw:ctx⟧` header is read as what was said after the header, not as the header itself.
+
+`cw doctor` is the companion for the failure mode all this tolerance hides: every reader treats an unreadable store as an empty one, so when a tool changes its on-disk format, sessions silently vanish from the listing with nothing to say why. `cw doctor` asks each store the questions the readers swallow — is it there, does it open, how many sessions come out, and do the numbers add up (transcript files that resolve to no sessions are reported as broken, not empty). It exits non-zero when a store is broken, so it can run in a shell check.
 
 `kimi -S <id>` refuses to resume a session from a different directory than the one it was created in. `cw resume`/`cw <N>` know each session's original directory already (it's the CWD column), so for all the tools they `cd` there automatically before resuming, rather than leaving you to do it by hand (or, for kimi, surfacing its hard error).
 
