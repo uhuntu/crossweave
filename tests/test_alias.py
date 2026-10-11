@@ -61,22 +61,28 @@ def manifest_names():
 
 # ---------- the layout probe itself ----------
 
-def test_the_probe_reads_a_src_layout_clone(tmp_path):
+# The real probe, captured at import before any fixture swaps it out.
+_REAL_PROBE = alias._launcher_target
+
+
+def test_the_probe_reads_a_src_layout_clone(tmp_path, monkeypatch):
     """The math that cost three launchers live: package_dir is
     <repo>/src/crossweave, so the repo root -- where bin/cw lives -- is
     two dirnames up, not one."""
     pkg = tmp_path / "repo" / "src" / "crossweave"
-    pkg.mkdir(parents=True)
+    pkg.mkdir(parents=True, exist_ok=True)
     bin_cw = tmp_path / "repo" / "bin" / "cw"
-    bin_cw.parent.mkdir(parents=True)
+    bin_cw.parent.mkdir(parents=True, exist_ok=True)
     bin_cw.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+    monkeypatch.setattr(alias, "_launcher_target", _REAL_PROBE)
 
     assert alias._launcher_target(str(pkg)) == ("script", str(bin_cw))
 
 
-def test_the_probe_reads_a_pip_layout_as_module(tmp_path):
+def test_the_probe_reads_a_pip_layout_as_module(tmp_path, monkeypatch):
     pkg = tmp_path / "venv" / "Lib" / "site-packages" / "crossweave"
     pkg.mkdir(parents=True)
+    monkeypatch.setattr(alias, "_launcher_target", _REAL_PROBE)
     assert alias._launcher_target(str(pkg)) == ("module", None)
 
 
