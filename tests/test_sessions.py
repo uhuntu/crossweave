@@ -2193,6 +2193,31 @@ def test_resume_by_number_dispatches_correct_session(monkeypatch, tmp_path):
     assert calls == [["kimi", "-S", "session_bbbb", "-p", "hi"]]
 
 
+def test_resume_by_number_warns_when_the_listing_is_old(monkeypatch, tmp_path, capsys):
+    """The row numbers are the ones the listing printed; sessions created
+    since can have moved them. An old cache earns a note, not a refusal --
+    and a fresh cache earns nothing, which is the case every other
+    resume-by-number test exercises by writing the file it resumes from."""
+    import os
+    import time
+
+    cache_file = tmp_path / "last_list.json"
+    cache_file.write_text(json.dumps([{"tool": "kimi", "id": "session_bbbb"}]))
+    old = time.time() - sessions.STALE_LISTING_SECONDS - 60
+    os.utime(cache_file, (old, old))
+    monkeypatch.setattr(sessions, "LIST_CACHE_FILE", str(cache_file))
+    monkeypatch.setattr(sessions, "exec_or_die", lambda argv: None)
+
+    sessions.resume_by_number(1, [])
+
+    err = capsys.readouterr().err
+    assert "note -- this listing is" in err and "re-run `cw` first" in err
+
+    cache_file.write_text(json.dumps([{"tool": "kimi", "id": "session_bbbb"}]))
+    sessions.resume_by_number(1, [])
+    assert "note -- this listing is" not in capsys.readouterr().err
+
+
 def test_resume_by_number_hands_session_to_different_tool(monkeypatch, tmp_path):
     cache_file = tmp_path / "last_list.json"
     cache_file.write_text(json.dumps([{"tool": "kimi", "id": "session_bbbb"}]))

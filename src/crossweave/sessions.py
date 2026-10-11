@@ -213,6 +213,28 @@ def read_list_cache():
             and isinstance(e.get("id"), str)]
 
 
+# A listing cache older than this earns one stderr line on `cw resume <N>`:
+# the row numbers are the ones the listing printed, and sessions created
+# since can have moved them. A hint, not a refusal -- an hour-old listing
+# is usually still exactly what the user meant.
+STALE_LISTING_SECONDS = 3600
+
+
+def _listing_age_warning():
+    """One stderr line when the cached listing is old enough that its row
+    numbers may have drifted.
+
+    The cache file's own mtime is the write time -- no format change, and
+    a freshly written or hand-written cache is simply never stale."""
+    try:
+        written = os.path.getmtime(LIST_CACHE_FILE)
+    except OSError:
+        return
+    if time.time() - written > STALE_LISTING_SECONDS:
+        print(f"cw resume: note -- this listing is {relative_time(written)}; "
+              "if sessions have changed since, re-run `cw` first", file=sys.stderr)
+
+
 def exec_or_die(argv):
     """Run a tool in the current terminal, with a clean missing-tool error.
 
@@ -571,6 +593,7 @@ def handoff_by_number(n, target_tool, extra, forced_cwd=None):
     if not cache:
         print("cw handoff: no session list cached yet -- run `cw sessions` first", file=sys.stderr)
         sys.exit(1)
+    _listing_age_warning()
     if not (1 <= n <= len(cache)):
         print(f"cw handoff: {n} is out of range (last listing had {len(cache)} rows)", file=sys.stderr)
         sys.exit(1)
@@ -1195,6 +1218,7 @@ def resume_by_number(n, extra, forced_cwd=None):
     if not cache:
         print("cw resume: no session list cached yet -- run `cw sessions` first", file=sys.stderr)
         sys.exit(1)
+    _listing_age_warning()
     if not (1 <= n <= len(cache)):
         print(f"cw resume: {n} is out of range (last listing had {len(cache)} rows)", file=sys.stderr)
         sys.exit(1)
