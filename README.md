@@ -76,6 +76,10 @@ Equivalent manual commands for updating crossweave itself, if you'd rather:
 - **curl**: re-run the same one-liner — it fast-forwards the existing clone before relinking
 - **git**: `git -C /path/to/crossweave pull` — the symlinks point straight into the repo, so this alone is enough
 
+## Personal aliases
+
+`cw` is the command the project ships; what your hands type is yours. `cw alias add <name>...` creates launchers in `~/.local/bin` (override with `CROSSWEAVE_BIN_DIR`) pointing at the installation you are running — `cw alias add xx cx ai` is the whole ritual, and the launchers follow that install through `cw update`. `cw alias list` reads the set back; `cw alias remove` undoes it. The names live in `~/.config/crossweave/aliases.json`, and `cw alias add` with no arguments re-creates every name in it — on a fresh machine: install, copy that one file over (or just remember the names), run the one command. Names have to survive every namespace a command name lives in — bin-dir filenames, PyPI-adjacent words (PEP 503), shell words (`#` starts a comment in all three major shells) — so letters, digits, `.`, `_` and `-` only; the installer's own commands (`cw`, `crossweave`, `cb`) are refused, and a file the mechanism did not create is never overwritten. The installer itself never creates or removes personal aliases; this command is their only manager.
+
 ## Usage
 
 ```bash

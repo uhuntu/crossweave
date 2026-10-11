@@ -6,7 +6,7 @@ through; zcode has no terminal interface, so `cw zcode` only opens the app.
 import os
 import sys
 
-from . import __version__, doctor, search, sessions, update
+from . import __version__, alias, doctor, search, sessions, update
 
 TOOLS = ("claude", "codex", "kimi", "step", "zcode", "codebuddy")
 
@@ -26,6 +26,7 @@ USAGE = f"""Usage: cw <{'|'.join(TOOLS)}> [common-options] [prompt] [-- extra na
        cw update [tools|all]
        cw stats [--tool T]
        cw doctor [--tool T]
+       cw alias add <name>... | list | remove <name>...
 
 Common options (translated per-tool, all optional):
   -p, --print              Non-interactive: print response and exit
@@ -77,13 +78,16 @@ Examples:
   cw stats            # session counts per tool, oldest/newest, top directories
   cw doctor           # per-tool store health: is each store readable, and
                       #   how many sessions is it actually yielding
+  cw alias add xx cx  # personal command names -- launchers pointing at this
+                      #   install; `cw alias add` with no names restores every
+                      #   name in the manifest (the fresh-machine move)
 """
 
 # Everything `cw <x>` accepts that is not a tool. The unknown-tool error names
 # this list, and the test asserts it matches what main() actually dispatches,
 # so adding a subcommand cannot leave the message stale the way it was when
 # `stats` and `step` were both missing from it.
-SUBCOMMANDS = ("sessions", "full", "search", "resume", "update", "stats", "doctor")
+SUBCOMMANDS = ("sessions", "full", "search", "resume", "update", "stats", "doctor", "alias")
 
 
 class UsageError(Exception):
@@ -284,6 +288,8 @@ def main():
         return
     if tool == "doctor":
         sys.exit(doctor.cmd_doctor(rest))
+    if tool == "alias":
+        sys.exit(alias.cmd_alias(rest))
 
     try:
         cmd = build_command(tool, rest)
