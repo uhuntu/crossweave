@@ -108,11 +108,16 @@ else
   link_or_launcher "$SCRIPT_DIR/bin/cb" "$BIN_DIR/cb"
 fi
 
-# crossweave is the self-named command; clisweave/aim/aimux are compatibility
-# aliases from the earlier names. ai-sessions is deliberately NOT linked
-# anymore: an active PyPI package of the same name owns that word, and
-# `cw sessions` / `cw resume` is the same surface.
-for alias_name in crossweave clisweave aim aimux; do
+# crossweave is the self-named command; clisweave is last generation's
+# compatibility alias. `ai` is created again on purpose: measured usage on
+# the machines this tool is actually for is 98 `ai` invocations against 7
+# `cw` ones (PSReadLine history, 2026-10-11) -- two renames never changed
+# the hands, and a fresh install without it strands the muscle memory the
+# whole compatibility layer exists to serve. aim/aimux are dropped from the
+# list: zero uses in the same history, two generations old. ai-sessions is
+# deliberately NOT linked anymore: an active PyPI package of the same name
+# owns that word, and `cw sessions` / `cw resume` is the same surface.
+for alias_name in crossweave clisweave ai; do
   link_or_launcher "$SCRIPT_DIR/bin/cw" "$BIN_DIR/$alias_name"
 done
 
