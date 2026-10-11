@@ -24,6 +24,8 @@ No daemon, no config file, no build step — just a small Python package (`src/c
 pip install crossweave
 ```
 
+*XWeave* is this project's reserved alternate spelling — [`pip install xweave`](https://pypi.org/project/xweave/) installs crossweave (the [`packaging/xweave/`](packaging/xweave) forwarding package holds the name; its version mirrors crossweave's).
+
 **Via curl** (macOS/Linux, or Windows with Git Bash/WSL), one line, no manual clone:
 
 ```bash

@@ -35,3 +35,18 @@ jobs:
           $v = & (Join-Path $env:CROSSWEAVE_BIN_DIR "cw.cmd") --version
           Write-Host "launcher reported: $v"
           if ($v -notmatch '^crossweave \d') { throw "unexpected launcher output: $v" }
+      - name: build the xweave forwarding package
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        run: |
+          pip install build
+          python -m build packaging/xweave
+          # not installed: its dependency on crossweave would pull the
+          # published 0.3.0 from PyPI, not this checkout. Building is the
+          # contract -- metadata lands in the wheel, nothing runs from it.
+          python - <<'EOF'
+          import zipfile, glob
+          wheel = glob.glob("packaging/xweave/dist/*.whl")[0]
+          meta = zipfile.ZipFile(wheel).read("xweave-0.4.0.dist-info/METADATA").decode()
+          assert "Requires-Dist: crossweave>=0.4.0" in meta, meta
+          print("wheel METADATA carries the forwarding dependency")
+          EOF

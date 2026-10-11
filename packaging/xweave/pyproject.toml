@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+# The XWeave spelling of crossweave. This package holds the name on PyPI
+# and installs the real thing; the command is `cw`, unchanged. Version
+# mirrors crossweave's so `xweave==N` means "crossweave N" -- bump the two
+# together (see tests/test_xweave_pkg.py, which pins that contract).
+name = "xweave"
+version = "0.4.0"
+description = "The XWeave spelling of crossweave -- installs it, holds the name"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = ["crossweave>=0.4.0"]
+authors = [{ name = "Hunt Lin", email = "uhuntu@gmail.com" }]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX",
+    "Operating System :: Microsoft :: Windows",
+    "Environment :: Console",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
