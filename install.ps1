@@ -122,18 +122,14 @@ if (Test-Path $CbPath) {
 } else {
     Write-Launcher "cb" (Join-Path $ScriptDir "bin\cb")
 }
-# crossweave is the self-named command; clisweave is last generation's
-# compatibility alias. `ai` is created again on purpose: measured usage on
-# the machines this tool is actually for is 98 `ai` invocations against 7
-# `cw` ones (PSReadLine history, 2026-10-11) -- two renames never changed
-# the hands, and a fresh install without it strands the muscle memory the
-# whole compatibility layer exists to serve. aim/aimux are dropped from
-# the list: zero uses in the same history, two generations old. ai-sessions
-# stays deliberately unlinked -- an active PyPI package of the same name
-# owns that word, and `cw sessions` / `cw resume` is the same surface.
+# crossweave is the self-named command; clisweave/aim/aimux are compatibility
+# aliases from the earlier names. ai-sessions is deliberately NOT installed
+# anymore: an active PyPI package of the same name owns that word, and
+# `cw sessions` / `cw resume` is the same surface.
 Write-Launcher "crossweave" (Join-Path $ScriptDir "bin\cw")
 Write-Launcher "clisweave" (Join-Path $ScriptDir "bin\cw")
-Write-Launcher "ai" (Join-Path $ScriptDir "bin\cw")
+Write-Launcher "aim" (Join-Path $ScriptDir "bin\cw")
+Write-Launcher "aimux" (Join-Path $ScriptDir "bin\cw")
 
 $pathDirs = $env:PATH -split ";"
 if ($pathDirs -notcontains $BinDir) {
