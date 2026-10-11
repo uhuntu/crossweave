@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from crossweave import codebuddy, codex, common, sessions, step, zcode
+from crossweave import codebuddy, codex, common, render, sessions, step, zcode
 
 
 @pytest.fixture(autouse=True)
@@ -2780,7 +2780,7 @@ def test_render_rows_can_continue_search_numbering(capsys):
 def terminal_width(monkeypatch):
     def _set(cols):
         monkeypatch.setattr(
-            sessions.shutil, "get_terminal_size",
+            render.shutil, "get_terminal_size",
             lambda fallback=None: os.terminal_size((cols, 24)),
         )
     return _set

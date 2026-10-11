@@ -3,25 +3,27 @@ and codebuddy stores.
 Invoked via `cw sessions` / `cw resume`, or standalone as `ai-sessions`.
 
 The per-tool store readers live in claude.py, codex.py, kimi.py, step.py,
-zcode.py and codebuddy.py,
-on top of the shared primitives in common.py. This module keeps the listing,
-the literal search scan, the handoff engine and the resume flow, and
-re-imports the per-tool names: cli.py, search.py and the tests reach them as
-sessions.<name>, and this is where their results are dispatched and shown.
+zcode.py and codebuddy.py, on top of the shared primitives in common.py;
+the listing table draws itself in render.py, and the byte machinery behind
+`cw search`'s exact pre-pass lives in scan.py. This module keeps the
+commands, the row resolution, the per-row facts (turn counts, the "where
+it left off" line), the handoff engine and the resume flow, and re-imports
+the names from every one of those modules: cli.py, search.py and the tests
+reach them as sessions.<name>, and this namespace is where their patches
+are aimed. That is also why the handoff engine stays here rather than in
+a module of its own: every step of it (exec_or_die, the seed runs, the
+session pickers) is patched through this namespace, and moving it would
+trade one long file for a circular import.
 """
 import codecs
 import glob
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
 import time
-import unicodedata
-
-from . import color
 
 # Re-exported with the per-tool names below: everything that reached these
 # through `sessions` (cli.py, search.py, the tests) keeps doing so.
@@ -134,6 +136,40 @@ from .zcode import (
     zcode_tui_known_missing,
     zcode_workspace_link,
 )
+from .render import (
+    CWD_MIN_WIDTH,
+    ELLIPSIS_CHOICES,
+    LAST_MESSAGE_MAX,
+    LAST_PREFIX_CHOICES,
+    MARK_WIDTH,
+    MARKER_CHOICES,
+    TITLE_MIN_WIDTH,
+    TITLE_WITH_WHY_MAX_WIDTH,
+    TURNS_WIDTH,
+    WHY_MAX_WIDTH,
+    WHY_MIN_WIDTH,
+    _char_width,
+    _clip,
+    _clip_tail,
+    _display_width,
+    _encodable,
+    _pad,
+    _row_marker,
+    _same_saying,
+    render_rows,
+)
+from .scan import (
+    CASE_FOLDING_ESCAPED,
+    CASE_FOLDING_UTF8,
+    LITERAL_SCAN_LIMIT,
+    NEWLINE,
+    _bytes_needle,
+    _file_contains,
+    _holds_case_folder,
+    _literal_pattern,
+    _literal_texts,
+    _scan_lines,
+)
 
 
 
@@ -224,176 +260,6 @@ def session_literal_scan_files(record):
     files = [os.path.join(sdir, "agents", "main", "wire.jsonl")]
     files += sorted(glob.glob(os.path.join(sdir, "agents", "main", "tasks", "*", "output.log")))
     return files
-
-
-def _literal_pattern(topic):
-    # Short names and acronyms should not match ordinary longer words:
-    # "cra" in "craft" was making almost every session an exact match.
-    if len(topic) <= 3 and topic.isascii() and topic.isalpha():
-        return re.compile(r"(?<![A-Za-z0-9])" + re.escape(topic) + r"(?![A-Za-z0-9])", re.I)
-    return re.compile(re.escape(topic), re.I)
-
-
-def _literal_texts(tool, entry):
-    """Search conversation content, excluding metadata and injected context."""
-    kind = entry.get("type") if isinstance(entry, dict) else None
-    if tool == "claude" and kind in ("user", "assistant"):
-        content = dict_field(entry, "message").get("content")
-        if isinstance(content, str):
-            return [content]
-        if not isinstance(content, list):
-            return []
-        return [block_text(block) for block in content
-                if isinstance(block, dict) and block.get("type") in ("text", "thinking")]
-    if tool == "codex" and kind == "response_item":
-        payload = dict_field(entry, "payload")
-        ptype = payload.get("type")
-        if ptype == "message" and payload.get("role") in ("user", "assistant"):
-            texts = _all_text_blocks(payload.get("content"), ("input_text", "text", "output_text"))
-            return [t for t in texts if not t.strip().startswith(CODEX_BOILERPLATE_PREFIXES)]
-        if ptype in ("function_call", "custom_tool_call"):
-            return [_codex_tool_call_text(payload)]
-        if ptype in ("function_call_output", "custom_tool_call_output"):
-            return [payload.get("output", "")]
-    if tool == "step":
-        if kind != "message":
-            return []
-        message = dict_field(entry, "message")
-        if message.get("role") not in ("user", "assistant", "toolResult"):
-            return []
-        texts = []
-        for block in list_field(message, "content"):
-            if not isinstance(block, dict):
-                continue
-            btype = block.get("type")
-            if btype == "text":
-                texts.append(block_text(block))
-            elif btype == "thinking":
-                thinking = block.get("thinking")
-                if isinstance(thinking, str):
-                    texts.append(thinking)
-            elif btype == "toolCall":
-                texts.append(_step_tool_call_text(block))
-        return texts
-    if tool == "codebuddy":
-        # One function covers every record kind the scan wants, because the
-        # snippet reader shares it: messages, calls, and call results.
-        return codebuddy_record_texts(entry, with_tool_output=True)
-    if tool == "kimi":
-        if kind == "turn.prompt":
-            return _all_text_blocks(list_field(entry, "input"))
-        if kind == "context.append_loop_event":
-            event = dict_field(entry, "event")
-            if event.get("type") == "content.part":
-                part = dict_field(event, "part")
-                text = next((v for v in (part.get("text"), part.get("think"))
-                             if isinstance(v, str)), "")
-                return [text]
-            if event.get("type") == "tool.result":
-                output = dict_field(event, "result").get("output", "")
-                return [output if isinstance(output, str) else ""]
-    return []
-
-
-LITERAL_SCAN_LIMIT = 20000
-
-# The only two characters in all of Unicode whose lowercase contains an ASCII
-# letter (enumerated over the whole range, not guessed): U+0130 LATIN CAPITAL
-# LETTER I WITH DOT ABOVE and U+212A KELVIN SIGN. A line holding one of them
-# can match an ASCII topic -- "k" against a Kelvin sign -- without the topic's
-# bytes appearing anywhere in the line, so a cut taken on raw bytes has to let
-# that line through to be decoded and judged by the real pattern instead.
-#
-# Both spellings count: raw UTF-8, and the escaped code point these files use
-# for non-ASCII -- which is how a folding character most often appears, and
-# which hides it from a test taken on the raw bytes.
-CASE_FOLDING_UTF8 = (bytes.fromhex("c4b0"), bytes.fromhex("e284aa"))
-CASE_FOLDING_ESCAPED = (bytes.fromhex("5c7532313261"), bytes.fromhex("5c75313330"))
-
-
-def _holds_case_folder(buf):
-    """True if `buf` holds a character whose lowercase is an ASCII letter, in
-    either spelling. Four plain byte sequences tested with `in` rather than one
-    regex: an alternation over a megabyte of dense CJK costs more than twice
-    as much."""
-    return (any(seq in buf for seq in CASE_FOLDING_UTF8)
-            or any(seq in buf for seq in CASE_FOLDING_ESCAPED))
-
-
-def _bytes_needle(topic):
-    """The topic as a lowercased ASCII byte string, or None for a non-ASCII
-    one -- see _file_contains for what a cut on raw bytes has to watch out
-    for."""
-    return topic.lower().encode("utf-8") if topic.isascii() else None
-
-
-NEWLINE = 10
-
-
-def _scan_lines(fh, chunk_size=1 << 20):
-    """Yield (raw_line, cut_is_safe) for a binary transcript, undecoded.
-
-    Splitting on b"\n" and decoding per line rather than decoding the whole
-    file: a UTF-8 multi-byte sequence never contains 0x0A (continuation bytes
-    are 0x80-0xBF and lead bytes 0xC0 and up), so no character straddles the
-    boundary and the two orders agree.
-
-    cut_is_safe is False for any chunk holding a case folder: those lines are
-    decoded and parsed rather than cut."""
-    carry = b""
-    while True:
-        chunk = fh.read(chunk_size)
-        if not chunk:
-            break
-        buf = carry + chunk
-        safe = not _holds_case_folder(buf)
-        lines = buf.split(bytes((NEWLINE,)))
-        carry = lines.pop()  # the trailing piece is not a complete line yet
-        for line in lines:
-            yield line, safe
-    if carry:
-        yield carry, not _holds_case_folder(carry)
-
-
-def _file_contains(path, pattern, tool=None, needle=None, limit=LITERAL_SCAN_LIMIT):
-    try:
-        with open(path, "rb") as fh:
-            for i, (raw, safe) in enumerate(_scan_lines(fh)):
-                if i > limit:
-                    break
-                if needle is not None and safe:
-                    # An ASCII topic is literal in the line whether or not the
-                    # rest of it is JSON-escaped, and a safe line cannot hold a
-                    # case variant the cut would miss, so its bytes answer the
-                    # question -- at roughly a third of the cost of decoding.
-                    if needle not in raw.lower():
-                        continue
-                # Everything else is parsed rather than cut. A non-ASCII
-                # topic, because these files write non-ASCII as escaped code
-                # points, so the topic is then not a substring of the raw line
-                # even when the line is entirely about it. And an unsafe line,
-                # because there the topic can match through a case fold
-                # without appearing in the line at all, so no test taken on
-                # the line -- bytes or decoded -- can answer.
-                if tool is None:  # kimi background task output.log
-                    texts = [raw.decode("utf-8", "replace")]
-                else:
-                    # A mid-write or otherwise unparseable line is skipped, as
-                    # everywhere else that reads these files.  That is the only
-                    # failure mode left to swallow here: _literal_texts is
-                    # type-guarded, so an exception from it would be a real bug
-                    # rather than dirty data -- and swallowing real bugs is how
-                    # a session silently vanished from search results.
-                    try:
-                        entry = json.loads(raw)
-                    except (ValueError, RecursionError):
-                        continue
-                    texts = _literal_texts(tool, entry)
-                if any(isinstance(t, str) and pattern.search(t) for t in texts):
-                    return True
-    except OSError:
-        pass
-    return False
 
 
 def literal_matches(candidates, topic):
@@ -1129,108 +995,6 @@ def is_tool_started_row(row):
     return row[5] in TOOL_STARTED_TITLES
 
 
-# A reason is prose, and the table is already wide, so it gets the space
-# that's left rather than a share of its own.
-WHY_MAX_WIDTH = 50
-WHY_MIN_WIDTH = 12
-TITLE_MIN_WIDTH = 12
-TITLE_WITH_WHY_MAX_WIDTH = 44
-# The turns column is fixed-width: its values are read while the rows print
-# (see session_turns), so the header cannot wait to measure them.
-TURNS_WIDTH = 5
-CWD_MIN_WIDTH = 8
-# Room for the "▸ " that marks a row belonging to the current directory.
-MARK_WIDTH = 2
-# ...but a legacy code page (GBK, Shift JIS) has no such glyph -- neither
-# does it have "»" -- and printing one there substitutes "?" and looks like
-# a bug. The first marker the output encoding can actually encode wins.
-MARKER_CHOICES = ("▸", "»", ">")
-# What a clipped cell ends (or starts) with, in order of preference.
-ELLIPSIS_CHOICES = ("…", "..")
-# What the "where it left off" line hangs from its row with.
-LAST_PREFIX_CHOICES = ("└", "`")
-# A last message is a preview, not a transcript: one line, same budget as a
-# title.
-LAST_MESSAGE_MAX = 70
-
-
-def _encodable(choices):
-    """The first of `choices` the output stream's encoding can represent.
-
-    The marker, the clip glyph and the "where it left off" connector are
-    what the table draws with, and a legacy code page has no "▸" (nor "»")
-    -- printing one there substitutes "?" and reads as a bug rather than a
-    marker. The ASCII stand-ins say the same thing, and the width math
-    measures whichever one is chosen."""
-    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
-    for glyph in choices:
-        try:
-            glyph.encode(encoding)
-            return glyph
-        except (UnicodeEncodeError, LookupError):
-            continue
-    return choices[-1]
-
-
-def _row_marker():
-    return _encodable(MARKER_CHOICES)
-
-
-def _char_width(ch):
-    """Columns a character occupies: wide (CJK) is two, combining is zero."""
-    if unicodedata.combining(ch):
-        return 0
-    return 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
-
-
-def _display_width(text):
-    return sum(_char_width(c) for c in text)
-
-
-def _pad(text, width):
-    return text + " " * max(0, width - _display_width(text))
-
-
-def _clip(text, width):
-    """Clip to `width` columns, ending in an ellipsis.
-
-    len() counts code points, so a title in Chinese -- or with an emoji --
-    measured narrower than it printed: the row ran past its column and
-    pushed every field after it out of line, and the ellipsis landed on the
-    second half of a wide character. Measuring columns fixes both."""
-    if _display_width(text) <= width:
-        return text
-    ellipsis = _encodable(ELLIPSIS_CHOICES)
-    budget = width - _display_width(ellipsis)
-    out = []
-    used = 0
-    for ch in text:
-        w = _char_width(ch)
-        if used + w > budget:
-            break
-        out.append(ch)
-        used += w
-    return "".join(out) + ellipsis
-
-
-def _clip_tail(text, width):
-    """Clip a path from the left instead: the tail names the project, while
-    the head is the home directory you are already standing in."""
-    if _display_width(text) <= width:
-        return text
-    ellipsis = _encodable(ELLIPSIS_CHOICES)
-    budget = width - _display_width(ellipsis)
-    keep = []
-    used = 0
-    for ch in reversed(text):
-        w = _char_width(ch)
-        if used + w > budget:
-            break
-        keep.append(ch)
-        used += w
-    return ellipsis + "".join(reversed(keep))
-
-
 def session_turns(record):
     """How many user turns a session holds, or None when it can't be counted.
 
@@ -1389,139 +1153,6 @@ def session_last_message(record):
             continue
         return " ".join(text.split())[:LAST_MESSAGE_MAX]
     return None
-
-
-def _same_saying(a, b):
-    """True when two texts are the same saying, one of them clipped.
-
-    A one-turn session's last message *is* its title, and printing both
-    says everything twice. The title is cut at 70 characters, so the last
-    message can be the longer of the two."""
-    return a == b or b.startswith(a) or a.startswith(b)
-
-
-def render_rows(rows, write_cache=True, start=1, notes=None, full_notes=False,
-                sources=None):
-    """rows: list of resolve_row()-shaped tuples, already in display order.
-    Prints the numbered table and, unless write_cache=False, writes the
-    resume cache (cmd_search renders two sections with continuing numbers
-    and writes the cache once for their union).
-
-    notes: optional {(tool, full_id): one-line why} -- `cw search` passes the
-    judge's justification there. Shown as a WHY column, clipped to whatever
-    width the terminal has left after the other fields: one line per hit, so
-    a 10-hit search stays 10 lines. `full_notes` prints the unclipped reason
-    on its own line instead, which is what `--why` is for.
-
-    sources: optional {full_id: light record}, for the listing only -- search
-    rows have none. It buys the TURNS column, counted per row as that row
-    prints, so the cost stays proportional to the rows actually shown rather
-    than to the size of the store."""
-    if not rows:
-        print("No sessions found.")
-        return
-
-    # resolve_row already coerces a cwd that isn't a string; the formatter is
-    # the boundary that would crash on one, so it does not rely on every
-    # caller having done so. It has to happen before the width math below,
-    # which measures every row's cwd: a dict there reached _display_width as
-    # an iterable of its keys.
-    rows = [(*r[:4], r[4] if isinstance(r[4], str) else "?", *r[5:]) for r in rows]
-
-    if write_cache:
-        write_list_cache([{"tool": tool, "id": full_id} for tool, full_id, *_ in rows])
-
-    notes = notes or {}
-    inline_why = bool(notes) and not full_notes
-    here = os.getcwd()
-    # "▸" on the rows that belong to the directory you are standing in: the
-    # question you actually have when you type `cw` in a project.
-    marks = [_same_path(r[4], here) if isinstance(r[4], str) else False for r in rows]
-    marker = _row_marker()
-
-    w_num = len(str(start + len(rows) - 1))
-    w_tool = max(4, max(_display_width(r[0]) for r in rows))
-    w_when = max(4, max(_display_width(r[2]) for r in rows))
-    w_id = max(2, max(_display_width(r[3]) for r in rows))
-    # The reason needs room, so the working directory gives some up.
-    w_cwd = min(24 if inline_why else 40, max(3, max(_display_width(r[4]) for r in rows)))
-
-    show_turns = bool(sources) and not inline_why
-    show_last = show_turns
-    if show_turns:
-        # Fit the plumbing before the title: the cwd is the most compressible
-        # (a path's tail still names the project), and if even a floor-width
-        # title does not fit, the turns column goes entirely -- the title is
-        # the one column that has to stay readable. The title itself is never
-        # clipped here; a long one wraps, as it always has.
-        overhead = MARK_WIDTH + w_num + w_tool + w_when + w_id + 10  # 5 gaps
-        room = shutil.get_terminal_size((100, 24)).columns - overhead - (TURNS_WIDTH + 2)
-        w_cwd = min(w_cwd, max(CWD_MIN_WIDTH, room - TITLE_MIN_WIDTH))
-        if shutil.get_terminal_size((100, 24)).columns - overhead - (TURNS_WIDTH + 2) - w_cwd < TITLE_MIN_WIDTH:
-            show_turns = False
-            w_cwd = min(w_cwd, max(CWD_MIN_WIDTH,
-                                   shutil.get_terminal_size((100, 24)).columns - overhead - TITLE_MIN_WIDTH))
-
-    w_title = 0
-    w_why = 0
-    if inline_why:
-        fixed = MARK_WIDTH + w_num + w_tool + w_when + w_id + w_cwd + 10  # 2 spaces between fields
-        spare = shutil.get_terminal_size((100, 24)).columns - fixed
-        if spare >= TITLE_MIN_WIDTH + WHY_MIN_WIDTH + 2:
-            # Roughly even, leaning to the reason: a title that's clipped to a
-            # few characters is still recognizable from its first words, while
-            # a reason clipped that short says nothing.
-            w_title = max(TITLE_MIN_WIDTH, min(TITLE_WITH_WHY_MAX_WIDTH, int(spare * 0.45)))
-            w_why = max(WHY_MIN_WIDTH, min(WHY_MAX_WIDTH, spare - w_title - 2))
-        else:
-            # Too narrow for both floors: split what's left rather than push
-            # the row past the terminal edge and wrap it.
-            w_why = max(1, spare // 2)
-            w_title = max(1, spare - w_why - 2)
-
-    header = (f"{'':>{MARK_WIDTH}}{'#':>{w_num}}  {'TOOL':<{w_tool}}  {'WHEN':<{w_when}}  "
-              f"{'ID':<{w_id}}  {'CWD':<{w_cwd}}  ")
-    if show_turns:
-        header += f"{'TURNS':>{TURNS_WIDTH}}  "
-    header += "TITLE"
-    if inline_why:
-        header += f"{'':<{max(0, w_title - 5)}}  WHY"
-    print(color.paint(header, color.BOLD))
-    indent = " " * (w_num + 2)
-    # The "where it left off" line hangs off the row number rather than under
-    # the title: the title column starts most of the way across the table, and
-    # a preview with 27 characters to live in is not a preview. This is where
-    # `--why` puts its own continuation line, for the same reason.
-    last_prefix = _encodable(LAST_PREFIX_CHOICES)
-    last_room = max(10, shutil.get_terminal_size((100, 24)).columns
-                    - len(indent) - _display_width(last_prefix) - 1)
-    for n, (tool, full_id, when, sid, cwd_show, title) in enumerate(rows, start=start):
-        mine = marks[n - start]
-        cwd_disp = _clip_tail(cwd_show, w_cwd)
-        line = (color.paint(marker, color.BOLD) + " " if mine else " " * MARK_WIDTH)
-        line += f"{n:>{w_num}}  "
-        line += color.paint(_pad(tool, w_tool), color.tool_color(tool)) + "  "
-        line += color.paint(_pad(when, w_when), color.DIM) + "  "
-        line += color.paint(_pad(sid, w_id), color.DIM) + "  "
-        line += (color.paint(_pad(cwd_disp, w_cwd), color.BOLD) if mine
-                 else _pad(cwd_disp, w_cwd)) + "  "
-        if show_turns:
-            turns = session_turns(sources[full_id]) if full_id in sources else None
-            shown = "?" if turns is None else str(turns)
-            line += color.paint(f"{shown:>{TURNS_WIDTH}}", color.DIM) + "  "
-        if inline_why:
-            line += f"{_clip(title, w_title):<{w_title}}  {_clip(notes.get((tool, full_id), ''), w_why)}"
-        else:
-            line += title
-        print(line.rstrip())
-        if show_last:
-            last = session_last_message(sources[full_id]) if full_id in sources else None
-            if last and not _same_saying(last, title):
-                print(color.paint(f"{indent}{last_prefix} {_clip(last, last_room)}",
-                                  color.DIM))
-        why = notes.get((tool, full_id))
-        if full_notes and why:
-            print(f"{indent}why: {why}")
 
 
 # A listing row number: ASCII digits only. str.isdigit() also accepts
