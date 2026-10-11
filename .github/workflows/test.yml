@@ -32,4 +32,6 @@ jobs:
           # dies on Restricted -- the factory default).
           $env:CROSSWEAVE_REPO_URL = "file:///" + ($env:GITHUB_WORKSPACE -replace '\\', '/')
           iex (Get-Content -Raw ./install.ps1)
-          & (Join-Path $env:CROSSWEAVE_BIN_DIR "cw.cmd") --version
+          $v = & (Join-Path $env:CROSSWEAVE_BIN_DIR "cw.cmd") --version
+          Write-Host "launcher reported: $v"
+          if ($v -notmatch '^crossweave \d') { throw "unexpected launcher output: $v" }

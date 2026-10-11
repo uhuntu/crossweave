@@ -29,14 +29,24 @@ $BinDir = if ($env:CROSSWEAVE_BIN_DIR) { $env:CROSSWEAVE_BIN_DIR } elseif ($env:
 # An iex'd string carries no policy; CROSSWEAVE_INSTALL_FROM hands the
 # re-entered pass its script directory, since $PSCommandPath is empty
 # there too.
+#
+# Both passes run in the caller's own session when pasted into a live
+# PowerShell, so this script may never call `exit`: it would close the
+# window that ran it -- the "installer flashed away" report, which was
+# the SUCCESS path flashing (seen live 2026-10-11). Failures throw (a
+# loud red error; the session survives; -File still exits 1) and the
+# re-entry returns. The env var is consumed on entry rather than cleaned
+# up on exit, so a throw cannot leave it behind and a second run in the
+# same window re-derives it -- otherwise the leftover var would silently
+# skip the pull and relink stale code.
 if ($PSCommandPath -and (Test-Path (Join-Path (Split-Path $PSCommandPath -Parent) "bin\cw"))) {
     $ScriptDir = Split-Path $PSCommandPath -Parent
 } elseif ($env:CROSSWEAVE_INSTALL_FROM -and (Test-Path (Join-Path $env:CROSSWEAVE_INSTALL_FROM "bin\cw"))) {
     $ScriptDir = $env:CROSSWEAVE_INSTALL_FROM
+    Remove-Item Env:\CROSSWEAVE_INSTALL_FROM -ErrorAction SilentlyContinue
 } else {
     if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-        Write-Error "crossweave: git is required to fetch the repo. Install Git for Windows and re-run."
-        exit 1
+        throw "crossweave: git is required to fetch the repo. Install Git for Windows and re-run."
     }
     $RepoDir = if ($env:CROSSWEAVE_REPO_DIR) { $env:CROSSWEAVE_REPO_DIR } elseif ($env:CLISWEAVE_REPO_DIR) { $env:CLISWEAVE_REPO_DIR } elseif ($env:AIMUX_REPO_DIR) { $env:AIMUX_REPO_DIR } else { Join-Path $HOME ".local\share\crossweave" }
     if (Test-Path (Join-Path $RepoDir ".git")) {
@@ -45,15 +55,14 @@ if ($PSCommandPath -and (Test-Path (Join-Path (Split-Path $PSCommandPath -Parent
             # install.sh aborts here under set -e; silently installing
             # whatever the clone already had is the one outcome worse than
             # stopping, since the whole point of re-running is the update.
-            Write-Error "crossweave: could not fast-forward the clone at $RepoDir. Resolve the git error above (or point CROSSWEAVE_REPO_DIR somewhere fresh) and re-run."
-            exit 1
+            throw "crossweave: could not fast-forward the clone at $RepoDir. Resolve the git error above (or point CROSSWEAVE_REPO_DIR somewhere fresh) and re-run."
         }
     } else {
         git clone --depth 1 $RepoUrl $RepoDir
     }
     $env:CROSSWEAVE_INSTALL_FROM = $RepoDir
     Invoke-Expression (Get-Content -Raw (Join-Path $RepoDir "install.ps1"))
-    exit $LASTEXITCODE
+    return
 }
 
 New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
@@ -80,8 +89,7 @@ function Get-WorkingPython {
 
 $Python = Get-WorkingPython
 if (-not $Python) {
-    Write-Error "crossweave: no working Python 3 interpreter found (tried python, python3, py -3). Install Python from https://python.org and re-run."
-    exit 1
+    throw "crossweave: no working Python 3 interpreter found (tried python, python3, py -3). Install Python from https://python.org and re-run."
 }
 $PyArgsStr = ($Python.Args -join " ")
 
