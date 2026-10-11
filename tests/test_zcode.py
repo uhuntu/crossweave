@@ -128,6 +128,46 @@ def test_light_records_read_id_cwd_title_and_times(tmp_path):
     assert r["path"] is None  # the transcript is in the store, not a file
 
 
+def test_newest_session_since_picks_by_created_not_updated(tmp_path, monkeypatch):
+    """The desktop app can rewrite an older session during the seed run (its
+    auto-titler, a concurrent session here): the pick must go by
+    time_created, or the handoff lands in the wrong conversation."""
+    workdir = tmp_path / "JSearch"
+    workdir.mkdir()
+    monkeypatch.chdir(workdir)
+    build_db(tmp_path).session(
+        # touched (updated) well after the seed started, but created long
+        # before it -- the updated time must not win it the pick
+        SID, cwd=str(workdir), created=MS - 60_000, updated=MS + 90_000,
+    ).session(
+        SID2, cwd=str(workdir), created=MS + 10_000, updated=MS + 15_000,
+    ).done()
+    assert zcode.zcode_newest_session_since(MS // 1000) == SID2
+
+
+def test_cli_on_path_recognizes_the_windows_npm_shim(monkeypatch, tmp_path):
+    """The npm CLI on Windows is a .cmd shim, whose first bytes ('@e') no
+    header read can mistake for a script wrapper -- and no desktop install
+    drops a zcode.cmd on PATH. The desktop's own exe stays desktop."""
+    shim = tmp_path / "zcode.cmd"
+    shim.write_text("@echo off\r\nnode zcode.js %*\r\n", encoding="ascii")
+    monkeypatch.setattr(zcode.shutil, "which", lambda name: str(shim))
+    assert zcode.zcode_cli_on_path()
+
+    script = tmp_path / "zcode"
+    script.write_bytes(b"#!/usr/bin/env node\n")
+    monkeypatch.setattr(zcode.shutil, "which", lambda name: str(script))
+    assert zcode.zcode_cli_on_path()
+
+    desktop = tmp_path / "ZCode.exe"
+    desktop.write_bytes(b"MZ" + b"\x00" * 64)
+    monkeypatch.setattr(zcode.shutil, "which", lambda name: str(desktop))
+    assert not zcode.zcode_cli_on_path()
+
+    monkeypatch.setattr(zcode.shutil, "which", lambda name: None)
+    assert not zcode.zcode_cli_on_path()
+
+
 def test_a_missing_store_is_an_empty_listing_not_a_crash(tmp_path):
     # ZCODE_DB points at a nonexistent path via the autouse fixture
     assert zcode.zcode_light_records() == []
@@ -678,7 +718,10 @@ def test_resume_falls_back_to_the_deep_link_without_the_cli(monkeypatch, tmp_pat
 
     assert launched and launched[0][0] == "zcode"
     link = launched[0][1]
-    assert link.startswith("zcode://workspace/open?path=%2F")
+    # The route shape, before the percent-encoding -- whose spelling follows
+    # the platform's own path separators (encodeURIComponent("C:\\...") gives
+    # %5C, not %2F), so the encoding itself is asserted against the builder.
+    assert link.startswith("zcode://workspace/open?path=")
     assert link == sessions.zcode_workspace_link(str(workdir))
     err = capsys.readouterr().err
     assert "pick the session in its task list" in err

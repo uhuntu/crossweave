@@ -283,6 +283,21 @@ def test_listing_merges_all_three_clients_newest_first(tmp_path, capsys):
     assert "3 session(s): cli=1, vscode=1, desktop=1" in out
 
 
+def test_fit_measures_cjk_by_display_width():
+    """A Chinese title or cwd occupies two columns per character; the cell
+    must clip and pad by columns, not code points, or the row pushes every
+    field after it out of line (the same fix the cw renderer got)."""
+    from crossweave.sessions import _display_width
+
+    # 30 characters = 60 columns, over the 46-column title cell
+    assert _display_width(cb.fit("修" * 30, 46, "l")) <= 46
+    # a CJK cell pads out to the full column width, not len(s) short of it
+    assert _display_width(cb.fit("修修", 8, "l")) == 8
+    # ASCII clipping is unchanged: w-1 characters plus the ellipsis
+    assert cb.fit("a" * 50, 46, "l") == "a" * 45 + "…"
+    assert cb.fit("ab", 8, "r") == "      ab"
+
+
 def test_listing_filters_by_client(tmp_path, capsys):
     three_clients(tmp_path)
     cb.main(["--client", "desktop"])
@@ -510,6 +525,24 @@ def test_resume_runs_the_cli_with_r_in_the_sessions_own_directory(tmp_path, real
     listing_with_cli(tmp_path, real_dir)
     assert cb.main(["resume", "1"]) == 0
     assert fake_tools["call"] == [(["/bin/codebuddy.cmd", "-r", CLI_SID], real_dir)]
+
+
+def test_resume_refuses_an_id_carrying_shell_metacharacters(tmp_path, real_dir, fake_tools, capsys):
+    """The id reaches `codebuddy -r` as an argv element, and on Windows that
+    argv is re-parsed by cmd.exe whenever the CLI is a .cmd shim, however
+    Python quotes it. The store is data, so the id is checked before it is
+    ever spawned -- collect mints ids from whatever sessionId the records
+    carry, and that field is not CodeBuddy's to trust."""
+    cli_store(tmp_path, "s", "a.jsonl", "".join(
+        json.dumps(x) + "\n" for x in [
+            {"id": "m1", "timestamp": T0, "type": "message", "role": "user",
+             "content": [{"type": "input_text", "text": "resume me"}],
+             "sessionId": 'x"&calc', "cwd": real_dir},
+        ]), raw=True)
+    cb.main([])
+    assert cb.main(["resume", "1"]) == 1
+    assert fake_tools == {"call": [], "popen": []}
+    assert "unexpected characters" in capsys.readouterr().err
 
 
 def test_resume_dry_run_touches_nothing(tmp_path, real_dir, fake_tools, capsys):

@@ -5,7 +5,7 @@ mid-write, carry a pasted binary, hold an explicit JSON null where a message
 should be, or be truncated in the middle of a multi-byte character. None of
 that is an error worth dying over: the tools that write these files are free
 to change shape without warning, and a wrapper that crashes on one odd
-record takes `ai`, `ai search`, `ai resume` and every handoff down with it
+record takes `cw`, `cw search`, `cw resume` and every handoff down with it
 (and then cannot list to tell you which file did it).
 
 These tests hold each reader to that contract.

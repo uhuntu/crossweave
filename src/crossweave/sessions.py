@@ -543,14 +543,20 @@ def _kimi_newest_session_since(started):
     """Newest kimi session created at/after `started` (epoch seconds) whose
     home is the current directory -- the session a just-finished `kimi -p`
     run persisted, recovered without relying on the exact wording of kimi's
-    resume-hint line."""
+    resume-hint line.
+
+    Filtered by the record's `started` (createdAt), not by `ts`
+    (updatedAt): a state rewrite during the seed run -- kimi's own titler,
+    a concurrent session in this directory -- refreshes `ts` on a session
+    created long before, and resuming that one would put the handoff into
+    the wrong conversation."""
     best_id = None
     best_ts = None
     for rec in kimi_light_records(show_all=True):
         cwd = rec.get("cwd")
         if not cwd or os.path.realpath(cwd) != os.path.realpath(os.getcwd()):
             continue
-        ts = rec.get("ts") or 0
+        ts = rec.get("started") or 0
         # ISO-string state.json timestamps truncate to whole seconds, so a
         # session created between `started` and the next second can round
         # slightly below it

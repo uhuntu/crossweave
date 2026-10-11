@@ -84,7 +84,7 @@ def test_run_update_command_routes_a_windows_shim_through_the_shell(monkeypatch)
 def test_handoff_by_number_rejects_a_cwd_that_is_not_a_directory(monkeypatch, tmp_path, capsys):
     """`ai 3 codex --cwd /typo` exported the transcript and started codex in
     the current directory with no warning, while
-    `ai resume claude <id> --cwd /typo` rejected it cleanly."""
+    `cw resume claude <id> --cwd /typo` rejected it cleanly."""
     monkeypatch.setattr(sessions, "LIST_CACHE_FILE", str(tmp_path / "last_list.json"))
     sessions.write_list_cache([{"tool": "claude", "id": "abc"}])
     monkeypatch.setattr(sessions, "perform_handoff",

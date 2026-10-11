@@ -1,6 +1,6 @@
 """Terminal color, decided once and off unless the terminal asks for it.
 
-The listing is the one screen you look at every time you type `ai`, and a
+The listing is the one screen you look at every time you type `cw`, and a
 table where every column weighs the same gives the eye nowhere to go. So
 the tool column gets a hue, the plumbing (id, when, turns) goes dim, and
 the rows that belong to the directory you are standing in stand out.

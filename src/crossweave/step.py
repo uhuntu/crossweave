@@ -98,7 +98,7 @@ def step_light_records(show_all=False):
     # reads through and the README offers as the way to relocate the store,
     # or step's own --session-dir -- and it writes the file straight at the
     # root. Only `*/*.jsonl` was globbed, so with either set every session
-    # step created was invisible here: `ai sessions --tool step` printed an
+    # step created was invisible here: `cw sessions --tool step` printed an
     # empty table, and a title lookup or a handoff into that store read
     # nothing.
     for path in (glob.glob(os.path.join(STEP_SESSIONS, "*", "*.jsonl"))
@@ -232,7 +232,7 @@ def step_title_with_name(path):
 
 def step_handoff_messages(path):
     """Every user and assistant message in a step session, in order, as the
-    (role, text) pairs `ai handoff` exports.
+    (role, text) pairs `cw handoff` exports.
 
     A toolResult message is the tool's own output, which the receiving session
     can reproduce by running the tool again; the thinking blocks are the
@@ -284,7 +284,7 @@ def _step_tool_call_text(block):
 
 
 def step_snippet(path, max_messages=12, max_chars=800):
-    """Longer excerpt than step_title's single prompt, for `ai search`.
+    """Longer excerpt than step_title's single prompt, for `cw search`.
 
     Includes assistant text and the model's thinking, not just user prompts,
     for the reason claude_snippet and kimi_snippet do: the substance of an

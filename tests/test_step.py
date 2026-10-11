@@ -105,7 +105,7 @@ def test_a_store_step_writes_flat_is_read_too(tmp_path):
     through and the README offers as the way to relocate the store, or step's
     own --session-dir -- and step writes the file straight at the root
     instead (checked against both). Every session it then created was
-    invisible here: `ai sessions --tool step` printed an empty table, and a
+    invisible here: `cw sessions --tool step` printed an empty table, and a
     title lookup or a handoff into that store read nothing."""
     store = tmp_path / "flat"
     store.mkdir()
@@ -493,7 +493,7 @@ def test_a_session_handed_to_step_is_named_after_its_source(monkeypatch, tmp_pat
     assert sessions.handoff_source(rec["path"], "step") == ("claude", "019abc123456")
 
     # With the source session present in its own store, the row inherits its
-    # topic rather than showing the seed's "ai handoff from claude".
+    # topic rather than showing the seed's "cw handoff from claude".
     src = tmp_path / "claude-src.jsonl"
     src.write_text(json.dumps(
         {"type": "user", "cwd": "/home/hunt",
@@ -531,7 +531,7 @@ def test_resume_passes_the_id_to_step_not_to_the_previous_tool(monkeypatch, tmp_
 
 def test_resume_switches_to_the_sessions_directory(monkeypatch, tmp_path):
     """step, like the other three, ties a session to the directory it ran in,
-    and `ai resume` knows that directory already."""
+    and `cw resume` knows that directory already."""
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.chdir(tmp_path)  # somewhere that is *not* the session's home
@@ -547,7 +547,7 @@ def test_resume_switches_to_the_sessions_directory(monkeypatch, tmp_path):
 
 
 def test_search_gathers_step_candidates(monkeypatch, tmp_path):
-    """A listing is not the only consumer of the light records: `ai search`
+    """A listing is not the only consumer of the light records: `cw search`
     builds its candidate list from the same three-way gather, and a tool that
     is only wired into the listing is silently unsearchable."""
     from crossweave import search

@@ -8,7 +8,7 @@ from crossweave import common, search, sessions
 def test_judge_calls_dont_persist_a_visible_session():
     """Regression test: without an ephemeral/no-persist flag, the judge
     call's own prompt (the whole candidate list) gets saved as a real
-    session and shows up in `ai`/`ai full` with the raw prompt as its
+    session and shows up in `cw`/`cw full` with the raw prompt as its
     title -- the tool polluting the listing it reads from."""
     assert "--no-session-persistence" in search.JUDGE_CMD["claude"]
     assert "--ephemeral" in search.JUDGE_CMD["codex"]
@@ -18,7 +18,7 @@ def test_step_judge_allows_tools_without_an_approval_ui():
     """Regression test: the judge runs non-interactively with no approval
     UI, where step falls back to *deny* -- one incidental tool call then
     blocks and takes the whole batch down (exit 1), losing its matches.
-    Real: `ai search B_NFC_LOCATION_27` lost 3 of 7 batches this way."""
+    Real: `cw search B_NFC_LOCATION_27` lost 3 of 7 batches this way."""
     step_cmd = search.JUDGE_CMD["step"]
     assert "--non-interactive-approval" in step_cmd
     assert step_cmd[step_cmd.index("--non-interactive-approval") + 1] == "allow"
@@ -165,10 +165,10 @@ def test_gather_candidates_respects_tool_filter(monkeypatch):
 
 
 def test_gather_candidates_passes_all_through_to_the_stores(monkeypatch):
-    """`ai search --all` means what it means for `ai sessions`: include
+    """`cw search --all` means what it means for `cw sessions`: include
     archived sessions. It used to be parsed by cmd_search and then dropped
     here, leaving `kimi_light_records(show_all=False)` -- so a session you
-    could list with `ai sessions --all` was unreachable by `ai search --all`
+    could list with `cw sessions --all` was unreachable by `cw search --all`
     in both the exact and the semantic pass."""
     seen = {}
     monkeypatch.setattr(sessions, "claude_light_records", lambda: [])
@@ -355,7 +355,7 @@ def test_cmd_search_omits_sessions_a_tool_started_for_itself(monkeypatch, capsys
     nearly any topic; a codex approval review contains the transcript it
     reviewed. Both are byproducts -- they shouldn't be searched at all."""
     fake_candidates = [
-        {"tool": "codex", "id": "id-judge", "ts": 3, "title": "ai search judge"},
+        {"tool": "codex", "id": "id-judge", "ts": 3, "title": "cw search judge"},
         {"tool": "codex", "id": "id-approval", "ts": 2, "title": "codex approval review"},
         {"tool": "codex", "id": "id-real", "ts": 1, "title": "Find isnfcon"},
     ]
@@ -378,7 +378,7 @@ def test_cmd_search_omits_sessions_a_tool_started_for_itself(monkeypatch, capsys
 
     err = capsys.readouterr().err
     assert "Scanning 1 sessions" in err
-    assert "ai search judge" not in prompts[0]
+    assert "cw search judge" not in prompts[0]
     assert "approval review" not in prompts[0]
     assert "Find isnfcon" in prompts[0]
     assert [row[1] for row in rendered[0]] == ["id-real"]
@@ -1192,9 +1192,9 @@ def _make_kimi_session(kimi_home, tmp_path, name, *, archived=False, text="aria2
 
 
 def test_cmd_search_all_reaches_archived_kimi_sessions(monkeypatch, tmp_path, capsys):
-    """End to end: an archived session is invisible to `ai search` by
+    """End to end: an archived session is invisible to `cw search` by
     default, and `--all` is what makes it findable -- the same contract
-    `ai sessions --all` has. The flag used to be parsed and then dropped on
+    `cw sessions --all` has. The flag used to be parsed and then dropped on
     the way to the candidate list."""
     kimi_home = tmp_path / ".kimi-code"
     kimi_home.mkdir()

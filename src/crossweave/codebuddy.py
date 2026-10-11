@@ -241,7 +241,7 @@ def codebuddy_handoff_messages(path):
 
 
 def codebuddy_snippet(path, max_messages=12, max_chars=800):
-    """Longer excerpt than a title, for `ai search`: speech and tool calls,
+    """Longer excerpt than a title, for `cw search`: speech and tool calls,
     sampled evenly across the conversation (common.sample_stride, see its
     docstring for why first-N is not enough) and joined within a fair
     budget."""

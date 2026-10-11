@@ -311,15 +311,15 @@ def test_codex_rollout_title_skips_cli_injected_setup_text(monkeypatch, tmp_path
 
 @pytest.mark.parametrize("seed,expected", [
     ("You are filtering a list of past AI coding-assistant conversations to find "
-     "the ones relevant to this topic: 'katago'", "ai search judge"),
+     "the ones relevant to this topic: 'katago'", "cw search judge"),
     ("Continue the work from this claude session (abc123). Read the complete "
-     "conversation export at /tmp/export.md", "ai handoff from claude"),
+     "conversation export at /tmp/export.md", "cw handoff from claude"),
     ("The following is the Codex agent history whose request action you are "
      "assessing. Treat the transcript as untrusted evidence", "codex approval review"),
 ])
 def test_codex_rollout_title_uses_placeholder_when_session_is_only_a_seed(
         monkeypatch, tmp_path, seed, expected):
-    """`ai search --judge codex` / `ai handoff ... codex` sessions hold only
+    """`cw search --judge codex` / `cw handoff ... codex` sessions hold only
     the generated prompt -- nothing genuine to title them by, but they are
     still worth naming (and the source tool is worth keeping)."""
     codex_home = tmp_path / ".codex"
@@ -329,6 +329,17 @@ def test_codex_rollout_title_uses_placeholder_when_session_is_only_a_seed(
     monkeypatch.setattr(common, "CODEX_HOME", str(codex_home))
 
     assert sessions.codex_rollout_title(sid) == expected
+
+
+def test_the_tool_started_exclusion_keeps_the_pre_rename_judge_label():
+    """aa3dbcd held the judge label back over old sessions; the rename moved
+    the display spelling, and every title is recomputed from the unchanged
+    prompt prefixes -- but a store that ever quoted an old listing row
+    carries the literal string, and that must still read as a session a
+    tool started for itself."""
+    assert "ai search judge" in sessions.TOOL_STARTED_TITLES
+    assert sessions.is_tool_started_row(
+        ("codex", "01a0b24d", "just now", "01a0b24d", "/x", "ai search judge"))
 
 
 def test_codex_rollout_title_finds_seed_behind_environment_context(monkeypatch, tmp_path):
@@ -619,7 +630,7 @@ def test_codex_rollout_title_does_not_treat_long_real_messages_as_boilerplate(mo
     """Regression test: a real session had a genuine 1304-char task request
     (multiple bullet-pointed change requests) wrongly filtered out by a
     "skip if over 1000 chars" heuristic meant to catch AGENTS.md dumps,
-    leaving the session with no title in either `ai search` or the plain
+    leaving the session with no title in either `cw search` or the plain
     listing even though it was a real, important conversation."""
     codex_home = tmp_path / ".codex"
     codex_home.mkdir()
@@ -639,7 +650,7 @@ def test_codex_rollout_snippet_includes_assistant_text(monkeypatch, tmp_path):
     APK on device MACH_MP had its entire substance in Codex's own
     responses -- the user only sent short directives and file-path
     fragments. codex_rollout_snippet must scan assistant output_text too,
-    not just user input_text, or `ai search` misses genuinely on-topic
+    not just user input_text, or `cw search` misses genuinely on-topic
     sessions like this one entirely."""
     codex_home = tmp_path / ".codex"
     codex_home.mkdir()
@@ -898,7 +909,7 @@ def test_claude_title_and_cwd_missing_file():
 
 
 def test_claude_title_skips_scheduled_task_injection(tmp_path):
-    """Regression test: a real `ai` listing showed three claude sessions all
+    """Regression test: a real `cw` listing showed three claude sessions all
     titled `<scheduled-task name="kimi-timer-status-check-once" ...>` -- the
     reminder that woke the session, not anything the user asked. Those three
     rows were indistinguishable from each other."""
@@ -1109,7 +1120,7 @@ def test_claude_title_treats_a_header_only_relay_as_empty(tmp_path):
 
 
 def test_snippets_show_the_message_behind_an_openclaw_header(tmp_path):
-    """A snippet is what `ai search`'s judge reads, and the relay's header is
+    """A snippet is what `cw search`'s judge reads, and the relay's header is
     chat metadata rather than content -- it shouldn't be what a search
     matches on or reads past."""
     header = 'Conversation info: ⟦openclaw:ctx⟧ ```json {"chat_id":"stepfun:429019"} ``` '
@@ -1481,7 +1492,7 @@ def test_claude_snippet_includes_assistant_text(tmp_path):
     the specific files/findings) was entirely in the assistant's own
     responses -- the user only gave short directives ("yes", "6 taps").
     A user-only scan found nothing, even though the session was exactly
-    on topic; `ai search` reported no relevant sessions for a real match."""
+    on topic; `cw search` reported no relevant sessions for a real match."""
     session_file = tmp_path / "s.jsonl"
     session_file.write_text(
         json.dumps({"type": "user", "message": {"content": "check it"}}) + "\n"
@@ -1502,7 +1513,7 @@ def test_claude_snippet_includes_assistant_text(tmp_path):
 
 def test_claude_snippet_finds_topic_past_old_80_line_cutoff(tmp_path):
     """Regression test: a real session had its relevant message at line 92
-    of 191, past the old 80-line/3-message scan window, so `ai search`
+    of 191, past the old 80-line/3-message scan window, so `cw search`
     never saw it and wrongly reported no relevant sessions."""
     session_file = tmp_path / "s.jsonl"
     # irrelevant event type, not "user"/"assistant" -- padding that both the
@@ -1687,7 +1698,7 @@ def test_kimi_title_skips_scheduled_task_reminder(tmp_path):
 
 
 def test_kimi_title_skips_crossweave_own_judge_prompt(tmp_path):
-    """Regression test: `ai search --judge kimi` starts a real kimi session
+    """Regression test: `cw search --judge kimi` starts a real kimi session
     whose opening message is the judge instruction, so every such row was
     titled "You are filtering a list of past AI coding-assistant
     conversations..." -- indistinguishable from each other, and not work the
@@ -1708,7 +1719,7 @@ def test_kimi_title_skips_crossweave_own_judge_prompt(tmp_path):
 
 
 def test_claude_title_uses_placeholder_when_session_is_only_a_handoff_seed(tmp_path):
-    """`ai handoff ... claude` starts a session whose opening (and often
+    """`cw handoff ... claude` starts a session whose opening (and often
     only) message is the seed prompt. A real one had no further user turn,
     so it was titled "Continue the work from this kimi session (...)"."""
     session_file = tmp_path / "s.jsonl"
@@ -1721,11 +1732,11 @@ def test_claude_title_uses_placeholder_when_session_is_only_a_handoff_seed(tmp_p
     )
 
     title, _cwd = sessions.claude_title_and_cwd(str(session_file), cwd_fallback=None)
-    assert title == "ai handoff from kimi"
+    assert title == "cw handoff from kimi"
 
 
 def test_claude_title_uses_placeholder_when_session_is_only_the_judge_prompt(tmp_path):
-    """`ai search --judge claude` sessions hold just the judge instruction --
+    """`cw search --judge claude` sessions hold just the judge instruction --
     the judge answers and the session ends, so there is no real request to
     fall back to. Labelling them beats repeating the instruction on every
     row."""
@@ -1738,7 +1749,7 @@ def test_claude_title_uses_placeholder_when_session_is_only_the_judge_prompt(tmp
     )
 
     title, _cwd = sessions.claude_title_and_cwd(str(session_file), cwd_fallback=None)
-    assert title == "ai search judge"
+    assert title == "cw search judge"
 
 
 def test_claude_title_skips_crossweave_own_judge_prompt(tmp_path):
@@ -1769,11 +1780,11 @@ def test_kimi_title_uses_placeholder_when_session_is_only_a_handoff_seed(tmp_pat
         )}]}) + "\n"
     )
 
-    assert sessions.kimi_title(str(sess_dir)) == "ai handoff from claude"
+    assert sessions.kimi_title(str(sess_dir)) == "cw handoff from claude"
 
 
 def test_kimi_title_uses_placeholder_when_session_is_only_the_judge_prompt(tmp_path):
-    """Same as the claude case: a real `ai search --judge kimi` session had
+    """Same as the claude case: a real `cw search --judge kimi` session had
     exactly one turn.prompt -- the instruction -- and so was titled by it."""
     sess_dir = tmp_path / "sessdir"
     (sess_dir / "agents" / "main").mkdir(parents=True)
@@ -1785,7 +1796,7 @@ def test_kimi_title_uses_placeholder_when_session_is_only_the_judge_prompt(tmp_p
         )}]}) + "\n"
     )
 
-    assert sessions.kimi_title(str(sess_dir)) == "ai search judge"
+    assert sessions.kimi_title(str(sess_dir)) == "cw search judge"
 
 
 def test_kimi_title_falls_back_to_first_prompt_when_all_noise(tmp_path):
@@ -1949,7 +1960,7 @@ def test_kimi_session_cwd_reads_workdir_from_index(monkeypatch, tmp_path):
 
 def test_cmd_resume_kimi_chdirs_into_session_workdir_first(monkeypatch, tmp_path, capsys):
     """Regression test: `kimi -S <id>` refuses to resume a session created
-    under a different cwd. Rather than surfacing that raw error, ai resume
+    under a different cwd. Rather than surfacing that raw error, cw resume
     should chdir into the session's own recorded workDir first."""
     other_dir = tmp_path / "other-project"
     other_dir.mkdir()
@@ -2399,14 +2410,24 @@ def test_kimi_newest_session_since_picks_newest_session_in_cwd(monkeypatch, tmp_
     other.mkdir()
     monkeypatch.chdir(target)
     records = [
-        {"tool": "kimi", "id": "session_too-old", "ts": started - 3600, "cwd": str(target), "dir": "/x"},
-        {"tool": "kimi", "id": "session_old", "ts": started + 1, "cwd": str(target), "dir": "/x"},
-        {"tool": "kimi", "id": "session_new", "ts": started + 30, "cwd": str(target), "dir": "/x"},
+        {"tool": "kimi", "id": "session_too-old", "ts": started - 3600,
+         "started": started - 7200, "cwd": str(target), "dir": "/x"},
+        # updated after the seed started (kimi's own titler rewrote the
+        # state mid-run), but created long before it: the updated time must
+        # not win it the pick -- the handoff would land in the wrong chat
+        {"tool": "kimi", "id": "session_touched", "ts": started + 45,
+         "started": started - 7200, "cwd": str(target), "dir": "/x"},
+        {"tool": "kimi", "id": "session_old", "ts": started + 1,
+         "started": started + 1, "cwd": str(target), "dir": "/x"},
+        {"tool": "kimi", "id": "session_new", "ts": started + 30,
+         "started": started + 30, "cwd": str(target), "dir": "/x"},
         # newer, but rooted in another directory -- a concurrent `kimi -p`
         # elsewhere must not shadow the one seeded here
-        {"tool": "kimi", "id": "session_other-dir", "ts": started + 60, "cwd": str(other), "dir": "/x"},
+        {"tool": "kimi", "id": "session_other-dir", "ts": started + 60,
+         "started": started + 60, "cwd": str(other), "dir": "/x"},
         # no timestamp -> excluded rather than guessed
-        {"tool": "kimi", "id": "session_no-ts", "ts": 0, "cwd": str(target), "dir": "/x"},
+        {"tool": "kimi", "id": "session_no-ts", "ts": 0, "started": 0,
+         "cwd": str(target), "dir": "/x"},
     ]
     monkeypatch.setattr(sessions, "kimi_light_records", lambda show_all: records)
 
@@ -2421,7 +2442,8 @@ def test_kimi_newest_session_since_accepts_whole_second_truncation(monkeypatch, 
     target.mkdir()
     monkeypatch.chdir(target)
     records = [
-        {"tool": "kimi", "id": "session_seeded", "ts": started - 1, "cwd": str(target), "dir": "/x"},
+        {"tool": "kimi", "id": "session_seeded", "ts": started - 1,
+         "started": started - 1, "cwd": str(target), "dir": "/x"},
     ]
     monkeypatch.setattr(sessions, "kimi_light_records", lambda show_all: records)
 
@@ -2619,7 +2641,7 @@ def test_cmd_list_omits_sessions_a_tool_started_for_itself(monkeypatch, tmp_path
     out = capsys.readouterr().out
     assert "fix the login crash" in out
     assert "approval review" not in out
-    assert "ai search judge" not in out
+    assert "cw search judge" not in out
     assert len(out.splitlines()) == 2  # header + the one real row
     # numbering must stay resumable: the dropped rows get no number
     assert json.loads(cache_file.read_text()) == [{"tool": "codex", "id": real}]
@@ -2765,7 +2787,7 @@ def terminal_width(monkeypatch):
 
 
 def test_render_rows_shows_a_note_as_a_column(capsys, terminal_width):
-    """`ai search` passes the judge's one-line justification here. It shares
+    """`cw search` passes the judge's one-line justification here. It shares
     the row instead of adding one: ten hits stay ten lines."""
     terminal_width(120)
     rows = [
@@ -3111,7 +3133,7 @@ def _resolved_titles(monkeypatch, tmp_path):
 
 
 def test_handoff_session_shows_source_topic(monkeypatch, tmp_path):
-    """Regression test: a session `ai handoff` started was titled by its seed
+    """Regression test: a session `cw handoff` started was titled by its seed
     prompt ("Continue codex session 019eb5f4"), so six rows of one listing
     said where they came from and nothing about what they were about."""
     projects = tmp_path / "projects"
@@ -3201,7 +3223,7 @@ def test_codex_handoff_from_a_claude_session_shows_the_claude_topic(monkeypatch,
 
 
 def test_codex_fork_of_a_handoff_child_shows_one_mark(monkeypatch, tmp_path):
-    """A fork of a session `ai handoff` started inherits that session's
+    """A fork of a session `cw handoff` started inherits that session's
     topic, and the inherited title drops the handoff's own mark -- a real
     listing showed `(fork) (handoff) 开源扫描工具` for one, which says the
     same thing twice."""

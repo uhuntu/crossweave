@@ -55,10 +55,15 @@ def kimi_light_records(show_all):
         if state.get("archived") and not show_all:
             continue
         ts = parse_kimi_timestamp(state.get("updatedAt") or state.get("createdAt"))
+        # The created time, kept beside ts: `ts` moves on every state rewrite,
+        # and the handoff seed-picker needs the time the session was *created*
+        # (see _kimi_newest_session_since).
+        started = parse_kimi_timestamp(state.get("createdAt"))
         # older sessions use "workDir" instead of "cwd" in state.json; the
         # index itself also records workDir as a last-resort fallback.
         cwd = state.get("cwd") or state.get("workDir") or entry.get("workDir")
-        records.append({"tool": "kimi", "id": sid, "ts": ts, "cwd": cwd, "dir": sdir})
+        records.append({"tool": "kimi", "id": sid, "ts": ts, "started": started,
+                        "cwd": cwd, "dir": sdir})
     return records
 
 
@@ -139,7 +144,7 @@ def kimi_title(sdir):
 
 
 def kimi_snippet(sdir, max_messages=12, max_chars=800):
-    """Longer excerpt than kimi_title's single-prompt title, for `ai search`.
+    """Longer excerpt than kimi_title's single-prompt title, for `cw search`.
     Same wider window as claude_snippet -- a topic that only shows up
     partway into the conversation should still be visible to the judge.
 

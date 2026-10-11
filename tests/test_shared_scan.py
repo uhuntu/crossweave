@@ -1,6 +1,6 @@
 """One read of a rollout, shared by every question asked of it.
 
-`ai search` asks each codex session for its title, its snippet, its cwd and,
+`cw search` asks each codex session for its title, its snippet, its cwd and,
 for a handoff or a fork, its parent thread. Each of those used to read and
 json-parse the rollout again from scratch: three full passes over a 220MB
 store per search, most of what the command cost.
@@ -22,9 +22,11 @@ from crossweave import codex, common, sessions
 def _reset_codex_caches():
     codex._codex_path_index = None
     codex._codex_scan_cache.clear()
+    codex._codex_meta_cache.clear()
     yield
     codex._codex_path_index = None
     codex._codex_scan_cache.clear()
+    codex._codex_meta_cache.clear()
 
 
 ROLLOUT = "019ffdbe-1234-7abc-8def-0000000000aa"
@@ -61,10 +63,11 @@ def tool_call(command):
 def test_the_transcript_is_scanned_once_for_four_readers(monkeypatch, tmp_path):
     """Title, snippet, cwd and parent all come out of one read of the file.
 
-    The file is still opened twice more, for the two session_meta questions
-    (cwd, parent) -- that is a two-line read and not worth folding in. What
-    the scan stops is the four separate passes over every line of the
-    transcript."""
+    The file is still opened once more, for the session_meta questions (cwd,
+    parent) -- that is a two-line read, kept out of the transcript scan on
+    purpose -- but the two of them share that one read through the meta
+    cache instead of re-reading the head apiece. What the scan stops is the
+    four separate passes over every line of the transcript."""
     write_rollout(monkeypatch, tmp_path, ROLLOUT, [
         meta(ROLLOUT), message("user", "fix the nfc lock")])
     scans = []
@@ -94,11 +97,11 @@ def test_the_transcript_is_scanned_once_for_four_readers(monkeypatch, tmp_path):
     assert opens_after_title == 1
     assert len(opens) == opens_after_title
 
-    # cwd and parent still read the session_meta themselves -- two lines, and
-    # not worth folding into the scan
+    # cwd and parent still read the session_meta themselves -- two lines,
+    # not worth folding into the scan -- but the second one reads nothing
     sessions.codex_cwd(ROLLOUT)
     sessions.codex_parent_thread_id(ROLLOUT)
-    assert len(opens) == 3
+    assert len(opens) == 2
 
 
 def test_the_scan_serves_both_the_title_and_the_snippet(monkeypatch, tmp_path):

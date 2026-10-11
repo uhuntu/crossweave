@@ -2,7 +2,7 @@
 
 A session title is whatever was typed into that session, and the console's
 code page decides how much of it can be printed: on a GBK console a title
-beginning with a bullet (•) raised UnicodeEncodeError six rows into `ai`'s
+beginning with a bullet (•) raised UnicodeEncodeError six rows into `cw`'s
 own listing -- the one command with no other way to look at your sessions.
 The read side of the same problem (a transcript byte that is not valid
 UTF-8) is already handled by open_text; these cover the write side.
@@ -22,7 +22,7 @@ def _gbk_stdout():
 
 
 def test_a_title_the_console_cannot_encode_still_prints(monkeypatch):
-    """The real incident: `ai` on a GBK console with a session titled
+    """The real incident: `cw` on a GBK console with a session titled
     "• Two things to report ..." among the rows."""
     stream = _gbk_stdout()
     monkeypatch.setattr(sys, "stdout", stream)
@@ -52,7 +52,7 @@ def test_characters_the_console_can_encode_are_left_alone(monkeypatch):
 
 
 def test_both_entry_points_harden_the_output_before_printing(monkeypatch, capsys):
-    """`ai` and `ai-sessions` are two separate console scripts; hardening
+    """`cw` and `ai-sessions` are two separate console scripts; hardening
     one of them leaves the other aborting on the same title."""
     calls = []
     monkeypatch.setattr(sessions, "harden_console_output", lambda: calls.append(1))

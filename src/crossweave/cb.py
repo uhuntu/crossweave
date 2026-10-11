@@ -33,7 +33,7 @@ import subprocess
 import sys
 import time
 
-from .sessions import harden_console_output, read_json
+from .sessions import harden_console_output, read_json, _clip, _display_width
 
 CLI = "cli"
 VSCODE = "vscode"
@@ -427,9 +427,14 @@ COLUMNS = [
 
 def fit(s, w, align):
     s = "" if s is None else str(s)
-    if len(s) > w:
-        s = s[: w - 1] + "…" if w > 1 else s[:w]
-    return s.rjust(w) if align == "r" else s.ljust(w)
+    if _display_width(s) > w:
+        # Clipped by columns, not code points: a CJK title or cwd occupies
+        # two columns per character, and len() lets it push every field
+        # after it out of line -- the same fix the cw renderer got (see
+        # sessions._clip for the width math).
+        s = _clip(s, w) if w > 1 else s[:1]
+    gap = " " * max(0, w - _display_width(s))
+    return gap + s if align == "r" else s + gap
 
 
 ID_WIDTH = 8
@@ -722,10 +727,22 @@ def run_interactive(cmd, cwd):
         return 127, "could not run %s: %s" % (cmd[0], e)
 
 
+# What may reach `codebuddy -r <id>` as an argument. On Windows the CLI is
+# usually a .cmd shim, and cmd.exe re-parses batch arguments no matter how
+# Python quotes them (the BatBadBut class of injection) -- so the id, which
+# comes out of the session store and is therefore data, is held to the shape
+# CodeBuddy itself mints before anything is spawned. A real id is a UUID;
+# one carrying shell metacharacters is a corrupt store or a hostile one,
+# and either way refusing beats executing.
+SAFE_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]*\Z")
+
+
 def do_cli(row, override, dry_run, _history):
     exe = find_cli_exe()
     if not exe:
         return 1, "no codebuddy executable on PATH"
+    if not SAFE_ID_RE.match(row["id"] or ""):
+        return 1, "session id %r carries unexpected characters -- refusing to spawn it" % row["id"]
     cwd = pick_cwd(row, override)
     if not cwd:
         # a session is tied to the directory it began in; resuming from

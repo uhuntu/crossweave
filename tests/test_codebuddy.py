@@ -339,7 +339,7 @@ def test_a_session_handed_to_codebuddy_is_named_after_its_source(monkeypatch, tm
     assert sessions.handoff_source(path, "codebuddy") == ("claude", "019abc123456")
 
     # With the source session present in its own store, the row inherits
-    # its topic rather than showing the seed's "ai handoff from claude".
+    # its topic rather than showing the seed's "cw handoff from claude".
     monkeypatch.setattr(sessions, "claude_light_records", lambda: [
         {"tool": "claude", "id": "019abc123456", "ts": 1,
          "path": str(tmp_path / "claude-src.jsonl")},

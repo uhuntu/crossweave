@@ -178,7 +178,7 @@ CODEX_BOILERPLATE_PREFIXES = (
     # Codex's own marker for a turn the user killed mid-run, no different
     # from claude's "[Request interrupted by user" (see INJECTED_PREFIXES).
     "<turn_aborted>",
-    # Slash-command wrapper text, seen here via a cross-tool `ai handoff`
+    # Slash-command wrapper text, seen here via a cross-tool `cw handoff`
     # that seeded a codex session with another tool's transcript verbatim.
     "<command-name",
     # Codex serializes a content block it can't otherwise represent (e.g. a
@@ -228,7 +228,7 @@ def _codex_scan(path, limit=LITERAL_SCAN_LIMIT_CODEX):
         ("message", role, text, is_boilerplate)
         ("tool", command)
 
-    A single `ai search` asks the same rollout four things -- its title, its
+    A single `cw search` asks the same rollout four things -- its title, its
     snippet, its cwd and, for a handoff or a fork, its parent thread -- and
     each of those used to read and json-parse the file again from scratch. On
     the 220MB of rollouts one machine accumulates that is three full passes
@@ -322,7 +322,7 @@ def _codex_genuine_messages(path, max_messages, roles=("user",), scan_limit=2000
     environment context) by its distinctive prefix rather than by length --
     a length cutoff also filters out legitimate long, detailed task
     requests (a real session had a 1304-char genuine message wrongly
-    treated as boilerplate and skipped entirely, leaving both `ai search`
+    treated as boilerplate and skipped entirely, leaving both `cw search`
     and the plain listing with no way to find or label that session).
     Sampled evenly across the whole conversation via sample_stride, not
     just the first max_messages -- see its docstring. Pass sample=False for
@@ -373,12 +373,12 @@ def codex_rollout_title(sid):
 
 def codex_rollout_snippet(sid, max_messages=12, max_chars=800):
     """Longer excerpt than codex_rollout_title's single-message title, for
-    `ai search`. Mirrors claude_snippet/kimi_snippet. Includes assistant
+    `cw search`. Mirrors claude_snippet/kimi_snippet. Includes assistant
     text, not just user messages: in agentic sessions the user often gives
     short directives ("check it", "yes", "6 taps") while the assistant's
     own prose describes what was actually done and found -- a real session
     about decompiling an APK had that entire substance in Codex's own
-    responses, invisible to a user-only scan, so `ai search` couldn't find
+    responses, invisible to a user-only scan, so `cw search` couldn't find
     it even though it was exactly on topic."""
     path = codex_rollout_path(sid)
     if not path:
@@ -394,6 +394,19 @@ def codex_rollout_snippet(sid, max_messages=12, max_chars=800):
 # so the scan has to be able to step past one.
 CODEX_META_SCAN_LIMIT = 50
 
+# session_meta reads, shared per (path, mtime, size) the way _codex_scan
+# shares the transcript read: codex_light_records, codex_cwd and
+# codex_parent_thread_id all come here for the same file within one command,
+# and each used to re-read the head itself. session_meta stays a direct
+# head read rather than an entry kind of the scan -- it is a two-line read
+# against the transcript's 20000-line one, and folding it in would make
+# every title/snippet scan carry the meta payload for no reading saved.
+# Keyed by mtime and size too, so a file rewritten underneath (a resumed
+# thread's new rollout at a new path, a test rewriting the same one) is
+# re-read rather than served stale -- including a meta-less head, which a
+# still-writing file can present and must not be pinned.
+_codex_meta_cache = {}
+
 
 def _codex_session_meta(path):
     """A rollout's session_meta record, or None.
@@ -402,12 +415,23 @@ def _codex_session_meta(path):
     truncated leading line used to make this return None even though the real
     session_meta sat two records later, which cost the session its cwd (no
     chdir on resume) and a fork its `(fork) ...` title."""
-    for i, d in enumerate(common.read_jsonl(path)):
-        if i >= CODEX_META_SCAN_LIMIT:
-            break
-        if isinstance(d, dict) and d.get("type") == "session_meta":
-            return d
-    return None
+    try:
+        st = os.stat(path)
+        key = (path, st.st_mtime_ns, st.st_size)
+    except OSError:
+        return None
+    if key not in _codex_meta_cache:
+        meta = None
+        for i, d in enumerate(common.read_jsonl(path)):
+            if i >= CODEX_META_SCAN_LIMIT:
+                break
+            if isinstance(d, dict) and d.get("type") == "session_meta":
+                meta = d
+                break
+        if len(_codex_meta_cache) >= LITERAL_SCAN_CACHE_MAX:
+            _codex_meta_cache.clear()  # bounded, like the transcript cache
+        _codex_meta_cache[key] = meta
+    return _codex_meta_cache[key]
 
 
 def codex_cwd(sid):

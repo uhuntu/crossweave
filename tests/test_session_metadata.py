@@ -4,7 +4,7 @@ Two failure modes, both of which produced a confidently wrong answer rather
 than an error:
 
 * a session's cwd was missing, wrong, or compared with raw string equality,
-  so `ai sessions --cwd` (documented as "only sessions started in the current
+  so `cw sessions --cwd` (documented as "only sessions started in the current
   directory") filtered out sessions that were, and `ai stats` bucketed them
   under `?`
 * a codex thread's several rollout files were ranked by mtime alone, so on a
@@ -68,7 +68,7 @@ def test_codex_rollout_files_do_not_follow_a_symlinked_directory(monkeypatch, tm
 
 
 def test_codex_light_records_carry_the_cwd(monkeypatch, tmp_path):
-    """Without one, `ai sessions --cwd` never matched a single codex session
+    """Without one, `cw sessions --cwd` never matched a single codex session
     and `ai stats` reported every one of them under `?`."""
     write_rollout(monkeypatch, tmp_path, ROLLOUT, "/home/hunt/work/cw", "start the work",
                   "2026-08-14T00-00-00")
@@ -138,7 +138,7 @@ def test_newest_rollout_wins_an_mtime_tie(monkeypatch, tmp_path):
 def test_codex_cwd_looks_past_a_corrupt_first_line(monkeypatch, tmp_path):
     """A file read while codex is still writing it opens with a truncated
     record; stopping at the first *parseable* line cost the session its cwd
-    (and `ai resume` its chdir)."""
+    (and `cw resume` its chdir)."""
     write_rollout(monkeypatch, tmp_path, ROLLOUT, "/home/hunt/work", "tune the engine",
                   "2026-08-14T00-00-00")
     path = sessions.codex_rollout_path(ROLLOUT)
@@ -236,7 +236,7 @@ def test_kimi_light_records_sort_epoch_second_sessions_correctly(monkeypatch, tm
 
 def test_read_list_cache_drops_malformed_entries(monkeypatch, tmp_path):
     """A truncated cache surfaced as a KeyError traceback instead of the
-    friendly "run `ai sessions` first" the empty case already gives."""
+    friendly "run `cw sessions` first" the empty case already gives."""
     monkeypatch.setattr(sessions, "LIST_CACHE_FILE", str(tmp_path / "last_list.json"))
     (tmp_path / "last_list.json").write_text(json.dumps([
         {"tool": "claude", "id": "abc"},

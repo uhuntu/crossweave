@@ -1,4 +1,4 @@
-"""The listing you see every time you type `ai`.
+"""The listing you see every time you type `cw`.
 
 It used to be a plain table where every row weighed the same: no color, no
 marker for the directory you are standing in, a WHEN column that read like a
@@ -272,7 +272,7 @@ def test_a_row_whose_file_is_gone_shows_a_question_mark(monkeypatch):
 # ---------- the listing counts turns for the rows it prints ----------
 
 def test_cmd_list_counts_turns_for_the_rows_it_prints(monkeypatch, tmp_path, capsys):
-    """The whole point of the column: `ai` alone, against the real readers."""
+    """The whole point of the column: `cw` alone, against the real readers."""
     _plain(monkeypatch)
     claude = write_claude(tmp_path, "c1", [claude_user("alpha"), claude_tool_result(),
                                            claude_user("beta")])

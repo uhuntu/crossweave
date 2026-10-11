@@ -43,7 +43,7 @@ def claude_light_records():
 
 def claude_snippet(path, max_messages=12, max_chars=800):
     """A longer excerpt than claude_title_and_cwd's single-message title,
-    for `ai search`: concatenates up to max_messages message texts so a
+    for `cw search`: concatenates up to max_messages message texts so a
     topic that only shows up partway into the conversation can still match.
     (Previously capped at the first 80 lines / 3 messages, which missed
     real topics that first appeared later -- e.g. a 191-line session where
@@ -54,7 +54,7 @@ def claude_snippet(path, max_messages=12, max_chars=800):
     while the assistant's own prose describes what was actually done and
     found -- a real session's substance (decompiling an APK, the specific
     files involved) was entirely in Claude's responses, invisible to a
-    user-only scan, so `ai search` couldn't find it even though it was
+    user-only scan, so `cw search` couldn't find it even though it was
     exactly on topic.
 
     Sampled evenly across the whole conversation via sample_stride, not

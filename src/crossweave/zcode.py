@@ -57,6 +57,29 @@ ZCODE_WORKSPACE_LINK = "zcode://workspace/open?path=%s"
 TITLE_SCAN_MESSAGES = 50
 
 
+# One read-only connection per store, reused for the process's lifetime:
+# a listing asks the store several questions per printed row (turns, last
+# message, titles), and opening a fresh connection for each is the one
+# per-row cost the file-backed tools don't pay. The cached handle is
+# revalidated by (path, dev, ino) on every take, so a store replaced
+# underneath is reconnected rather than served from the old file, and a
+# vanished one reads as absent. Read-only mode means the handle holds no
+# lock the app could trip over.
+_connection = None
+_connection_key = None
+
+
+def _drop_connection():
+    global _connection, _connection_key
+    if _connection is not None:
+        try:
+            _connection.close()
+        except sqlite3.Error:
+            pass
+    _connection = None
+    _connection_key = None
+
+
 def _connect():
     """A read-only connection to the store, or None when there is nothing
     to read.
@@ -65,19 +88,35 @@ def _connect():
     checkpoints a read-write connection performs), which is what sharing a
     database with a running app requires. The backslash swap keeps the URI
     legal on Windows."""
+    global _connection, _connection_key
     if not os.path.isfile(ZCODE_DB):
+        _drop_connection()
         return None
     try:
-        return sqlite3.connect("file:%s?mode=ro" % ZCODE_DB.replace("\\", "/"), uri=True)
-    except sqlite3.Error:
+        st = os.stat(ZCODE_DB)
+    except OSError:
+        _drop_connection()
         return None
+    key = (ZCODE_DB, st.st_dev, st.st_ino)
+    if _connection is not None and _connection_key == key:
+        return _connection
+    _drop_connection()
+    try:
+        _connection = sqlite3.connect("file:%s?mode=ro" % ZCODE_DB.replace("\\", "/"), uri=True)
+        _connection_key = key
+    except sqlite3.Error:
+        _connection = None
+        _connection_key = None
+    return _connection
 
 
 def _query(query, params=()):
     """All rows of a query, or [] when the store is missing or the schema is
     not the one this reader knows. A future ZCode that renames a column is a
     store this tool can't see -- the same treatment an absent store gets --
-    not a traceback over every command at once."""
+    not a traceback over every command at once. A failed query keeps the
+    connection: schema mismatches are persistent, so reconnecting would
+    only reopen the same disappointment."""
     con = _connect()
     if con is None:
         return []
@@ -85,8 +124,6 @@ def _query(query, params=()):
         return con.execute(query, params).fetchall()
     except sqlite3.Error:
         return []
-    finally:
-        con.close()
 
 
 def _json(data):
@@ -250,8 +287,7 @@ def _has_json1():
                 _json1 = True
             except sqlite3.Error:
                 pass
-            finally:
-                con.close()
+            # no close: the connection is the process-wide shared one
     return _json1
 
 
@@ -340,7 +376,7 @@ def _all_texts(sid, with_tool_output=False):
 
 
 def zcode_snippet(sid, max_messages=12, max_chars=800):
-    """Longer excerpt than a title, for `ai search` -- sampled evenly across
+    """Longer excerpt than a title, for `cw search` -- sampled evenly across
     the conversation (common.sample_stride, see its docstring for why first-N
     is not enough), text plus tool calls, thinking left out (it runs long and
     the substance of a session is in what was said and done)."""
@@ -386,14 +422,20 @@ def zcode_cli_on_path():
     resumes a session by id and seeds one headlessly -- rather than the
     desktop app's launcher.
 
-    Told apart by file header, never by running them: the CLI ships as a
-    script wrapper (`#!`), the desktop as an ELF binary, and asking either
+    Told apart by file shape, never by running them: the CLI ships as a
+    script wrapper (`#!`), the desktop as a native binary, and asking either
     --help or --version boots the desktop's GUI as a side effect (checked
-    against both installs). A machine with only the desktop reads False,
-    and every caller falls back to the deep link."""
+    against both installs). On Windows the CLI arrives as npm's .cmd shim,
+    whose first bytes are "@e" -- invisible to a header read -- so a
+    .cmd/.bat launcher counts as the CLI there too; the desktop install
+    drops no such shim (its exe is a native binary, verified on a real
+    install). A machine with only the desktop reads False, and every caller
+    falls back to the deep link."""
     exe = shutil.which("zcode")
     if not exe:
         return False
+    if exe.lower().endswith((".cmd", ".bat")):
+        return True
     try:
         with open(exe, "rb") as fh:
             return fh.read(2) == b"#!"
@@ -484,14 +526,20 @@ def zcode_newest_session_since(started):
     """The newest zcode session created at/after `started` (epoch seconds)
     whose directory is the current one -- the session a just-finished
     `zcode -p` seed run persisted, recovered from the store the same way
-    kimi's is (the CLI prints no id hint of its own)."""
+    kimi's is (the CLI prints no id hint of its own).
+
+    Filtered by `started` (time_created), not by `ts` (time_updated): the
+    seed run's own session is not necessarily the most recently *touched*
+    row -- the desktop app can rewrite an older session during the run
+    (its auto-titler, a concurrent session in this directory) -- and
+    resuming that one would put the handoff into the wrong conversation."""
     best_id = None
     best_ts = None
     for r in zcode_light_records(show_all=True):
         cwd = r.get("cwd")
         if not cwd or os.path.realpath(cwd) != os.path.realpath(os.getcwd()):
             continue
-        ts = r.get("ts") or 0
+        ts = r.get("started") or 0
         if ts < started - 2:
             continue
         if best_ts is None or ts >= best_ts:
