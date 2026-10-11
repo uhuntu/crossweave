@@ -86,6 +86,11 @@ JUDGE_CMD = {
     # "Blocked run_command" where the matches should have been. Same pair
     # cli.py's --yolo attaches to step for the same reason.
     "step": ["step", "-p", "--no-session", "--non-interactive-approval", "allow"],
+    # --no-session-persistence: the same ephemeral-judge reason claude's
+    # flag carries, under codebuddy's own spelling (a claude-derivative
+    # CLI -- checked against `codebuddy --help`, and a one-shot PONG run
+    # confirmed -p reads the prompt on stdin).
+    "codebuddy": ["codebuddy", "-p", "--no-session-persistence"],
 }
 # Which judge runs when the caller does not pass --judge. This is a
 # per-machine setting: it must name a judge that is actually installed here,
@@ -98,8 +103,9 @@ DEFAULT_JUDGE = "step"
 # Judges that accept the prompt on stdin instead of argv. Passing a long
 # prompt as a command-line argument hits OS limits (ARG_MAX) once the
 # candidate list grows into the hundreds; stdin avoids that entirely.
-# Verified: `step -p` reads the prompt from stdin and answers `PONG`.
-JUDGE_USES_STDIN = {"claude", "codex", "step"}
+# Verified: `step -p` reads the prompt from stdin and answers `PONG`,
+# and codebuddy's -p does the same (claude's spelling of it).
+JUDGE_USES_STDIN = {"claude", "codex", "step", "codebuddy"}
 
 # See module docstring for why candidates are chunked instead of judged in
 # one batch.  Kept at 50 rather than 100 because a chunk's cost is now
