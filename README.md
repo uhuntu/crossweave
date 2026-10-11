@@ -1,5 +1,13 @@
 # crossweave
 
+<!-- X#: the crosshatch mark. X is cross; # is a weave of its own — two
+     warps, two wefts — the one ASCII character that is literally the
+     pattern crossweave names. Kept as a comment: # has no legal standing
+     in a package name (PEP 503) or a repo name, and the trailing-sharp
+     namespace reads as a language (C#, F#) — which "What this isn't"
+     disclaims. A logo, not a name; the h3 heading above has been the
+     mark all along. -->
+
 [![test](https://github.com/uhuntu/crossweave/actions/workflows/test.yml/badge.svg)](https://github.com/uhuntu/crossweave/actions/workflows/test.yml)
 
 A tiny, dependency-free wrapper that weaves five AI coding-agent CLIs — [Claude Code](https://claude.com/product/claude-code), [OpenAI Codex CLI](https://github.com/openai/codex), [Kimi CLI](https://www.kimi-cli.com/), [step](https://github.com/stepfun-ai/Step-Code), and CodeBuddy's CLI — behind one set of flags, plus cross-tool session discovery, resume, and handoff — and reads the ZCode desktop app's session store alongside them, so its sessions show up in the same listing, search, and handoff flow.
