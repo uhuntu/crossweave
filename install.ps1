@@ -16,14 +16,23 @@ $ErrorActionPreference = "Stop"
 # versions, where this preference variable doesn't exist yet.
 $PSNativeCommandUseErrorActionPreference = $false
 
-$RepoUrl = "https://github.com/uhuntu/crossweave.git"
+$RepoUrl = if ($env:CROSSWEAVE_REPO_URL) { $env:CROSSWEAVE_REPO_URL } else { "https://github.com/uhuntu/crossweave.git" }
 $BinDir = if ($env:CROSSWEAVE_BIN_DIR) { $env:CROSSWEAVE_BIN_DIR } elseif ($env:CLISWEAVE_BIN_DIR) { $env:CLISWEAVE_BIN_DIR } elseif ($env:AIMUX_BIN_DIR) { $env:AIMUX_BIN_DIR } else { Join-Path $HOME ".local\bin" }
 
 # When run via `irm | iex` there's no script file on disk, so $PSCommandPath
 # is empty -- guard the lookup instead of assuming a local clone, same idea
-# as install.sh's BASH_SOURCE[0] check.
+# as install.sh's BASH_SOURCE[0] check. The fetched clone is re-entered
+# through iex as well, NOT as a file: & file.ps1 obeys the machine's
+# execution policy, and Restricted -- the factory default on Windows
+# client -- forbids every .ps1, which killed this one-liner right after
+# the clone on exactly the machines it exists for (seen live 2026-10-11).
+# An iex'd string carries no policy; CROSSWEAVE_INSTALL_FROM hands the
+# re-entered pass its script directory, since $PSCommandPath is empty
+# there too.
 if ($PSCommandPath -and (Test-Path (Join-Path (Split-Path $PSCommandPath -Parent) "bin\cw"))) {
     $ScriptDir = Split-Path $PSCommandPath -Parent
+} elseif ($env:CROSSWEAVE_INSTALL_FROM -and (Test-Path (Join-Path $env:CROSSWEAVE_INSTALL_FROM "bin\cw"))) {
+    $ScriptDir = $env:CROSSWEAVE_INSTALL_FROM
 } else {
     if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
         Write-Error "crossweave: git is required to fetch the repo. Install Git for Windows and re-run."
@@ -32,10 +41,18 @@ if ($PSCommandPath -and (Test-Path (Join-Path (Split-Path $PSCommandPath -Parent
     $RepoDir = if ($env:CROSSWEAVE_REPO_DIR) { $env:CROSSWEAVE_REPO_DIR } elseif ($env:CLISWEAVE_REPO_DIR) { $env:CLISWEAVE_REPO_DIR } elseif ($env:AIMUX_REPO_DIR) { $env:AIMUX_REPO_DIR } else { Join-Path $HOME ".local\share\crossweave" }
     if (Test-Path (Join-Path $RepoDir ".git")) {
         git -C $RepoDir pull --ff-only
+        if ($LASTEXITCODE -ne 0) {
+            # install.sh aborts here under set -e; silently installing
+            # whatever the clone already had is the one outcome worse than
+            # stopping, since the whole point of re-running is the update.
+            Write-Error "crossweave: could not fast-forward the clone at $RepoDir. Resolve the git error above (or point CROSSWEAVE_REPO_DIR somewhere fresh) and re-run."
+            exit 1
+        }
     } else {
         git clone --depth 1 $RepoUrl $RepoDir
     }
-    & (Join-Path $RepoDir "install.ps1")
+    $env:CROSSWEAVE_INSTALL_FROM = $RepoDir
+    Invoke-Expression (Get-Content -Raw (Join-Path $RepoDir "install.ps1"))
     exit $LASTEXITCODE
 }
 

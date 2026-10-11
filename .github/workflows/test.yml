@@ -18,3 +18,18 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e ".[test]"
       - run: pytest tests/ -v
+      - name: smoke the installer one-liner
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $env:CROSSWEAVE_REPO_DIR = Join-Path $env:RUNNER_TEMP "cw-repo"
+          $env:CROSSWEAVE_BIN_DIR = Join-Path $env:RUNNER_TEMP "cw-bin"
+          # Clone the checkout itself, so the smoke exercises THIS commit end
+          # to end: irm|iex runs the checkout's installer, the installer
+          # clones the checkout, and the launcher runs the clone. This is
+          # the exact path the README promises, and it is where the
+          # execution-policy break lived (a re-invocation through & file.ps1
+          # dies on Restricted -- the factory default).
+          $env:CROSSWEAVE_REPO_URL = "file:///" + ($env:GITHUB_WORKSPACE -replace '\\', '/')
+          iex (Get-Content -Raw ./install.ps1)
+          & (Join-Path $env:CROSSWEAVE_BIN_DIR "cw.cmd") --version

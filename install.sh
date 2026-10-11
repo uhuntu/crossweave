@@ -16,7 +16,7 @@ set -euo pipefail
 # elsewhere.
 export MSYS="${MSYS:-}${MSYS:+ }winsymlinks:nativestrict"
 
-REPO_URL="https://github.com/uhuntu/crossweave.git"
+REPO_URL="${CROSSWEAVE_REPO_URL:-https://github.com/uhuntu/crossweave.git}"
 BIN_DIR="${CROSSWEAVE_BIN_DIR:-${CLISWEAVE_BIN_DIR:-${AIMUX_BIN_DIR:-$HOME/.local/bin}}}"
 
 # When piped via `curl | bash`, there's no script file, so BASH_SOURCE[0] is
