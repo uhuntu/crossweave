@@ -545,12 +545,17 @@ def test_cmd_search_codex_auth_failure_falls_back(monkeypatch, capsys):
         )
         stderr = ""
 
-    class KimiOK:
+    class KimiSessionLimit:
+        returncode = 1
+        stdout = "error: session limit reached -- try again after the reset"
+        stderr = ""
+
+    class CodebuddyOK:
         returncode = 0
         stdout = "none"
         stderr = ""
 
-    responses = [ExpiredClaude, ExpiredCodex, KimiOK]
+    responses = [ExpiredClaude, ExpiredCodex, KimiSessionLimit, CodebuddyOK]
     calls = []
 
     def fake_run(*a, **kw):
@@ -568,7 +573,7 @@ def test_cmd_search_codex_auth_failure_falls_back(monkeypatch, capsys):
 
     search.cmd_search(["topic"])
 
-    # step never returned a result; the other three each got exactly one
+    # step never returned a result; the other four each got exactly one
     # turn, and the chain reached its last judge.
     assert [c[0][0][0] for c in calls] == search.fallback_order()
     err = capsys.readouterr().err
