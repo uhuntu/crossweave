@@ -82,6 +82,17 @@ Equivalent manual commands for updating crossweave itself, if you'd rather:
 
 `cw` is the command the project ships; what your hands type is yours. `cw alias add <name>...` creates launchers in `~/.local/bin` (override with `CROSSWEAVE_BIN_DIR`) pointing at the installation you are running — `cw alias add xx ai` is the whole ritual, and the launchers follow that install through `cw update`. `cw alias list` reads the set back; `cw alias remove` undoes it. The names live in `~/.config/crossweave/aliases.json`, and `cw alias add` with no arguments re-creates every name in it — on a fresh machine: install, copy that one file over (or just remember the names), run the one command. Names have to survive every namespace a command name lives in — bin-dir filenames, PyPI-adjacent words (PEP 503), shell words (`#` starts a comment in all three major shells) — so letters, digits, `.`, `_` and `-` only; the installer's own commands (`cw`, `cx`, `crossweave`, `cb`) are refused, and a file the mechanism did not create is never overwritten. The installer itself never creates or removes personal aliases; this command is their only manager.
 
+## Other machines
+
+A session that happened on the laptop does not exist on the desktop — each tool's store is per-machine, and no amount of local reading can answer "where was that conversation". crossweave's answer is an index, not a service: every machine publishes a small JSON file describing its own sessions, and the files meet in a directory you sync yourself (Syncthing, git, Dropbox — anything that moves files):
+
+```bash
+mkdir -p ~/.config/crossweave/machines   # the directory's existence is the switch
+# point your sync tool of choice at it, on every machine that runs cw
+```
+
+From then on every listing refreshes this machine's index in that directory (metadata only — tool, id, title, directory, timestamp; the transcripts never leave the machine they live on), and `cw sessions --machines` merges the others in: local rows first, then a second section of remote rows, each naming the machine it lives on. A row the local store also holds — mirrored stores do this — stays a plain resumable local row; a truly remote row is listed for discovery, and `cw resume <N>` / the handoff refuse it cleanly, naming the machine, instead of pretending. Without the directory nothing changes: no publish, no merge, no new behavior to learn — and `CROSSWEAVE_MACHINES_DIR` moves the directory, `CROSSWEAVE_MACHINE_NAME` overrides the name a machine publishes under. Indexes older than two weeks drop out of the merge with a note: a machine unused that long is a ghost, not a pointer.
+
 ## Usage
 
 ```bash

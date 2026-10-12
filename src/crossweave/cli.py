@@ -64,6 +64,10 @@ Examples:
   cw sessions --limit 10
   cw sessions --limit all   # same as `cw full`
   cw full                   # everything, no default 15-row cutoff
+  cw sessions --machines    # other machines' sessions too -- each remote
+                            #   row names the machine it lives on; the
+                            #   switch is the machines dir itself: sync
+                            #   ~/.config/crossweave/machines
   cw resume kimi 97946bc7
   cw resume 3         # resume row 3 from the last `cw`/`cw sessions` listing
   cw resume 2 --cwd /path/to/other-project   # can't relocate row 2 in place -- hands off to a fresh session there

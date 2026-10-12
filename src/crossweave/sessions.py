@@ -25,6 +25,12 @@ import sys
 import tempfile
 import time
 
+# machines imports this module only at call time (its publish step resolves
+# titles through it), so a top-level import back is safe -- and the merged
+# listing and the resume paths below reach it as a module attribute, which
+# is also the patch surface its tests aim at.
+from . import machines
+
 # Re-exported with the per-tool names below: everything that reached these
 # through `sessions` (cli.py, search.py, the tests) keeps doing so.
 from .common import (
@@ -599,6 +605,13 @@ def handoff_by_number(n, target_tool, extra, forced_cwd=None):
         sys.exit(1)
 
     entry = cache[n - 1]
+    if entry.get("machine"):
+        # Same refusal as resume_by_number: the transcript to export lives
+        # on another machine.
+        print(f"cw handoff: row {n} lives on {entry['machine']} -- run the "
+              "handoff there, or mirror that machine's session store to do "
+              "it here", file=sys.stderr)
+        sys.exit(1)
     perform_handoff(entry["tool"], entry["id"], target_tool, extra, forced_cwd=forced_cwd, label=f"row {n}")
 
 
@@ -608,6 +621,7 @@ def cmd_list(args):
     tool_filter = None
     cwd_filter = False
     show_all = False
+    with_machines = False
     def next_value(flag, i):
         if i + 1 >= len(args):
             print(f"cw sessions: {flag} requires a value", file=sys.stderr)
@@ -638,23 +652,33 @@ def cmd_list(args):
             cwd_filter = True; i += 1
         elif a == "--all":
             show_all = True; i += 1
+        elif a == "--machines":
+            with_machines = True; i += 1
         else:
             print(f"cw sessions: unknown option '{a}'", file=sys.stderr)
             sys.exit(1)
 
+    # The machines index describes the machine, not the question, so when
+    # the sync directory exists every listing publishes the full set --
+    # and therefore gathers every store, --tool or not. Without the
+    # directory the filtered gather stays exactly as cheap as it has
+    # always been: the directory's existence is the switch (see machines).
+    publish = os.path.isdir(machines.MACHINES_DIR)
     light = []
-    if tool_filter in (None, "claude"):
-        light += claude_light_records()
-    if tool_filter in (None, "codex"):
-        light += codex_light_records()
-    if tool_filter in (None, "kimi"):
-        light += kimi_light_records(show_all)
-    if tool_filter in (None, "step"):
-        light += step_light_records(show_all)
-    if tool_filter in (None, "zcode"):
-        light += zcode_light_records(show_all)
-    if tool_filter in (None, "codebuddy"):
-        light += codebuddy_light_records(show_all)
+    for tool, gather in (
+        ("claude", claude_light_records),
+        ("codex", codex_light_records),
+        ("kimi", lambda: kimi_light_records(show_all)),
+        ("step", lambda: step_light_records(show_all)),
+        ("zcode", lambda: zcode_light_records(show_all)),
+        ("codebuddy", lambda: codebuddy_light_records(show_all)),
+    ):
+        if publish or tool_filter in (None, tool):
+            light += gather()
+    if publish:
+        machines.write_own_index(light)
+    if tool_filter is not None:
+        light = [r for r in light if r["tool"] == tool_filter]
 
     light.sort(key=lambda r: r["ts"], reverse=True)
 
@@ -677,7 +701,37 @@ def cmd_list(args):
         sources[row[1]] = r
         if limit is not None and len(rows) >= limit:
             break
-    render_rows(rows, sources=sources)
+    remotes = []
+    if with_machines:
+        indexes = machines.read_remote_indexes()
+        if indexes:
+            local_keys = {(r["tool"], r["id"]) for r in light}
+            remotes = machines.remote_sessions(indexes, local_keys)
+
+    if not rows and not remotes:
+        render_rows(rows, sources=sources)
+        return
+
+    # One cache write for the union in printed order, so `cw resume <N>`
+    # numbers stay valid across both sections -- the search precedent. A
+    # remote row carries its machine so the by-number paths can name it
+    # when they refuse.
+    write_list_cache(
+        [{"tool": t, "id": i} for t, i, *_ in rows]
+        + [{"tool": s["tool"], "id": s["id"], "machine": s["machine"]}
+           for s in remotes])
+    if rows:
+        render_rows(rows, sources=sources, write_cache=False)
+    if remotes:
+        if rows:
+            print()
+        print("on other machines:")
+        render_rows(
+            [(s["tool"], s["id"], relative_time(s["ts"]), s["id"][:12],
+              s["cwd"], s["title"]) for s in remotes],
+            write_cache=False, start=len(rows) + 1,
+            notes={(s["tool"], s["id"]): s["machine"] for s in remotes},
+            notes_label="MACHINE")
 
 
 def cmd_stats(args):
@@ -1223,6 +1277,14 @@ def resume_by_number(n, extra, forced_cwd=None):
         print(f"cw resume: {n} is out of range (last listing had {len(cache)} rows)", file=sys.stderr)
         sys.exit(1)
     entry = cache[n - 1]
+    if entry.get("machine"):
+        # A row from another machine's index: its transcript never left
+        # that machine, so there is nothing here to resume. Name the
+        # machine and the way forward, cleanly.
+        print(f"cw resume: row {n} lives on {entry['machine']} -- resume it "
+              "there, or mirror that machine's session store to resume it "
+              "here", file=sys.stderr)
+        sys.exit(1)
     if extra and extra[0] in TOOLS:
         target_tool = extra[0]
         if target_tool != entry["tool"]:

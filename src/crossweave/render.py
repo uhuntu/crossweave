@@ -136,17 +136,19 @@ def _same_saying(a, b):
 
 
 def render_rows(rows, write_cache=True, start=1, notes=None, full_notes=False,
-                sources=None):
+                sources=None, notes_label="WHY"):
     """rows: list of resolve_row()-shaped tuples, already in display order.
     Prints the numbered table and, unless write_cache=False, writes the
     resume cache (cmd_search renders two sections with continuing numbers
     and writes the cache once for their union).
 
     notes: optional {(tool, full_id): one-line why} -- `cw search` passes the
-    judge's justification there. Shown as a WHY column, clipped to whatever
-    width the terminal has left after the other fields: one line per hit, so
-    a 10-hit search stays 10 lines. `full_notes` prints the unclipped reason
-    on its own line instead, which is what `--why` is for.
+    judge's justification there. Shown as a column (labeled notes_label --
+    `cw sessions --machines` reuses the mechanism for the machine a row
+    lives on), clipped to whatever width the terminal has left after the
+    other fields: one line per hit, so a 10-hit search stays 10 lines.
+    `full_notes` prints the unclipped reason on its own line instead, which
+    is what `--why` is for.
 
     sources: optional {full_id: light record}, for the listing only -- search
     rows have none. It buys the TURNS column, counted per row as that row
@@ -226,7 +228,10 @@ def render_rows(rows, write_cache=True, start=1, notes=None, full_notes=False,
         header += f"{'TURNS':>{TURNS_WIDTH}}  "
     header += "TITLE"
     if inline_why:
-        header += f"{'':<{max(0, w_title - 5)}}  WHY"
+        # Left-align the label where the title column ends -- the same
+        # w spaces `{'':<{w}}` would produce, without a nested field.
+        label_pad = " " * max(0, w_title - 2 - len(notes_label))
+        header += f"{label_pad}  {notes_label}"
     print(color.paint(header, color.BOLD))
     indent = " " * (w_num + 2)
     # The "where it left off" line hangs off the row number rather than under
