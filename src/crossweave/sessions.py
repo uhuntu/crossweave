@@ -718,6 +718,14 @@ def cmd_list(args):
             local_keys = {(r["tool"], r["id"]) for r in light}
             remotes = machines.remote_sessions(indexes, local_keys)
 
+    # The remote section gets the same slice the local one does: one busy
+    # machine near its 1000-entry index cap must not drown the table (seen
+    # live: 750 rows of 13-month-old codex history). Newest stay on top.
+    hidden_remote = 0
+    if remotes and limit is not None and len(remotes) > limit:
+        hidden_remote = len(remotes) - limit
+        remotes = remotes[:limit]
+
     if not rows and not remotes:
         render_rows(rows, sources=sources)
         return
@@ -742,6 +750,10 @@ def cmd_list(args):
             write_cache=False, start=len(rows) + 1,
             notes={(s["tool"], s["id"]): s["machine"] for s in remotes},
             notes_label="MACHINE")
+        if hidden_remote:
+            noun = "session" if hidden_remote == 1 else "sessions"
+            print(f"... and {hidden_remote} more remote {noun} not shown -- "
+                  f"`cw sessions --machines --limit all` lists every one.")
 
 
 def cmd_stats(args):

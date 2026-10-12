@@ -526,6 +526,32 @@ def test_the_listing_pulls_named_ssh_targets(monkeypatch, tmp_path, capsys):
     assert sessions.read_list_cache()[-1] == {"tool": "codex", "id": "r1", "machine": "kestrel"}
 
 
+def test_the_remote_section_gets_the_same_slice_as_the_local_one(monkeypatch, tmp_path, capsys):
+    """One busy machine near its index cap must not drown the table: the
+    remote slice matches --limit, and the overflow says where it went."""
+    monkeypatch.setattr(sessions, "LIST_CACHE_FILE", str(tmp_path / "last_list.json"))
+    _fake_scanners(monkeypatch, [light(sid="s1", title="local work", ts=100)])
+    pulled = [{
+        "machine": "swc-build", "machine_id": "f" * 32, "path": "ssh swc-build",
+        "generated_at": datetime.datetime.now().astimezone(),
+        "sessions": [{"tool": "codex", "id": f"r{n}", "title": f"remote {n}",
+                      "cwd": "/w", "ts": 80 - n} for n in range(5)],
+    }]
+    monkeypatch.setattr(machines, "pull_remote_indexes", lambda targets, **kw: pulled)
+
+    sessions.cmd_list(["--machines", "swc-build", "--limit", "2"])
+
+    out = capsys.readouterr().out
+    assert "and 3 more remote sessions not shown" in out
+    assert "remote 1" in out and "remote 4" not in out  # the newest two stayed
+    # the cache covers exactly what was printed: the row numbers hold
+    assert sessions.read_list_cache() == [
+        {"tool": "claude", "id": "s1"},
+        {"tool": "codex", "id": "r0", "machine": "swc-build"},
+        {"tool": "codex", "id": "r1", "machine": "swc-build"},
+    ]
+
+
 def test_machine_targets_stop_at_the_next_flag(monkeypatch):
     _fake_scanners(monkeypatch, [])
     seen = {}
