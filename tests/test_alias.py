@@ -125,17 +125,20 @@ def test_the_launcher_actually_runs(monkeypatch, tmp_path):
 
 
 def test_add_records_the_manifest_and_restores_from_it(tmp_path):
-    assert alias.cmd_alias(["add", "xx", "cx"]) == 0
-    assert manifest_names() == ["cx", "xx"]
+    # zz, not cx: cx was the second sample name until it got promoted into
+    # the shipped commands -- the promoted name now lives in the restore-
+    # skips-a-shipped-name test below, as a legacy manifest entry.
+    assert alias.cmd_alias(["add", "xx", "zz"]) == 0
+    assert manifest_names() == ["xx", "zz"]
 
     # a fresh machine: launchers gone, manifest copied over -- one command
-    for name in ("xx", "cx"):
+    for name in ("xx", "zz"):
         os.remove(launcher_path(name))
         assert not os.path.isfile(launcher_path(name))
 
     assert alias.cmd_alias(["add"]) == 0
     assert os.path.isfile(launcher_path("xx"))
-    assert os.path.isfile(launcher_path("cx"))
+    assert os.path.isfile(launcher_path("zz"))
 
 
 def test_add_with_no_args_and_empty_manifest_says_so(capsys):
@@ -152,12 +155,12 @@ def test_re_add_updates_an_alias_the_mechanism_owns():
 # ---------- remove / list ----------
 
 def test_remove_deletes_the_launcher_and_the_manifest_entry(tmp_path, capsys):
-    alias.cmd_alias(["add", "xx", "cx"])
+    alias.cmd_alias(["add", "xx", "zz"])
     capsys.readouterr()  # discard the add output
 
     assert alias.cmd_alias(["remove", "xx"]) == 0
     assert not os.path.isfile(launcher_path("xx"))
-    assert manifest_names() == ["cx"]
+    assert manifest_names() == ["zz"]
     capsys.readouterr()  # discard "removed xx"
 
     assert alias.cmd_alias(["list"]) == 0
@@ -199,9 +202,28 @@ def test_a_partial_list_never_half_applies(tmp_path, capsys):
 
 
 def test_the_installers_own_commands_are_protected(capsys):
-    for name in ("cw", "crossweave", "cb"):
+    for name in ("cw", "cx", "crossweave", "cb"):
         assert alias.cmd_alias(["add", name]) == 1
         assert "crossweave's own command" in capsys.readouterr().err
+
+
+def test_the_restore_skips_a_name_the_project_has_since_shipped(tmp_path, capsys):
+    """cx was a personal alias before it was a command, so an old manifest
+    can carry it. The fresh-machine restore must skip it and still create
+    the rest -- one stale entry refusing the whole restore would strand
+    every launcher on exactly the machines copying manifests forward."""
+    os.makedirs(os.path.dirname(alias.ALIAS_MANIFEST), exist_ok=True)
+    with open(alias.ALIAS_MANIFEST, "w", encoding="utf-8") as fh:
+        json.dump({"names": ["cx", "xx"]}, fh)
+
+    assert alias.cmd_alias(["add"]) == 0
+
+    assert "now crossweave's own command" in capsys.readouterr().err
+    assert not os.path.exists(launcher_path("cx"))
+    assert os.path.isfile(launcher_path("xx"))
+    # the manifest keeps the name: a rollback to a crossweave where cx is
+    # personal again finds it exactly where it left it
+    assert manifest_names() == ["cx", "xx"]
 
 
 def test_windows_device_names_are_refused(tmp_path, capsys):

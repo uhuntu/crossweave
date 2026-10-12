@@ -78,7 +78,7 @@ Examples:
   cw stats            # session counts per tool, oldest/newest, top directories
   cw doctor           # per-tool store health: is each store readable, and
                       #   how many sessions is it actually yielding
-  cw alias add xx cx  # personal command names -- launchers pointing at this
+  cw alias add xx     # personal command names -- launchers pointing at this
                       #   install; `cw alias add` with no names restores every
                       #   name in the manifest (the fresh-machine move)
 """

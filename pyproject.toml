@@ -26,13 +26,15 @@ Homepage = "https://github.com/uhuntu/crossweave"
 Repository = "https://github.com/uhuntu/crossweave"
 
 [project.scripts]
-# cw is the command people type; crossweave is the self-named one; ai/aim/
-# aimux/clisweave are kept so scripts and links from the old names keep
-# working (aim/aimux from the aimux era, clisweave from the clisweave one).
+# cw is the command people type; crossweave is the self-named one; cx is
+# the mark's own name (X is cross); ai/aim/aimux/clisweave are kept so
+# scripts and links from the old names keep working (aim/aimux from the
+# aimux era, clisweave from the clisweave one).
 # ai-sessions is no longer advertised -- it collides with an active PyPI
 # package of the same name -- but the entry point stays so existing pip
 # installs don't lose a command.
 cw = "crossweave.cli:main"
+cx = "crossweave.cli:main"
 crossweave = "crossweave.cli:main"
 ai = "crossweave.cli:main"
 aim = "crossweave.cli:main"

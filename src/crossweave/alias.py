@@ -3,12 +3,13 @@
 Two renames left a trail of compatibility aliases, and everyone running
 crossweave across several machines eventually wants their own on top:
 one user's `ai` outlived both renames (98 invocations against 7 for the
-official short command), and `xx`/`cx` arrived the same afternoon. The
-installer mints only the project's own names -- a deliberate line, drawn
-twice -- so personal ones were hand-made files per machine: a four-step
-ritual with MSYS-symlink and profile-function pitfalls, different on
-each shell, and easy to half-do (one such half-migration stranded a
-function mid-rename).
+official short command), and `xx`/`cx` arrived the same afternoon -- cx
+did well enough to be promoted into the shipped commands, which is how
+this list and PROTECTED drift together. The installer mints only the
+project's own names -- a deliberate line, drawn twice -- so personal
+ones were hand-made files per machine: a four-step ritual with
+MSYS-symlink and profile-function pitfalls, different on each shell, and
+easy to half-do (one such half-migration stranded a function mid-rename).
 
 `cw alias` replaces the ritual with the mechanism: `add` writes a
 launcher for any name you choose, pointing at the installation you are
@@ -22,7 +23,7 @@ Names are validated against the union of every namespace they must
 survive: letters, digits, `.`, `_`, `-` only -- `#` dies as a PyPI name
 (PEP 503), as a repo name, and as shell comment syntax, which is
 exactly where a two-letter name lives. The installer's own commands
-(cw, crossweave, cb) are refused: an alias on top of them could only
+(cw, cx, crossweave, cb) are refused: an alias on top of them could only
 shadow, never add.
 """
 import json
@@ -52,7 +53,7 @@ NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*\Z")
 # shadow the thing it names, never add to it. Heritage links (aim, aimux,
 # clisweave) are allowed targets -- overwriting them changes nothing they
 # point at (bin/cw either way), and they are the user's to manage.
-PROTECTED = {"cw", "crossweave", "cb"}
+PROTECTED = {"cw", "cx", "crossweave", "cb"}
 
 # Windows device names are filenames that silently mean hardware.
 RESERVED = {"CON", "PRN", "AUX", "NUL"}
@@ -208,8 +209,18 @@ def cmd_alias(argv):
     names = rest
     if sub == "add" and not names:
         # The fresh-machine restore: every name ever added, re-created.
-        names = _read_manifest()
+        # A name the project has since shipped (cx was a personal alias
+        # before it was a command) is skipped, not fatal -- otherwise one
+        # stale entry would refuse the whole restore, including the names
+        # that still need creating.
+        manifest = _read_manifest()
+        retired = [n for n in manifest if n in PROTECTED]
+        for name in retired:
+            print(f"skipping {name}: now crossweave's own command", file=sys.stderr)
+        names = [n for n in manifest if n not in PROTECTED]
         if not names:
+            if manifest:
+                return 0
             print("cw alias: nothing to restore -- the manifest is empty", file=sys.stderr)
             return 1
         print("restoring: " + ", ".join(names), file=sys.stderr)

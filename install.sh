@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Symlinks Crossweave's commands (cw, cb, plus compatibility aliases)
+# Symlinks Crossweave's commands (cw, cx, cb, plus compatibility aliases)
 # into a directory on your PATH.
 #
 # Run after cloning:
@@ -106,6 +106,13 @@ if [[ -e "$BIN_DIR/cb" || -L "$BIN_DIR/cb" ]]; then
   echo "Warning: $BIN_DIR/cb already exists; leaving it unchanged" >&2
 else
   link_or_launcher "$SCRIPT_DIR/bin/cb" "$BIN_DIR/cb"
+fi
+
+# cx is the mark's own name (X is cross); same takeover guard as cw/cb
+if [[ -e "$BIN_DIR/cx" || -L "$BIN_DIR/cx" ]]; then
+  echo "Warning: $BIN_DIR/cx already exists; leaving it unchanged" >&2
+else
+  link_or_launcher "$SCRIPT_DIR/bin/cx" "$BIN_DIR/cx"
 fi
 
 # crossweave is the self-named command; clisweave/aim/aimux are compatibility

@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-Installs Crossweave's commands (cw, cb, plus compatibility aliases) as native
+Installs Crossweave's commands (cw, cx, cb, plus compatibility aliases) as native
 .cmd launchers on PATH -- no Git Bash/WSL/Cygwin required.
 
 Run after cloning:
@@ -121,6 +121,13 @@ if (Test-Path $CbPath) {
     Write-Warning "$CbPath already exists; leaving it unchanged"
 } else {
     Write-Launcher "cb" (Join-Path $ScriptDir "bin\cb")
+}
+# cx is the mark's own name (X is cross); same takeover guard as cw/cb
+$CxPath = Join-Path $BinDir "cx.cmd"
+if (Test-Path $CxPath) {
+    Write-Warning "$CxPath already exists; leaving it unchanged"
+} else {
+    Write-Launcher "cx" (Join-Path $ScriptDir "bin\cx")
 }
 # crossweave is the self-named command; clisweave/aim/aimux are compatibility
 # aliases from the earlier names. ai-sessions is deliberately NOT installed
