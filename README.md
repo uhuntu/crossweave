@@ -93,10 +93,14 @@ mkdir -p ~/.config/crossweave/machines   # the directory's existence is the swit
 
 From then on every listing refreshes this machine's index in that directory (metadata only — tool, id, title, directory, timestamp; the transcripts never leave the machine they live on), and `cw sessions --machines` merges the others in: local rows first, then a second section of remote rows, each naming the machine it lives on. A row the local store also holds — mirrored stores do this — stays a plain resumable local row; a truly remote row is listed for discovery, and `cw resume <N>` / the handoff refuse it cleanly, naming the machine, instead of pretending. Without the directory nothing changes: no publish, no merge, no new behavior to learn — and `CROSSWEAVE_MACHINES_DIR` moves the directory, `CROSSWEAVE_MACHINE_NAME` overrides the name a machine publishes under. Indexes older than two weeks drop out of the merge with a note: a machine unused that long is a ghost, not a pointer.
 
+No always-on sync tool? The pull mode needs none: `cw sessions --machines 241 149` — each target is any ssh destination (an alias from `~/.ssh/config` works as-is, jump hosts included), and cw has the remote run `cw machines`, which prints that machine's index JSON on the spot. Nothing is configured, nothing is stored. A target that is unreachable, or still runs a cw older than this feature, costs one stderr line and never takes the listing down — the remote pays one `cw update`, and a password-only host needs key auth (or a live mux master), since the pull runs BatchMode rather than hang at a login prompt. The two transports feed the same merge: a synced directory and ssh targets mix freely in one `--machines`.
+
 ## Usage
 
 ```bash
 cw                          # recent sessions across all six tools (same as `cw sessions`)
+cw sessions --machines      # + other machines' sessions (a synced index dir)
+cw sessions --machines 241 149   # ...or pulled fresh over ssh, no setup
 cw claude -p "prompt"       # -> claude -p "prompt"
 cw codex -p -m o3 "prompt"  # -> codex exec -m o3 "prompt"
 cw kimi -c                  # -> kimi -c

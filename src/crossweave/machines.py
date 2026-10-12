@@ -27,6 +27,7 @@ import json
 import os
 import re
 import socket
+import subprocess
 import sys
 import uuid
 
@@ -111,22 +112,28 @@ def own_index_path():
     return os.path.join(MACHINES_DIR, machine_name() + ".json")
 
 
-def write_own_index(light_records):
-    """Publish this machine's index; a no-op while the directory does not
-    exist. `light_records` is the full, unfiltered light set -- the same
-    records a listing would resolve -- not a --tool/--limit slice: the
-    index describes the machine, the display filters describe the
-    question.
+def own_index():
+    """This machine's index as a dict, gathered fresh -- the dump half of
+    the pull mode (`cw machines`, what ssh calls run remotely) and the
+    heart of the publish."""
+    from . import sessions
 
-    Atomic like the listing cache and the alias manifest: a torn file in
-    a sync directory must not read back as "this machine has no
-    sessions". Best-effort like them too -- a listing must never fail
-    because a sync dir hiccuped."""
-    if not os.path.isdir(MACHINES_DIR):
-        return None
-    # Call-time import for the same reason render.py imports sessions at
-    # call time: that namespace is the patch surface the tests aim at, and
-    # a top-level import goes circular once cmd_list publishes.
+    light = []
+    for gather in (
+        sessions.claude_light_records,
+        sessions.codex_light_records,
+        lambda: sessions.kimi_light_records(False),
+        lambda: sessions.step_light_records(False),
+        lambda: sessions.zcode_light_records(False),
+        sessions.codebuddy_light_records,
+    ):
+        light += gather()
+    return _build_index(light)
+
+
+def _build_index(light_records):
+    """The full, unfiltered light set -> the index dict. The index
+    describes the machine, not the question."""
     from . import sessions
 
     by_key = {}
@@ -160,7 +167,7 @@ def write_own_index(light_records):
         })
     entries.sort(key=lambda e: e["ts"], reverse=True)
 
-    index = {
+    return {
         "schema": SCHEMA,
         "machine": machine_name(),
         "machine_id": machine_id(),
@@ -168,6 +175,18 @@ def write_own_index(light_records):
         "cw_version": __version__,
         "sessions": entries[:INDEX_CAP],
     }
+
+
+def write_own_index(light_records):
+    """Publish this machine's index; a no-op while the directory does not
+    exist. `light_records` is the listing's already-gathered set. Atomic
+    like the listing cache and the alias manifest: a torn file in a sync
+    directory must not read back as "this machine has no sessions".
+    Best-effort like them too -- a listing must never fail because a sync
+    dir hiccuped."""
+    if not os.path.isdir(MACHINES_DIR):
+        return None
+    index = _build_index(light_records)
     try:
         os.makedirs(MACHINES_DIR, exist_ok=True)
         tmp = os.path.join(MACHINES_DIR, f".{machine_name()}.{os.getpid()}.tmp")
@@ -179,14 +198,69 @@ def write_own_index(light_records):
     return own_index_path()
 
 
-def read_remote_indexes(now=None):
-    """Every other machine's fresh-enough index in the sync directory.
+def _coerce_index(data, source, now, mine):
+    """A parsed index dict -> the merged-listing shape, or None.
 
-    Each refusal is one stderr line and never fatal -- a foreign file, a
-    half-synced one, or a machine that stopped being used two weeks ago
-    must not take the merged listing down. The local machine's own file is
-    skipped silently: the local store is always fresher than this
-    machine's own index of itself."""
+    Every refusal is one stderr line naming `source` (a file path or an
+    ssh target) and is never fatal -- the tolerant-reader contract holds
+    for anything a sync tool dropped mid-flight or an older cw wrote.
+    The local machine's own index is skipped silently: the local store is
+    always fresher than this machine's index of itself."""
+    if not isinstance(data, dict):
+        return None
+    if data.get("schema") != SCHEMA:
+        print(f"cw sessions: skipping {source}: unknown schema "
+              f"{data.get('schema')!r}", file=sys.stderr)
+        return None
+    if data.get("machine_id") == mine:
+        return None
+    try:
+        generated = datetime.datetime.fromisoformat(data["generated_at"])
+    except (KeyError, TypeError, ValueError):
+        print(f"cw sessions: skipping {source}: unreadable generated_at",
+              file=sys.stderr)
+        return None
+    if generated.tzinfo is None:
+        generated = generated.astimezone()
+    age = (now - generated).total_seconds()
+    if age > STALE_MACHINE_SECONDS:
+        print(f"cw sessions: skipping {source}: index is "
+              f"{int(age // 86400)} days old", file=sys.stderr)
+        return None
+    raw = data.get("sessions")
+    sessions_out = []
+    for s in raw if isinstance(raw, list) else []:
+        if not isinstance(s, dict):
+            continue
+        tool, sid = s.get("tool"), s.get("id")
+        if not (isinstance(tool, str) and tool and isinstance(sid, str) and sid):
+            continue
+        title = s.get("title")
+        cwd = s.get("cwd")
+        ts = s.get("ts")
+        sessions_out.append({
+            "tool": tool,
+            "id": sid,
+            "title": title if isinstance(title, str) else "(no title)",
+            "cwd": cwd if isinstance(cwd, str) else "?",
+            "ts": ts if isinstance(ts, (int, float)) else 0,
+        })
+    machine = data.get("machine")
+    if not (isinstance(machine, str) and machine):
+        # files fall back to their filename; ssh targets to themselves
+        machine = (os.path.basename(source)[:-len(".json")]
+                   if source.endswith(".json") else source)
+    return {
+        "machine": machine,
+        "machine_id": data.get("machine_id"),
+        "path": source,
+        "generated_at": generated,
+        "sessions": sessions_out,
+    }
+
+
+def read_remote_indexes(now=None):
+    """Every other machine's fresh-enough index in the sync directory."""
     if not os.path.isdir(MACHINES_DIR):
         return []
     now = now or datetime.datetime.now().astimezone()
@@ -200,54 +274,9 @@ def read_remote_indexes(now=None):
         if not name.endswith(".json"):
             continue
         path = os.path.join(MACHINES_DIR, name)
-        data = read_json(path)
-        if not isinstance(data, dict):
-            continue  # torn mid-sync, or not an index at all -- silent
-        if data.get("schema") != SCHEMA:
-            print(f"cw sessions: skipping {path}: unknown schema "
-                  f"{data.get('schema')!r}", file=sys.stderr)
-            continue
-        if data.get("machine_id") == mine:
-            continue
-        try:
-            generated = datetime.datetime.fromisoformat(data["generated_at"])
-        except (KeyError, TypeError, ValueError):
-            print(f"cw sessions: skipping {path}: unreadable generated_at",
-                  file=sys.stderr)
-            continue
-        if generated.tzinfo is None:
-            generated = generated.astimezone()
-        age = (now - generated).total_seconds()
-        if age > STALE_MACHINE_SECONDS:
-            print(f"cw sessions: skipping {path}: index is "
-                  f"{int(age // 86400)} days old", file=sys.stderr)
-            continue
-        raw = data.get("sessions")
-        sessions_out = []
-        for s in raw if isinstance(raw, list) else []:
-            if not isinstance(s, dict):
-                continue
-            tool, sid = s.get("tool"), s.get("id")
-            if not (isinstance(tool, str) and tool and isinstance(sid, str) and sid):
-                continue
-            title = s.get("title")
-            cwd = s.get("cwd")
-            ts = s.get("ts")
-            sessions_out.append({
-                "tool": tool,
-                "id": sid,
-                "title": title if isinstance(title, str) else "(no title)",
-                "cwd": cwd if isinstance(cwd, str) else "?",
-                "ts": ts if isinstance(ts, (int, float)) else 0,
-            })
-        machine = data.get("machine")
-        found.append({
-            "machine": machine if isinstance(machine, str) and machine else name[:-len(".json")],
-            "machine_id": data.get("machine_id"),
-            "path": path,
-            "generated_at": generated,
-            "sessions": sessions_out,
-        })
+        index = _coerce_index(read_json(path), path, now, mine)
+        if index:
+            found.append(index)
     return found
 
 
@@ -274,3 +303,122 @@ def remote_sessions(indexes, local_keys):
             if old is None or (-candidate["ts"], candidate["machine"]) < (-old["ts"], old["machine"]):
                 by_key[key] = candidate
     return sorted(by_key.values(), key=lambda s: (-s["ts"], s["machine"], s["id"]))
+
+
+# The two shells a fleet actually has cannot run the same command line: the
+# Windows .cmd path needs cmd's %USERPROFILE% expansion, and a POSIX bash
+# reads a word starting with % as a job spec -- `%foo` means `fg %foo`, so
+# the Windows form produced "fg: no job control" on every jump host (seen
+# live 2026-10-12). One cheap probe tells them apart: %OS% expands under
+# cmd.exe to Windows_NT and passes through a POSIX shell verbatim -- padded
+# so the % never opens the word.
+_WIN_PROBE = "echo pre%OS%post"
+
+POSIX_ATTEMPTS = (
+    "cw machines",
+    "sh -lc 'cw machines'",
+    "$HOME/.local/bin/cw machines",
+    "sh -lc '$HOME/.local/bin/cw machines'",
+)
+WINDOWS_ATTEMPTS = ('"%USERPROFILE%\\.local\\bin\\cw.cmd" machines',)
+
+
+def _parse_json(text):
+    try:
+        return json.loads(text)
+    except ValueError:
+        return None
+
+
+def _probe_target(ssh_argv, timeout):
+    """(is_cmd, detail) for one ssh target: True = the shell is cmd.exe,
+    False = a POSIX shell, None = the host did not answer (detail says
+    why)."""
+    try:
+        proc = subprocess.run(ssh_argv + [_WIN_PROBE],
+                              capture_output=True, text=True, timeout=timeout)
+    except (subprocess.TimeoutExpired, OSError):
+        return None, "timed out"
+    if proc.returncode != 0:
+        lines = (proc.stderr or "").strip().splitlines()
+        return None, (lines[-1] if lines else f"exit {proc.returncode}")
+    return "Windows_NT" in proc.stdout, ""
+
+
+def _answer_detail(proc):
+    """The one stderr line a failed attempt earns, translated where it
+    names a fixable cause: an old cw says `unknown tool 'machines'`, and
+    what the user should do about that is update that machine."""
+    lines = (proc.stderr or "").strip().splitlines()
+    last = lines[-1] if lines else f"exit {proc.returncode}"
+    if "unknown tool" in last:
+        return "has a cw older than this feature -- run `cw update` on it"
+    return last
+
+
+def pull_remote_indexes(targets, timeout=15):
+    """Fresh indexes pulled over ssh, one per live target.
+
+    Each target is any ssh destination -- an alias from ~/.ssh/config
+    works as-is, jump hosts included. Failures are per-host, one stderr
+    line, never fatal: an unreachable host, one without cw, or one still
+    running a cw older than this feature must not take the merged listing
+    down. BatchMode keeps a password-only host from hanging the listing
+    at a prompt -- key auth, or a mux master already holding it, is the
+    price of a non-interactive pull."""
+    now = datetime.datetime.now().astimezone()
+    mine = machine_id()
+    found = []
+    for target in targets:
+        ssh_argv = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", target]
+        is_cmd, detail = _probe_target(ssh_argv, timeout)
+        if is_cmd is None:
+            print(f"cw sessions: {target}: {detail}", file=sys.stderr)
+            continue
+        index = None
+        self_index = False
+        for command in (WINDOWS_ATTEMPTS if is_cmd else POSIX_ATTEMPTS):
+            try:
+                proc = subprocess.run(ssh_argv + [command],
+                                      capture_output=True, text=True, timeout=timeout)
+            except (subprocess.TimeoutExpired, OSError):
+                detail = "timed out"
+                continue
+            if proc.returncode != 0:
+                detail = _answer_detail(proc)
+                continue
+            data = _parse_json(proc.stdout)
+            if isinstance(data, dict) and data.get("machine_id") == mine:
+                self_index = True  # pulled ourselves: nothing to add, no complaint
+                break
+            index = _coerce_index(data, f"ssh {target}", now, mine)
+            if index:
+                break
+            detail = "did not return an index"
+        if index:
+            found.append(index)
+        elif not self_index:
+            print(f"cw sessions: {target}: {detail}", file=sys.stderr)
+    return found
+
+
+def cmd_machines(args):
+    """The ssh endpoint of the pull mode: print this machine's index JSON.
+
+    `cw sessions --machines <host>` runs `cw machines` on the named hosts
+    (through the fallback cascade above) and merges what comes back; this
+    command is that remote half. Not for human eyes -- pipe it through
+    `python -m json.tool` if you want to read it."""
+    if args:
+        print("cw machines: takes no arguments -- this prints the machine "
+              "index JSON that `cw sessions --machines <host>` pulls",
+              file=sys.stderr)
+        return 2
+    print(json.dumps(own_index()))
+    return 0
+
+
+if __name__ == "__main__":
+    # `python -m crossweave.machines`: the same JSON `cw machines` prints,
+    # for pip installs and debugging without a launcher on PATH.
+    print(json.dumps(own_index()))

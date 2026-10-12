@@ -14,6 +14,7 @@ import datetime
 import json
 import os
 import socket
+import subprocess
 
 import pytest
 
@@ -364,3 +365,177 @@ def test_a_remote_row_handsoff_as_a_clean_refusal(monkeypatch, tmp_path, capsys)
         sessions.handoff_by_number(1, "codex", [])
 
     assert "lives on kestrel" in capsys.readouterr().err
+
+
+# ---------- the ssh pull mode ----------
+
+def remote_payload(machine="kestrel", machine_id="f" * 32):
+    return {"schema": machines.SCHEMA, "machine": machine, "machine_id": machine_id,
+            "generated_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+            "cw_version": "0.4.0",
+            "sessions": [{"tool": "codex", "id": "r1", "title": "pulled row",
+                          "cwd": "/w", "ts": 80}]}
+
+
+class _Proc:
+    def __init__(self, returncode, stdout="", stderr=""):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+def _ssh_runs(monkeypatch, results):
+    """results: one entry per ssh attempt the fake allows, starting with
+    the cmd-vs-POSIX probe. Returns the list of command argvs the pull
+    actually tried."""
+    calls = []
+    queue = list(results)
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        result = queue.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    monkeypatch.setattr(machines.subprocess, "run", fake_run)
+    return calls
+
+
+def _posix_probe():
+    return _Proc(0, stdout="pre%OS%post")  # %OS% unexpanded: a POSIX shell
+
+
+def test_pull_probes_the_shell_then_uses_the_first_attempt_that_answers(monkeypatch, capsys):
+    calls = _ssh_runs(monkeypatch, [_posix_probe(),
+                                    _Proc(0, stdout=json.dumps(remote_payload()))])
+
+    found = machines.pull_remote_indexes(["kestrel"])
+
+    assert [s["title"] for s in found[0]["sessions"]] == ["pulled row"]
+    assert len(calls) == 2
+    assert calls[0][6] == machines._WIN_PROBE
+    # the ssh shape: BatchMode (never hang at a prompt), connect timeout,
+    # the target verbatim -- a config alias works as-is
+    assert calls[0][:5] == ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8"]
+    assert calls[0][5] == "kestrel"
+    assert calls[1][6] == "cw machines"
+    assert capsys.readouterr().err == ""
+
+
+def test_a_windows_host_gets_the_cmd_form(monkeypatch, capsys):
+    calls = _ssh_runs(monkeypatch, [
+        _Proc(0, stdout="preWindows_NTpost"),  # %OS% expanded: cmd.exe
+        _Proc(0, stdout=json.dumps(remote_payload())),
+    ])
+
+    found = machines.pull_remote_indexes(["desktop"])
+
+    assert found and "cw.cmd" in calls[1][6]
+    assert "%USERPROFILE%" in calls[1][6]  # only cmd.exe expands it
+    assert capsys.readouterr().err == ""
+
+
+def test_pull_falls_through_a_host_that_lacks_the_command(monkeypatch, capsys):
+    calls = _ssh_runs(monkeypatch, [
+        _posix_probe(),
+        _Proc(127, stderr="bash: cw: command not found"),
+        _Proc(0, stdout=json.dumps(remote_payload())),
+    ])
+
+    found = machines.pull_remote_indexes(["kestrel"])
+
+    assert len(calls) == 3 and found  # the login-shell attempt answered
+    assert "sh -lc" in calls[2][6]
+
+
+def test_an_old_remote_cw_earns_an_actionable_hint(monkeypatch, capsys):
+    old_cw = "cw: unknown tool 'machines' (expected one of claude, ...)"
+    _ssh_runs(monkeypatch, [
+        _posix_probe(),
+        _Proc(127, stderr="bash: cw: command not found"),
+        _Proc(1, stderr=old_cw),
+        _Proc(1, stderr=old_cw),
+        _Proc(1, stderr=old_cw),
+    ])
+
+    assert machines.pull_remote_indexes(["kestrel"]) == []
+    assert "run `cw update` on it" in capsys.readouterr().err
+    # the remote's own words are never shown for this one: they say what
+    # happened, not what to do
+
+
+def test_pull_survives_a_dead_host_at_the_probe(monkeypatch, capsys):
+    _ssh_runs(monkeypatch, [subprocess.TimeoutExpired("ssh", 15)])
+
+    assert machines.pull_remote_indexes(["ghost"]) == []
+    assert "ghost: timed out" in capsys.readouterr().err
+
+
+def test_pull_says_why_a_host_answered_without_an_index(monkeypatch, capsys):
+    _ssh_runs(monkeypatch,
+              [_posix_probe()] + [_Proc(0, stdout="hello, I am not json")] * 4)
+
+    assert machines.pull_remote_indexes(["weird"]) == []
+    assert "weird:" in capsys.readouterr().err
+
+
+def test_pulling_oneself_is_silently_nothing(monkeypatch, capsys):
+    calls = _ssh_runs(monkeypatch, [
+        _posix_probe(),
+        _Proc(0, stdout=json.dumps(remote_payload(machine_id=machines.machine_id()))),
+    ])
+
+    assert machines.pull_remote_indexes(["self"]) == []
+    assert len(calls) == 2  # recognized at first sight, no cascade
+    assert capsys.readouterr().err == ""
+
+
+def test_the_machines_subcommand_prints_the_index(capsys):
+    assert machines.cmd_machines([]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["schema"] == machines.SCHEMA
+    assert data["machine"] == machines.machine_name()
+
+    assert machines.cmd_machines(["wat"]) == 2
+    assert "takes no arguments" in capsys.readouterr().err
+
+
+def test_the_listing_pulls_named_ssh_targets(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(sessions, "LIST_CACHE_FILE", str(tmp_path / "last_list.json"))
+    os.makedirs(machines.MACHINES_DIR)  # dir exists too: both transports merge
+    _fake_scanners(monkeypatch, [light(sid="s1", title="local work", ts=100)])
+    pulled = [{
+        "machine": "kestrel", "machine_id": "f" * 32, "path": "ssh kestrel",
+        "generated_at": datetime.datetime.now().astimezone(),
+        "sessions": [{"tool": "codex", "id": "r1", "title": "pulled row",
+                      "cwd": "/w", "ts": 80}],
+    }]
+    seen = {}
+    def fake_pull(targets, **kw):
+        seen["targets"] = targets
+        return pulled
+
+    monkeypatch.setattr(machines, "pull_remote_indexes", fake_pull)
+
+    sessions.cmd_list(["--machines", "kestrel", "ghost"])
+
+    assert seen["targets"] == ["kestrel", "ghost"]
+    out = capsys.readouterr().out
+    assert "pulled row" in out and "kestrel" in out
+    assert sessions.read_list_cache()[-1] == {"tool": "codex", "id": "r1", "machine": "kestrel"}
+
+
+def test_machine_targets_stop_at_the_next_flag(monkeypatch):
+    _fake_scanners(monkeypatch, [])
+    seen = {}
+
+    def fake_pull(targets, **kw):
+        seen["targets"] = targets
+        return []
+
+    monkeypatch.setattr(machines, "pull_remote_indexes", fake_pull)
+
+    sessions.cmd_list(["--machines", "kestrel", "ghost", "--tool", "codex"])
+
+    assert seen["targets"] == ["kestrel", "ghost"]

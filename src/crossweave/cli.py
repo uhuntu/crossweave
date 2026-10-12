@@ -6,7 +6,7 @@ through; zcode has no terminal interface, so `cw zcode` only opens the app.
 import os
 import sys
 
-from . import __version__, alias, doctor, search, sessions, update
+from . import __version__, alias, doctor, machines, search, sessions, update
 
 TOOLS = ("claude", "codex", "kimi", "step", "zcode", "codebuddy")
 
@@ -27,6 +27,7 @@ USAGE = f"""Usage: cw <{'|'.join(TOOLS)}> [common-options] [prompt] [-- extra na
        cw stats [--tool T]
        cw doctor [--tool T]
        cw alias add <name>... | list | remove <name>...
+       cw machines           # the ssh endpoint: prints this machine's index JSON
 
 Common options (translated per-tool, all optional):
   -p, --print              Non-interactive: print response and exit
@@ -68,6 +69,9 @@ Examples:
                             #   row names the machine it lives on; the
                             #   switch is the machines dir itself: sync
                             #   ~/.config/crossweave/machines
+  cw sessions --machines 241 149   # or pull fresh over ssh -- targets are
+                            #   ssh destinations (config aliases work); the
+                            #   remote needs this version's cw first
   cw resume kimi 97946bc7
   cw resume 3         # resume row 3 from the last `cw`/`cw sessions` listing
   cw resume 2 --cwd /path/to/other-project   # can't relocate row 2 in place -- hands off to a fresh session there
@@ -91,7 +95,7 @@ Examples:
 # this list, and the test asserts it matches what main() actually dispatches,
 # so adding a subcommand cannot leave the message stale the way it was when
 # `stats` and `step` were both missing from it.
-SUBCOMMANDS = ("sessions", "full", "search", "resume", "update", "stats", "doctor", "alias")
+SUBCOMMANDS = ("sessions", "full", "search", "resume", "update", "stats", "doctor", "alias", "machines")
 
 
 class UsageError(Exception):
@@ -294,6 +298,10 @@ def main():
         sys.exit(doctor.cmd_doctor(rest))
     if tool == "alias":
         sys.exit(alias.cmd_alias(rest))
+    if tool == "machines":
+        # The ssh endpoint of the pull mode: `ssh <host> cw machines` runs
+        # this and ships the JSON back to the caller's `--machines`.
+        sys.exit(machines.cmd_machines(rest))
 
     try:
         cmd = build_command(tool, rest)

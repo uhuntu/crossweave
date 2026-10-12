@@ -622,6 +622,7 @@ def cmd_list(args):
     cwd_filter = False
     show_all = False
     with_machines = False
+    machine_targets = []
     def next_value(flag, i):
         if i + 1 >= len(args):
             print(f"cw sessions: {flag} requires a value", file=sys.stderr)
@@ -654,6 +655,11 @@ def cmd_list(args):
             show_all = True; i += 1
         elif a == "--machines":
             with_machines = True; i += 1
+            # Targets are ssh destinations (a config alias works); they
+            # ride the flag until the next one starts with `--`, so
+            # `--machines 241 149 --tool codex` parses as intended.
+            while i < len(args) and not args[i].startswith("-"):
+                machine_targets.append(args[i]); i += 1
         else:
             print(f"cw sessions: unknown option '{a}'", file=sys.stderr)
             sys.exit(1)
@@ -704,6 +710,10 @@ def cmd_list(args):
     remotes = []
     if with_machines:
         indexes = machines.read_remote_indexes()
+        if machine_targets:
+            # ssh targets add to whatever the sync directory holds -- the
+            # two transports feed the same merge
+            indexes = indexes + machines.pull_remote_indexes(machine_targets)
         if indexes:
             local_keys = {(r["tool"], r["id"]) for r in light}
             remotes = machines.remote_sessions(indexes, local_keys)
