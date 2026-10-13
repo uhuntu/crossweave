@@ -24,6 +24,7 @@ USAGE = f"""Usage: cw <{'|'.join(TOOLS)}> [common-options] [prompt] [-- extra na
        cw resume <{'|'.join(TOOLS)}|N> [session-id-or-prefix] [--cwd <dir>]
        cw <N> <{'|'.join(TOOLS)}> [native-options]
        cw <N> rename <title>    # row first, the shape `cw <N> <tool>` reads in
+       cw <N> rename             # no title: the judge proposes one, and it is applied
        cw update [tools|all]
        cw stats [--tool T]
        cw doctor [--tool T]

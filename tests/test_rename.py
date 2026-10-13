@@ -471,44 +471,42 @@ def test_the_row_may_lead_the_verb(monkeypatch, tmp_path):
     assert _zcode_title("sess_abc") == ("USB 枚举握手排查", "custom")
 
 
-def test_the_row_first_spelling_needs_a_title(monkeypatch, tmp_path, capsys):
-    """`cw 12 rename` with nothing to rename it to is the same missing title
-    `cw rename 12` reports -- the word is an action, not a title. Nothing is
-    written, and the row is named back rather than answered with the whole
-    usage text."""
+def test_a_row_with_no_title_gets_a_judge_proposal(monkeypatch, tmp_path, capsys):
+    """`cw 1 rename` with no title is a request for a suggestion, not a
+    mistake. The row is the part that takes knowing the listing; the title is
+    the part the judge is better at. So it goes and gets one and applies it,
+    the way `cw 1 rename <title>` applies what it is handed."""
     _make_zcode_db(tmp_path)
     _zcode_row("sess_abc", "Hello")
     _fake_scanners(monkeypatch, [_zcode_record("sess_abc", "Hello")])
     _cache(monkeypatch, [{"tool": "zcode", "id": "sess_abc"}])
+    _judge_says(monkeypatch, "1. ZCode session resume flow")
 
-    assert _run_cli(monkeypatch, ["1", "rename"]) == 2
+    assert _run_cli(monkeypatch, ["1", "rename"]) == 0
 
-    err = capsys.readouterr().err
-    assert 'row 1 (zcode sess_abc, "Hello") -- no title given' in err
-    assert "cw <N> rename <title>" in err
-    assert _zcode_title("sess_abc") == ("Hello", "first_input")
+    assert _zcode_title("sess_abc") == ("ZCode session resume flow", "custom")
+    assert ("renamed: Hello -> ZCode session resume flow"
+            in capsys.readouterr().out)
 
 
-def test_a_missing_title_names_the_row_either_spelling(monkeypatch, tmp_path, capsys):
-    """The row is resolved before the arguments are counted, so the verb-first
-    spelling answers the same way -- and both of them say which row, which is
-    the one thing the person typing it does not already know."""
+def test_the_verb_first_spelling_proposes_too(monkeypatch, tmp_path, capsys):
+    """`cw rename 1` is the same request spelled the other way round."""
     _make_zcode_db(tmp_path)
     _zcode_row("sess_abc", "Hello")
     _fake_scanners(monkeypatch, [_zcode_record("sess_abc", "Hello")])
     _cache(monkeypatch, [{"tool": "zcode", "id": "sess_abc"}])
+    _judge_says(monkeypatch, "1. ZCode session resume flow")
 
-    assert rename.cmd_rename(["1"]) == 2
+    assert rename.cmd_rename(["1"]) == 0
 
-    assert ('row 1 (zcode sess_abc, "Hello") -- no title given'
-            in capsys.readouterr().err)
+    assert _zcode_title("sess_abc") == ("ZCode session resume flow", "custom")
 
 
-def test_a_missing_title_resolves_the_name_the_listing_shows(monkeypatch, tmp_path, capsys):
-    """The title has to come from _resolve_title_and_cwd, not off the light
-    record: several stores carry no title there and the listing resolves it
-    separately. Reading the field directly printed "(no title)" for a row that
-    plainly had one -- which defeats the point of naming the row back."""
+def test_the_row_named_back_is_the_name_the_listing_shows(monkeypatch, tmp_path, capsys):
+    """The title the proposal is measured against has to come from
+    _resolve_title_and_cwd, not off the light record: several stores carry no
+    title there and the listing resolves it separately, so reading the field
+    directly printed "(no title)" for a row that plainly had one."""
     path = _step_file(tmp_path, monkeypatch, [
         {"type": "session", "version": 3, "id": STEP_SID,
          "timestamp": "2026-10-12T02:47:14.509Z", "cwd": "/home/hunt"},
@@ -519,15 +517,62 @@ def test_a_missing_title_resolves_the_name_the_listing_shows(monkeypatch, tmp_pa
     ])
     _fake_scanners(monkeypatch, [_step_record(path)])
     _cache(monkeypatch, [{"tool": "step", "id": STEP_SID}])
+    _judge_says(monkeypatch, "1. 中文问题排查")
 
-    assert rename.cmd_rename(["1"]) == 2
+    assert rename.cmd_rename(["1"]) == 0
 
-    err = capsys.readouterr().err
-    assert ('row 1 (step %s, "中文") -- no title given'
-            % STEP_SID[:sessions.ID_SHOW]) in err
-    assert "(no title)" not in err
-    # nothing was written -- this is still the missing-title path
-    assert len(open(path, encoding="utf-8").readlines()) == 2
+    assert "renamed: 中文 -> 中文问题排查" in capsys.readouterr().out
+
+
+def test_a_row_with_nothing_in_it_is_not_asked(monkeypatch, tmp_path, capsys):
+    """Same rule as the sweep: a session that holds no words has no topic to
+    name, and asking anyway buys an invented one. The judge is never called."""
+    _make_zcode_db(tmp_path)
+    _zcode_row("sess_abc", "hi")
+    _fake_scanners(monkeypatch, [_zcode_record("sess_abc", "hi")])
+    _cache(monkeypatch, [{"tool": "zcode", "id": "sess_abc"}])
+    calls = []
+    _judge_says(monkeypatch, "1. invented", calls=calls, snippet="")
+
+    assert rename.cmd_rename(["1"]) == 1
+
+    assert "holds no content to name" in capsys.readouterr().err
+    assert calls == []
+    assert _zcode_title("sess_abc") == ("hi", "first_input")
+
+
+def test_a_proposal_that_restates_the_title_is_not_written(monkeypatch, tmp_path, capsys):
+    """A custom rename that changes nothing is worse than doing nothing: in
+    every store a custom rename is what stops the tool's own titler from ever
+    improving the name, so writing it freezes a bad title in place for good."""
+    _make_zcode_db(tmp_path)
+    _zcode_row("sess_abc", "Hello")
+    _fake_scanners(monkeypatch, [_zcode_record("sess_abc", "Hello")])
+    _cache(monkeypatch, [{"tool": "zcode", "id": "sess_abc"}])
+    _judge_says(monkeypatch, "1. hello")
+
+    assert rename.cmd_rename(["1"]) == 1
+
+    assert "already has" in capsys.readouterr().err
+    assert _zcode_title("sess_abc") == ("Hello", "first_input")
+
+
+def test_a_dead_judge_renames_the_row_to_nothing(monkeypatch, tmp_path, capsys):
+    _make_zcode_db(tmp_path)
+    _zcode_row("sess_abc", "Hello")
+    _fake_scanners(monkeypatch, [_zcode_record("sess_abc", "Hello")])
+    _cache(monkeypatch, [{"tool": "zcode", "id": "sess_abc"}])
+
+    def judge_dies(judge, prompt):
+        raise search.JudgeError(124)
+
+    monkeypatch.setattr(search, "_call_judge", judge_dies)
+    _snippet_says(monkeypatch)
+
+    assert rename.cmd_rename(["1"]) == 1
+
+    assert "judge" in capsys.readouterr().err
+    assert _zcode_title("sess_abc") == ("Hello", "first_input")
 
 
 def test_a_mistyped_row_with_no_title_says_out_of_range(monkeypatch, tmp_path, capsys):
@@ -545,15 +590,18 @@ def test_a_mistyped_row_with_no_title_says_out_of_range(monkeypatch, tmp_path, c
 
 
 def test_no_arguments_at_all_still_prints_the_full_usage(monkeypatch, tmp_path, capsys):
-    """With no row named there is nothing to resolve, so the usage text is
-    still the whole answer -- the row-naming message is only for the case
-    where a row was given and only the title is missing."""
+    """With no row named there is nothing to resolve and nothing to propose
+    for, so the usage text is still the whole answer."""
+    def judge_never(judge, prompt):
+        raise AssertionError("no row was named, so nothing should be asked")
+
+    monkeypatch.setattr(search, "_call_judge", judge_never)
     assert rename.cmd_rename([]) == 2
     assert rename.cmd_rename(["hello"]) == 2  # not a row number either
 
     err = capsys.readouterr().err
     assert "--auto" in err and "write through to the store" in err
-    assert "no title given" not in err
+    assert "renamed:" not in err
 
 
 def test_a_truncated_title_cuts_at_a_separator_not_mid_word():

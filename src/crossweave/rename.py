@@ -353,12 +353,15 @@ def _propose_titles(rows, snippets, judge):
 
 def _usage():
     print("Usage: cw rename <N> <title>   (or: cw <N> rename <title>)\n"
+          "       cw <N> rename            (no title: the judge proposes one)\n"
           "       cw rename --auto [<N>... | --trivial] [-y] [--judge T]\n"
           "  <N> is a row from the last `cw`/`cw sessions` listing. Renames\n"
           "  write through to the store itself (zcode, codex, claude, step,\n"
           "  kimi).\n"
-          "  --auto proposes titles with the judge; --trivial sweeps every\n"
-          "  session whose title says nothing (and implies --auto).",
+          "  A bare `cw <N> rename` asks the judge for a title for that one\n"
+          "  row and applies it. --auto proposes titles for several rows at\n"
+          "  once and asks before writing; --trivial sweeps every session\n"
+          "  whose title says nothing (and implies --auto).",
           file=sys.stderr)
     return 2
 
@@ -407,12 +410,12 @@ def cmd_rename(args):
         return 2
 
     if not auto:
-        return _rename_manual(positional)
+        return _rename_manual(positional, judge)
 
     return _rename_auto(positional, trivial, judge, yes)
 
 
-def _rename_manual(positional):
+def _rename_manual(positional, judge):
     from . import sessions
 
     if not positional or not sessions.ROW_NUMBER_RE.match(positional[0]):
@@ -428,27 +431,13 @@ def _rename_manual(positional):
         print(f"cw rename: {why}", file=sys.stderr)
         return 1
     if len(positional) < 2:
-        # The row was named, so name it back. Resolving it first is what makes
-        # that possible -- the old ordering counted the arguments before it
-        # looked at the listing, so `cw 4 rename` answered one missing word
-        # with the whole usage text and a mistyped row number got the same
-        # wall as a valid one. Nothing is written here either way.
-        #
-        # The title comes from _resolve_title_and_cwd, not off the light
-        # record: several stores carry no title there and the listing resolves
-        # it separately, so reading the field directly printed "(no title)"
-        # for a row that plainly had one.
-        old = sessions._resolve_title_and_cwd(r)[0]
-        # The missing thing is the argument, not the row's title -- these
-        # sessions usually have a perfectly good one already. Saying "row 4
-        # needs a title" reads as a complaint about the session, so the
-        # complaint is stated as what was left out of the command and the row
-        # stays in front, where a mistyped row number gets caught.
-        print(f"cw rename: row {n} ({r['tool']} {r['id'][:sessions.ID_SHOW]}, "
-              f"\"{_short(old)}\") -- no title given", file=sys.stderr)
-        print("Usage: cw rename <N> <title>   (or: cw <N> rename <title>)",
-              file=sys.stderr)
-        return 2
+        # No title given. That is a request for a suggestion, not a mistake:
+        # the row is the part that takes knowing the listing, and the title is
+        # the part the judge is better at. Resolving the row first is what
+        # makes that possible -- the old ordering counted the arguments before
+        # it looked at the listing, so a mistyped row number got the same
+        # usage wall as a valid one.
+        return _rename_suggested(r, judge)
     title = " ".join(positional[1:]).strip()
     if r["tool"] not in _RENAMABLE:
         _not_renamable(r)
@@ -459,6 +448,51 @@ def _rename_manual(positional):
               "take the rename", file=sys.stderr)
         return 1
     print(f"renamed: {old} -> {title}")
+    return 0
+
+
+def _rename_suggested(r, judge):
+    """Ask the judge for a title for one row and apply what it says.
+
+    It applies without asking first, the way `cw <N> rename <title>` does: a
+    batch of sixty is worth a look before anything is written, one row you
+    just pointed at is not, and the answer is printed either way. The rules
+    the sweep applies to a batch apply here too -- a session with nothing in
+    it is not asked, and a proposal that restates the title already there is
+    not written, because in every store a custom rename is what stops the
+    tool's own titler from ever improving the name.
+    """
+    from . import search, sessions
+
+    if r["tool"] not in _RENAMABLE:
+        _not_renamable(r)
+        return 1
+    old = sessions._resolve_title_and_cwd(r)[0]
+    snippet = (search.snippet_for(r) or "").strip()
+    if not snippet:
+        print(f"cw rename: {r['tool']} {r['id'][:sessions.ID_SHOW]} holds no "
+              f"content to name -- keeping \"{_short(old)}\"", file=sys.stderr)
+        return 1
+    try:
+        got, _ = _propose_titles([r], [snippet], judge)
+    except search.JudgeError as e:
+        print(f"cw rename: judge ({judge}) unavailable -- nothing renamed "
+              f"(exit {e.code})", file=sys.stderr)
+        return 1
+    new = (got.get(1) or "").strip() or None
+    if not new:
+        print(f"cw rename: the judge proposed nothing usable for "
+              f"{r['id'][:sessions.ID_SHOW]} -- nothing renamed", file=sys.stderr)
+        return 1
+    if _same_title(new, old):
+        print(f"cw rename: the judge proposed the title it already has "
+              f"(\"{_short(old)}\") -- keeping it", file=sys.stderr)
+        return 1
+    if not _apply(r, new):
+        print(f"cw rename: {r['tool']} {r['id'][:sessions.ID_SHOW]}: the store did not "
+              "take the rename", file=sys.stderr)
+        return 1
+    print(f"renamed: {old} -> {new}")
     return 0
 
 
@@ -583,7 +617,7 @@ def _rename_auto(positional, trivial, judge, yes):
             nameable.update(start + pos for pos in asked)
     except search.JudgeError as e:
         print(f"cw rename: judge ({judge}) unavailable -- nothing renamed "
-              f"(exit {e})", file=sys.stderr)
+              f"(exit {e.code})", file=sys.stderr)
         return 1
 
     if not nameable:

@@ -217,12 +217,15 @@ A listing is scanned, not read, and the tools themselves name sessions well only
 ```bash
 cw rename 12 "USB 枚举握手排查"        # row 12 from the last listing
 cw 12 rename "USB 枚举握手排查"        # the same command, row first
+cw 12 rename                          # no title: the judge proposes one
 cw rename --auto --trivial            # propose titles for every trivial one
 cw rename --trivial                   # the same -- --trivial implies --auto
 cw rename --auto 3 7 -y               # only these rows; no confirmation
 ```
 
 The row number may lead or follow the verb — `cw 12 rename "..."` is `cw rename 12 "..."`, matching how `cw 12 codex` already reads. `--auto` has no one row to put first, so the sweep stays verb-first. One reading is given up for it: a bare `rename` after a row number is no longer passed to the tool as a continuation prompt (it used to mean "continue this session and say *rename*"), and `cw resume 3 rename` is the explicit spelling for anyone who meant that.
+
+A row named with no title after it is a request for a suggestion, not a mistake — the row is the part that takes knowing the listing, and the title is the part the judge is better at. `cw 12 rename` asks the judge for one title and applies what it comes back with, printing the change; it is the single-row spelling of what `--auto` does for a batch, and it applies without asking because a batch of sixty is worth a look before anything is written and one row you just pointed at is not. The same two rules hold it back from writing something useless: a session with nothing in it is never asked, and a proposal that restates the title already there is reported rather than written, since a custom rename is what stops the tool's own titler from ever improving the name.
 
 `--auto` and `--trivial` answer different questions — who writes the title, and which sessions — so `cw rename --auto 3 7` names the rows and lets the judge title them, while `cw rename --trivial` on its own is the sweep, with `--auto` implied (it picks neither a title nor a row, so there is nothing else it could be asking for).
 
