@@ -24,6 +24,15 @@ title is native to the tool, not a cw-side overlay:
 codebuddy has no rename surface cw knows, and is refused rather than
 guessed at.
 
+The row number may lead or follow the verb: `cw rename 12 "..."` and
+`cw 12 rename "..."` are the same command, the latter reading the way
+`cw 12 codex` already does. `--auto` has no one row to put first, so
+the sweep keeps the verb-first spelling only -- and a `rename` sitting
+in that slot is not handed to the tool as a continuation prompt the
+way any other word after a row number would be, which is the one
+reading this costs; `cw resume 3 rename` spells that out for whoever
+meant it.
+
 --auto proposes titles with the same judge `cw search` uses, one
 batched call per twenty sessions, for sessions whose titles say
 nothing -- never for good ones. "Says nothing" is broader than short:
@@ -302,7 +311,7 @@ def _propose_titles(rows, judge):
 
 
 def _usage():
-    print("Usage: cw rename <N> <title>\n"
+    print("Usage: cw rename <N> <title>   (or: cw <N> rename <title>)\n"
           "       cw rename --auto [<N>... | --trivial] [-y] [--judge T]\n"
           "  <N> is a row from the last `cw`/`cw sessions` listing. Renames\n"
           "  write through to the store itself (zcode, codex, claude, step,\n"
@@ -359,10 +368,9 @@ def cmd_rename(args):
 def _rename_manual(positional):
     from . import sessions
 
-    if len(positional) < 2 or not sessions.ROW_NUMBER_RE.match(positional[0]):
+    if not positional or not sessions.ROW_NUMBER_RE.match(positional[0]):
         return _usage()
     n = int(positional[0])
-    title = " ".join(positional[1:]).strip()
     cache = sessions.read_list_cache()
     if not cache:
         print("cw rename: no session list cached yet -- run `cw sessions` first",
@@ -372,6 +380,24 @@ def _rename_manual(positional):
     if r is None:
         print(f"cw rename: {why}", file=sys.stderr)
         return 1
+    if len(positional) < 2:
+        # The row was named, so name it back. Resolving it first is what makes
+        # that possible -- the old ordering counted the arguments before it
+        # looked at the listing, so `cw 4 rename` answered one missing word
+        # with the whole usage text and a mistyped row number got the same
+        # wall as a valid one. Nothing is written here either way.
+        #
+        # The title comes from _resolve_title_and_cwd, not off the light
+        # record: several stores carry no title there and the listing resolves
+        # it separately, so reading the field directly printed "(no title)"
+        # for a row that plainly had one.
+        old = sessions._resolve_title_and_cwd(r)[0]
+        print(f"cw rename: row {n} ({r['tool']} {r['id'][:12]}, "
+              f"\"{_short(old)}\") needs a title", file=sys.stderr)
+        print("Usage: cw rename <N> <title>   (or: cw <N> rename <title>)",
+              file=sys.stderr)
+        return 2
+    title = " ".join(positional[1:]).strip()
     if r["tool"] not in _RENAMABLE:
         _not_renamable(r)
         return 1
@@ -382,6 +408,13 @@ def _rename_manual(positional):
         return 1
     print(f"renamed: {old} -> {title}")
     return 0
+
+
+def _short(title, limit=48):
+    """A title as it reads inside an error line -- long enough to recognize
+    the row, short enough that the message stays two lines."""
+    t = (title or "").strip() or "(no title)"
+    return t if len(t) <= limit else t[:limit].rstrip() + "…"
 
 
 def _rename_auto(positional, trivial, judge, yes):

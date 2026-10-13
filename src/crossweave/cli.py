@@ -23,6 +23,7 @@ USAGE = f"""Usage: cw <{'|'.join(TOOLS)}> [common-options] [prompt] [-- extra na
        cw search <topic> [--tool {'|'.join(TOOLS)}] [--judge {'|'.join(search.JUDGE_CMD)}] [--why] [--all]
        cw resume <{'|'.join(TOOLS)}|N> [session-id-or-prefix] [--cwd <dir>]
        cw <N> <{'|'.join(TOOLS)}> [native-options]
+       cw <N> rename <title>    # row first, the shape `cw <N> <tool>` reads in
        cw update [tools|all]
        cw stats [--tool T]
        cw doctor [--tool T]
@@ -94,6 +95,7 @@ Examples:
   cw rename 12 "USB 枚举握手排查"   # rename row 12 in the store itself --
                             #   zcode/codex/claude/step/kimi today; --auto
                             #   proposes titles for the trivial ones via the judge
+  cw 12 rename "USB 枚举握手排查"   # the same command, row first
 """
 
 # Everything `cw <x>` accepts that is not a tool. The unknown-tool error names
@@ -288,6 +290,19 @@ def main():
         return
     if sessions.ROW_NUMBER_RE.match(tool):
         # `cw <N>` is shorthand for `cw resume <N>`.
+        if rest and rest[0] == "rename":
+            # `cw 3 rename "title"` -- the row first, the shape `cw 3 codex`
+            # already reads in, so pointing at a listing row and saying what
+            # to do with it is one grammar rather than two. The word has to be
+            # lifted out here: cmd_rename takes the row as its first
+            # positional, so leaving it in place would fold it into the title.
+            #
+            # It is not handed to the tool as a continuation prompt the way
+            # every other second word after a row number is -- that reading is
+            # what this costs, and it was near-worthless anyway (a session
+            # continued with the single word "rename" as its instruction).
+            # `cw resume 3 rename` still spells it out for anyone who meant it.
+            sys.exit(rename.cmd_rename([tool, *rest[1:]]))
         sessions.cmd_resume(argv)
         return
     if tool == "update":

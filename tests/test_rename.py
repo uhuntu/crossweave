@@ -19,7 +19,7 @@ import time
 
 import pytest
 
-from crossweave import codex, common, kimi, rename, search, sessions, step, zcode
+from crossweave import cli, codex, common, kimi, rename, search, sessions, step, zcode
 
 
 @pytest.fixture(autouse=True)
@@ -438,6 +438,168 @@ def test_an_out_of_range_row_is_refused(monkeypatch, tmp_path, capsys):
 
     assert rename.cmd_rename(["4", "whatever"]) == 1
     assert "out of range" in capsys.readouterr().err
+
+
+# ---------- the row-first spelling ----------
+
+def _run_cli(monkeypatch, argv):
+    """`cw <argv>` all the way through main(), returning the exit code it
+    raised (0 for the paths that just return). main() is the only place the
+    row-first spelling exists, so the dispatch has to be exercised from there
+    and not from cmd_rename."""
+    monkeypatch.setattr(sys, "argv", ["cw", *argv])
+    try:
+        cli.main()
+    except SystemExit as exc:
+        return exc.code
+    return 0
+
+
+def test_the_row_may_lead_the_verb(monkeypatch, tmp_path):
+    """`cw 12 rename "..."` is `cw rename 12 "..."` -- the same command with
+    the row first, the shape `cw 12 codex` already reads in. The word has to
+    be lifted out of argv before cmd_rename sees it: cmd_rename takes the row
+    as its first positional, so leaving it in place would fold it into the
+    title and rename the session to "rename USB 枚举握手排查"."""
+    _make_zcode_db(tmp_path)
+    _zcode_row("sess_abc", "Hello")
+    _fake_scanners(monkeypatch, [_zcode_record("sess_abc", "Hello")])
+    _cache(monkeypatch, [{"tool": "zcode", "id": "sess_abc"}])
+
+    assert _run_cli(monkeypatch, ["1", "rename", "USB 枚举握手排查"]) == 0
+
+    assert _zcode_title("sess_abc") == ("USB 枚举握手排查", "custom")
+
+
+def test_the_row_first_spelling_needs_a_title(monkeypatch, tmp_path, capsys):
+    """`cw 12 rename` with nothing to rename it to is the same missing title
+    `cw rename 12` reports -- the word is an action, not a title. Nothing is
+    written, and the row is named back rather than answered with the whole
+    usage text."""
+    _make_zcode_db(tmp_path)
+    _zcode_row("sess_abc", "Hello")
+    _fake_scanners(monkeypatch, [_zcode_record("sess_abc", "Hello")])
+    _cache(monkeypatch, [{"tool": "zcode", "id": "sess_abc"}])
+
+    assert _run_cli(monkeypatch, ["1", "rename"]) == 2
+
+    err = capsys.readouterr().err
+    assert 'row 1 (zcode sess_abc, "Hello") needs a title' in err
+    assert "cw <N> rename <title>" in err
+    assert _zcode_title("sess_abc") == ("Hello", "first_input")
+
+
+def test_a_missing_title_names_the_row_either_spelling(monkeypatch, tmp_path, capsys):
+    """The row is resolved before the arguments are counted, so the verb-first
+    spelling answers the same way -- and both of them say which row, which is
+    the one thing the person typing it does not already know."""
+    _make_zcode_db(tmp_path)
+    _zcode_row("sess_abc", "Hello")
+    _fake_scanners(monkeypatch, [_zcode_record("sess_abc", "Hello")])
+    _cache(monkeypatch, [{"tool": "zcode", "id": "sess_abc"}])
+
+    assert rename.cmd_rename(["1"]) == 2
+
+    assert 'row 1 (zcode sess_abc, "Hello") needs a title' in capsys.readouterr().err
+
+
+def test_a_missing_title_resolves_the_name_the_listing_shows(monkeypatch, tmp_path, capsys):
+    """The title has to come from _resolve_title_and_cwd, not off the light
+    record: several stores carry no title there and the listing resolves it
+    separately. Reading the field directly printed "(no title)" for a row that
+    plainly had one -- which defeats the point of naming the row back."""
+    path = _step_file(tmp_path, monkeypatch, [
+        {"type": "session", "version": 3, "id": STEP_SID,
+         "timestamp": "2026-10-12T02:47:14.509Z", "cwd": "/home/hunt"},
+        {"type": "message", "id": "a8831c82", "parentId": None,
+         "timestamp": "2026-10-12T02:47:19.139Z",
+         "message": {"role": "user", "content": [
+             {"type": "text", "text": "中文"}]}},
+    ])
+    _fake_scanners(monkeypatch, [_step_record(path)])
+    _cache(monkeypatch, [{"tool": "step", "id": STEP_SID}])
+
+    assert rename.cmd_rename(["1"]) == 2
+
+    err = capsys.readouterr().err
+    assert 'row 1 (step %s, "中文") needs a title' % STEP_SID[:12] in err
+    assert "(no title)" not in err
+    # nothing was written -- this is still the missing-title path
+    assert len(open(path, encoding="utf-8").readlines()) == 2
+
+
+def test_a_mistyped_row_with_no_title_says_out_of_range(monkeypatch, tmp_path, capsys):
+    """Counting the arguments first used to answer a bad row number with the
+    usage wall, hiding the "out of range" message that has something to say
+    about it. Resolving first lets both errors be their own."""
+    _make_zcode_db(tmp_path)
+    _zcode_row("sess_abc", "Hello")
+    _fake_scanners(monkeypatch, [_zcode_record("sess_abc", "Hello")])
+    _cache(monkeypatch, [{"tool": "zcode", "id": "sess_abc"}])
+
+    assert rename.cmd_rename(["4"]) == 1
+
+    assert "4 is out of range (last listing had 1 rows)" in capsys.readouterr().err
+
+
+def test_no_arguments_at_all_still_prints_the_full_usage(monkeypatch, tmp_path, capsys):
+    """With no row named there is nothing to resolve, so the usage text is
+    still the whole answer -- the row-naming message is only for the case
+    where a row was given and only the title is missing."""
+    assert rename.cmd_rename([]) == 2
+    assert rename.cmd_rename(["hello"]) == 2  # not a row number either
+
+    err = capsys.readouterr().err
+    assert "--auto" in err and "write through to the store" in err
+    assert "needs a title" not in err
+
+
+def test_any_other_word_after_a_row_still_reaches_the_tool(monkeypatch):
+    """Only `rename` is lifted out of that slot. Every other word keeps the
+    meaning it always had -- a continuation prompt handed to the tool, which
+    is why the one word that changes had to be named explicitly."""
+    seen = []
+    monkeypatch.setattr(sessions, "cmd_resume", lambda args: seen.append(args))
+
+    assert _run_cli(monkeypatch, ["1", "接着这个话题聊"]) == 0
+
+    assert seen == [["1", "接着这个话题聊"]]
+
+
+def test_the_explicit_spelling_still_passes_rename_as_a_prompt(monkeypatch):
+    """`cw resume 1 rename` says what `cw 1 rename` used to mean -- continue
+    the session with the word as its instruction. Giving up that reading is
+    the price of the row-first one, and this is the way back to it."""
+    seen = []
+    monkeypatch.setattr(sessions, "cmd_resume", lambda args: seen.append(args))
+
+    assert _run_cli(monkeypatch, ["resume", "1", "rename"]) == 0
+
+    assert seen == [["1", "rename"]]
+
+
+def test_the_row_first_spelling_takes_an_auto_selector(monkeypatch, tmp_path, capsys):
+    """`cw 12 rename --auto` falls out of the routing for free: the row lands
+    in cmd_rename's positionals and --auto keeps its flags, so it reads as
+    `cw rename --auto 12` -- propose for that one row and nothing else."""
+    _make_zcode_db(tmp_path)
+    _zcode_row("sess_abc", "Hello", age_seconds=999_000)
+    _fake_scanners(monkeypatch, [_zcode_record("sess_abc", "Hello", age_seconds=999_000)])
+    _cache(monkeypatch, [{"tool": "zcode", "id": "sess_abc"}])
+
+    def judge_refuses(_judge, _prompt):
+        class R:
+            returncode = 1
+            stdout = ""
+            stderr = "no judge"
+        return R()
+    monkeypatch.setattr(search, "_call_judge", judge_refuses)
+
+    assert _run_cli(monkeypatch, ["1", "rename", "--auto"]) == 1
+
+    # it got as far as asking the judge about row 1 -- not a usage error, and
+    # not a sweep of every session
+    assert "judge" in capsys.readouterr().err
 
 
 # ---------- auto ----------

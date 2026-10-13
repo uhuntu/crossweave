@@ -216,9 +216,12 @@ A listing is scanned, not read, and the tools themselves name sessions well only
 
 ```bash
 cw rename 12 "USB 枚举握手排查"        # row 12 from the last listing
+cw 12 rename "USB 枚举握手排查"        # the same command, row first
 cw rename --auto --trivial            # propose titles for every trivial one
 cw rename --auto 3 7 -y               # only these rows; no confirmation
 ```
+
+The row number may lead or follow the verb — `cw 12 rename "..."` is `cw rename 12 "..."`, matching how `cw 12 codex` already reads. `--auto` has no one row to put first, so the sweep stays verb-first. One reading is given up for it: a bare `rename` after a row number is no longer passed to the tool as a continuation prompt (it used to mean "continue this session and say *rename*"), and `cw resume 3 rename` is the explicit spelling for anyone who meant that.
 
 Five stores have a surface cw can write: **zcode** (`title_source='custom'`, which its own auto-titler respects), **codex** (a newer `session_index.jsonl` line — the index keeps the most recent name per id), **claude** (a `custom-title` record appended to the transcript — the reader keeps the last one), **step** (a `session_info` record appended to the session file — both of step's readers keep the last one, and its own resume picker shows the name *in place of* the first prompt, which is what makes a session that opened with "中文" nameable) and **kimi** (`title` plus `titleKind='custom'` in the session's `state.json` — the kind every titler path bails on, so the name is permanent; `updatedAt` is left alone so a renamed session does not look freshly live). The others are refused rather than guessed at. `--auto` extracts each candidate's content, asks the same judge `cw search` uses — one batched call per twenty sessions — and shows a before/after table that waits for a yes; it never proposes for a session that already has a real title, and skips sessions updated in the last five minutes, which are live conversations mid-flight with their own titler. "A real title" is a question of shape, not length: a row titled with a pasted shell transcript, an `ls -l` listing, a bare URL or a CLI's startup banner says less than one titled "hi", and counts as having no title at all.
 
