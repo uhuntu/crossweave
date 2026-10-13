@@ -116,6 +116,29 @@ TOOL_UPDATE_RECOVERY_MARKERS = {
     ),
 }
 
+# step's self-updater writes the new binary over its own currently-executing
+# file, which Linux refuses with ETXTBSY -- confirmed live 2026-10-13: the
+# only process holding ~/.stepcode/bin/step open during `step update` was the
+# updater itself, so the command can never succeed until upstream switches to
+# temp-file + rename. step's install script downloads to a temp file and
+# `mv -f`s it into place, which sidesteps the busy binary entirely, so an
+# ETXTBSY failure falls back to running that script instead.
+TOOL_UPDATE_BUSY_MARKER = {
+    "step": "ETXTBSY",
+}
+TOOL_UPDATE_FALLBACK_CMD = {
+    # The same installer as a fresh `curl .../install.sh | bash` install.
+    # Pipe to bash, not sh: the script is bash (#!/usr/bin/env bash, [[, etc).
+    "step": ["bash", "-c",
+             "curl -fsSL https://static-openapi.stepfun.com/stepcode/install.sh | bash"],
+}
+
+# The fallback pipes curl into bash without pipefail, so a dead curl leaves
+# the shell reading empty input and exiting 0 -- the same false-success shape
+# as codex's own updater, caught the same way.
+TOOL_UPDATE_FAILURE_MARKERS["step"] = ("curl: (",)
+TOOL_UPDATE_RECOVERY_MARKERS["step"] = ("installed StepCode",)
+
 
 def detect_repo_dir(package_dir):
     """If crossweave was installed by symlinking into a git clone (the curl or
@@ -181,15 +204,18 @@ def run_update_command(argv, env=None, failure_markers=(), recovery_markers=(),
 
 
 def run_with_retries(argv, retries, proxy, failure_markers=(), give_up_markers=(),
-                     recovery_markers=()):
+                     recovery_markers=(), capture=False):
     """Run one updater, retrying up to `retries` times. Returns
-    (exit code, gave_up) -- `gave_up` marks a failure that a retry cannot fix,
-    so callers don't dress it up as something a proxy would help with.
+    (exit code, gave_up, output) -- `gave_up` marks a failure that a retry
+    cannot fix, so callers don't dress it up as something a proxy would help
+    with; `output` is the captured stdout (empty unless `capture`, or unless
+    give_up_markers need it).
 
     The first attempt is always direct, so a proxy is only ever a fallback --
     the loop below forces it for retries by stripping no_proxy exemptions, the
     same way the tool updaters have always done."""
     last_code = 0
+    output = ""
     for attempt in range(1 + retries):
         env = None
         if attempt:
@@ -206,13 +232,13 @@ def run_with_retries(argv, retries, proxy, failure_markers=(), give_up_markers=(
         last_code, output = run_update_command(
             argv, env=env, failure_markers=failure_markers,
             recovery_markers=recovery_markers,
-            capture=bool(give_up_markers),
+            capture=capture or bool(give_up_markers),
         )
         if last_code == 0:
             break
         if any(marker in output for marker in give_up_markers):
-            return last_code, True
-    return last_code, False
+            return last_code, True, output
+    return last_code, False, output
 
 
 def update_self():
@@ -230,8 +256,8 @@ def update_self():
         argv = [sys.executable, "-m", "pip", "install", "--upgrade", "crossweave"]
         give_up_markers = ()
 
-    code, gave_up = run_with_retries(argv, SELF_UPDATE_RETRIES, proxy,
-                                     give_up_markers=give_up_markers)
+    code, gave_up, _output = run_with_retries(argv, SELF_UPDATE_RETRIES, proxy,
+                                              give_up_markers=give_up_markers)
     if code != 0 and gave_up:
         print(
             "cw update: this failure isn't transient, so it was not retried "
@@ -254,7 +280,10 @@ def update_tools():
 
     A failed update is retried (per-tool counts in TOOL_UPDATE_RETRIES), and
     when UPDATE_PROXY_ENV is set the retries go through that proxy -- the
-    first attempt is always direct, so a proxy is only ever a fallback."""
+    first attempt is always direct, so a proxy is only ever a fallback. A
+    self-updater that fails with its busy-binary marker (TOOL_UPDATE_BUSY_MARKER,
+    e.g. step's ETXTBSY) is routed to the tool's install script instead
+    (TOOL_UPDATE_FALLBACK_CMD)."""
     worst = 0
     for tool, argv in TOOL_UPDATE_CMD.items():
         if shutil.which(tool) is None:
@@ -268,11 +297,32 @@ def update_tools():
             # attempt -- without this, codex (0 retries) could never reach it.
             retries = 1
         print(f"Updating {tool} ...", flush=True)
-        last_code, _ = run_with_retries(
+        # Tools in TOOL_UPDATE_BUSY_MARKER get their output captured even with
+        # no retry policy, so a self-update-that-cannot-replace-its-own-binary
+        # failure is recognized and routed to the fallback installer.
+        busy_marker = TOOL_UPDATE_BUSY_MARKER.get(tool)
+        last_code, _gave_up, output = run_with_retries(
             argv, retries, proxy,
             failure_markers=TOOL_UPDATE_FAILURE_MARKERS.get(tool, ()),
             recovery_markers=TOOL_UPDATE_RECOVERY_MARKERS.get(tool, ()),
+            capture=busy_marker is not None,
         )
+
+        fallback = TOOL_UPDATE_FALLBACK_CMD.get(tool)
+        if (
+            last_code != 0 and busy_marker and busy_marker in output
+            and fallback and os.name != "nt"
+        ):
+            # os.name guard: the fallback is a bash one-liner, meaningless
+            # where bash does not exist.
+            print(f"  {tool}'s own updater cannot replace its running binary; "
+                  f"trying its install script instead ...", flush=True)
+            fb_retries = 1 if proxy else 0
+            last_code, _gave_up, _output = run_with_retries(
+                fallback, fb_retries, proxy,
+                failure_markers=TOOL_UPDATE_FAILURE_MARKERS.get(tool, ()),
+                recovery_markers=TOOL_UPDATE_RECOVERY_MARKERS.get(tool, ()),
+            )
 
         if last_code != 0:
             worst = last_code

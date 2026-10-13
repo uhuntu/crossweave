@@ -504,6 +504,95 @@ def test_update_tools_reports_worst_exit_code_but_keeps_going(monkeypatch):
     assert len(calls) == 4
 
 
+# ---------- step's busy-binary fallback ----------
+
+def test_update_tools_falls_back_to_install_script_when_step_binary_is_busy(
+    monkeypatch, capsys
+):
+    """step's self-updater writes over its own running executable and dies with
+    ETXTBSY on every run (live 2026-10-13). update_tools should recognize that
+    failure and rerun the update through step's install script, which downloads
+    to a temp file and mv's into place."""
+    monkeypatch.setattr(update.shutil, "which", lambda tool: f"/usr/bin/{tool}")
+    monkeypatch.delenv(update.UPDATE_PROXY_ENV, raising=False)
+
+    class FakeResult:
+        def __init__(self, code, stdout=""):
+            self.returncode = code
+            self.stdout = stdout
+
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        if argv[0] == "step":
+            return FakeResult(1, "Step update failed: ETXTBSY: text file is "
+                                 "busy, open '/home/hunt/.stepcode/bin/step'\n")
+        # the fallback install script succeeds
+        return FakeResult(0, "installed StepCode 0.1.4 to /home/hunt/.stepcode/bin/step\n")
+
+    monkeypatch.setattr(update.subprocess, "run", fake_run)
+
+    assert update.update_tools() == 0
+    assert [c for c in calls if c[0] == "step"] == [["step", "update"]]
+    bash_calls = [c for c in calls if c[0] == "bash"]
+    assert len(bash_calls) == 1
+    assert bash_calls[0][:2] == ["bash", "-c"]
+    assert "install.sh" in bash_calls[0][2]
+    out = capsys.readouterr().out
+    assert "install script" in out
+
+
+def test_update_tools_no_fallback_when_step_fails_for_other_reasons(monkeypatch):
+    """Only the busy-binary marker triggers the fallback; an ordinary step
+    failure (network, auth, ...) must not silently rerun an install script."""
+    monkeypatch.setattr(update.shutil, "which", lambda tool: f"/usr/bin/{tool}")
+    monkeypatch.delenv(update.UPDATE_PROXY_ENV, raising=False)
+
+    class FakeResult:
+        def __init__(self, code, stdout=""):
+            self.returncode = code
+            self.stdout = stdout
+
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        return FakeResult(1, "Step update failed: network unreachable\n")
+
+    monkeypatch.setattr(update.subprocess, "run", fake_run)
+
+    assert update.update_tools() != 0
+    assert [c[0] for c in calls].count("step") == 1
+    assert not any(c[0] == "bash" for c in calls)
+
+
+def test_update_tools_step_fallback_detects_curl_failure_hidden_by_zero_exit(
+    monkeypatch, capsys
+):
+    """The fallback pipes curl into bash without pipefail: a dead curl leaves
+    bash reading empty input, exiting 0 -- same false-success shape as codex's
+    own updater, and it must not count as an updated step."""
+    monkeypatch.setattr(update.shutil, "which", lambda tool: f"/usr/bin/{tool}")
+    monkeypatch.delenv(update.UPDATE_PROXY_ENV, raising=False)
+
+    class FakeResult:
+        def __init__(self, code, stdout=""):
+            self.returncode = code
+            self.stdout = stdout
+
+    def fake_run(argv, **kwargs):
+        if argv[0] == "step":
+            return FakeResult(1, "Step update failed: ETXTBSY: text file is busy\n")
+        return FakeResult(0, "curl: (28) SSL connection timeout\n")
+
+    monkeypatch.setattr(update.subprocess, "run", fake_run)
+
+    assert update.update_tools() != 0
+    captured = capsys.readouterr()
+    assert "reported success after its installer failed" in captured.err
+
+
 # ---------- cmd_update dispatch modes ----------
 
 def test_cmd_update_tools_mode_only_updates_tools(monkeypatch):
