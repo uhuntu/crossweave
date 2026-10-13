@@ -439,8 +439,13 @@ def _rename_manual(positional):
         # it separately, so reading the field directly printed "(no title)"
         # for a row that plainly had one.
         old = sessions._resolve_title_and_cwd(r)[0]
+        # The missing thing is the argument, not the row's title -- these
+        # sessions usually have a perfectly good one already. Saying "row 4
+        # needs a title" reads as a complaint about the session, so the
+        # complaint is stated as what was left out of the command and the row
+        # stays in front, where a mistyped row number gets caught.
         print(f"cw rename: row {n} ({r['tool']} {r['id'][:sessions.ID_SHOW]}, "
-              f"\"{_short(old)}\") needs a title", file=sys.stderr)
+              f"\"{_short(old)}\") -- no title given", file=sys.stderr)
         print("Usage: cw rename <N> <title>   (or: cw <N> rename <title>)",
               file=sys.stderr)
         return 2
@@ -457,11 +462,28 @@ def _rename_manual(positional):
     return 0
 
 
+# Separators a truncated title may be cut at: ASCII punctuation and space, plus
+# the CJK punctuation these sessions' titles are full of. Mixed together because
+# a title like "1. OpenClaw telegram 重复轮询（每 60s 报一次错，…" has both.
+_SEP = " ，、：；,.:;)）】\"'"
+
+
 def _short(title, limit=48):
     """A title as it reads inside an error line -- long enough to recognize
     the row, short enough that the message stays two lines."""
     t = (title or "").strip() or "(no title)"
-    return t if len(t) <= limit else t[:limit].rstrip() + "…"
+    if len(t) <= limit:
+        return t
+    cut = t[:limit]
+    # Cut at a separator near the limit rather than through the middle of a
+    # word: "…是 bug 不是日志噪…" reads like a typo, where a cut at the comma
+    # before it reads like a title that goes on. Only a separator in the last
+    # stretch counts -- reaching back to the first one in the title would throw
+    # away most of what the limit was there to buy.
+    boundary = max(cut.rfind(c) for c in _SEP)
+    if boundary >= limit - 14:
+        cut = cut[:boundary]
+    return cut.rstrip(_SEP) + "…"
 
 
 def _same_title(a, b):

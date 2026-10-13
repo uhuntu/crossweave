@@ -484,7 +484,7 @@ def test_the_row_first_spelling_needs_a_title(monkeypatch, tmp_path, capsys):
     assert _run_cli(monkeypatch, ["1", "rename"]) == 2
 
     err = capsys.readouterr().err
-    assert 'row 1 (zcode sess_abc, "Hello") needs a title' in err
+    assert 'row 1 (zcode sess_abc, "Hello") -- no title given' in err
     assert "cw <N> rename <title>" in err
     assert _zcode_title("sess_abc") == ("Hello", "first_input")
 
@@ -500,7 +500,8 @@ def test_a_missing_title_names_the_row_either_spelling(monkeypatch, tmp_path, ca
 
     assert rename.cmd_rename(["1"]) == 2
 
-    assert 'row 1 (zcode sess_abc, "Hello") needs a title' in capsys.readouterr().err
+    assert ('row 1 (zcode sess_abc, "Hello") -- no title given'
+            in capsys.readouterr().err)
 
 
 def test_a_missing_title_resolves_the_name_the_listing_shows(monkeypatch, tmp_path, capsys):
@@ -522,7 +523,7 @@ def test_a_missing_title_resolves_the_name_the_listing_shows(monkeypatch, tmp_pa
     assert rename.cmd_rename(["1"]) == 2
 
     err = capsys.readouterr().err
-    assert ('row 1 (step %s, "中文") needs a title'
+    assert ('row 1 (step %s, "中文") -- no title given'
             % STEP_SID[:sessions.ID_SHOW]) in err
     assert "(no title)" not in err
     # nothing was written -- this is still the missing-title path
@@ -552,7 +553,30 @@ def test_no_arguments_at_all_still_prints_the_full_usage(monkeypatch, tmp_path, 
 
     err = capsys.readouterr().err
     assert "--auto" in err and "write through to the store" in err
-    assert "needs a title" not in err
+    assert "no title given" not in err
+
+
+def test_a_truncated_title_cuts_at_a_separator_not_mid_word():
+    """The message shows the row's title so the row can be recognized, which
+    means a long one gets cut. Cutting at the character limit landed inside a
+    word -- "…是 bug 不是日志噪…" reads like a typo rather than a title that
+    goes on -- so the cut moves to the nearest separator instead."""
+    long_mixed = "1. OpenClaw telegram 重复轮询（每 60s 报一次错，是 bug 不是日志噪音）： Telegram getUpdate"
+    # The limit falls on 噪, three characters into the word 噪音; the cut moves
+    # back to the space before 不是 instead.
+    assert rename._short(long_mixed) == "1. OpenClaw telegram 重复轮询（每 60s 报一次错，是 bug…"
+
+    # Only a separator in the last stretch counts: this one sits at the very
+    # front, and reaching back to it would spend the whole limit buying one
+    # clause. A hard cut keeps the rest.
+    assert rename._short("a " + "x" * 60) == "a " + "x" * 46 + "…"
+
+    # No separator anywhere in range -- nothing to move to.
+    assert rename._short("x" * 60) == "x" * 48 + "…"
+
+    # Short enough, or empty: untouched either way.
+    assert rename._short("Hello") == "Hello"
+    assert rename._short("") == "(no title)"
 
 
 def test_any_other_word_after_a_row_still_reaches_the_tool(monkeypatch):
