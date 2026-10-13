@@ -1,1 +1,13 @@
-foreign
+#!/usr/bin/env python3
+"""Thin shim for non-pip installs (git clone + ./install.sh).
+Delegates to the crossweave package under ../src.
+"""
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "src"))
+
+from crossweave.cli import main  # noqa: E402
+
+if __name__ == "__main__":
+    main()

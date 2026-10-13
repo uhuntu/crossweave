@@ -4,6 +4,7 @@ common flags across the terminal tools and passes everything else straight
 through; zcode has no terminal interface, so `cw zcode` only opens the app.
 """
 import os
+import re
 import sys
 
 from . import __version__, alias, doctor, machines, rename, search, sessions, update
@@ -105,6 +106,23 @@ Examples:
 # so adding a subcommand cannot leave the message stale the way it was when
 # `stats` and `step` were both missing from it.
 SUBCOMMANDS = ("sessions", "full", "search", "resume", "update", "stats", "doctor", "alias", "machines", "rename")
+
+
+def usage(name="cw"):
+    """USAGE, naming the command it was invoked as.
+
+    `cw` is what the project ships and what every message says, but it is not
+    the only way in: `cx` is the mark's own name, the ai/aim/aimux/clisweave
+    links are the earlier names' trail, and `cw alias add` mints personal
+    names -- all of them the same main(). `cx --help` answering "Usage: cw
+    ..." reads as though the command does not exist, so the word is swapped
+    for the one that was typed. Only the standalone word is touched, never a
+    substring of one, and a name that is not a command at all (`__main__.py`
+    when the package is run directly) falls back to cw.
+    """
+    if not name or name == "cw" or "." in name:
+        return USAGE
+    return re.sub(r"\bcw\b", name, USAGE)
 
 
 class UsageError(Exception):
@@ -268,7 +286,7 @@ def main():
     argv = sys.argv[1:]
 
     if argv and argv[0] in ("-h", "--help"):
-        print(USAGE)
+        print(usage(os.path.basename(sys.argv[0]) if sys.argv and sys.argv[0] else ""))
         return
     if argv and argv[0] in ("-v", "--version"):
         print(f"crossweave {__version__}")
