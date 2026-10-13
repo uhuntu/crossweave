@@ -159,9 +159,12 @@ def test_gather_candidates_respects_tool_filter(monkeypatch):
                         lambda show_all=False: [{"tool": "zcode", "ts": 5}])
     monkeypatch.setattr(sessions, "codebuddy_light_records",
                         lambda show_all=False: [{"tool": "codebuddy", "ts": 0}])
+    monkeypatch.setattr(sessions, "workbuddy_light_records",
+                        lambda show_all=False: [{"tool": "workbuddy", "ts": 6}])
 
-    assert [r["tool"] for r in search.gather_candidates(None)] == ["zcode", "step", "kimi", "codex", "claude", "codebuddy"]
+    assert [r["tool"] for r in search.gather_candidates(None)] == ["workbuddy", "zcode", "step", "kimi", "codex", "claude", "codebuddy"]
     assert [r["tool"] for r in search.gather_candidates("codex")] == ["codex"]
+    assert [r["tool"] for r in search.gather_candidates("workbuddy")] == ["workbuddy"]
 
 
 def test_gather_candidates_passes_all_through_to_the_stores(monkeypatch):

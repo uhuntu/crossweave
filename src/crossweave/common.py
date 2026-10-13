@@ -28,7 +28,7 @@ CODEX_HOME = os.path.join(HOME, ".codex")
 KIMI_HOME = os.path.join(HOME, ".kimi-code")
 UUID_RE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 
-TOOLS = ("claude", "codex", "kimi", "step", "zcode", "codebuddy")
+TOOLS = ("claude", "codex", "kimi", "step", "zcode", "codebuddy", "workbuddy")
 
 
 
@@ -274,6 +274,13 @@ HANDOFF_SESSION_TITLE = "cw handoff"
 # Codex's own spellings of the same thing are in CODEX_BOILERPLATE_PREFIXES.
 IMAGE_MESSAGE_PREFIX = "[Image:"
 
+# The same captionless paste in the WorkBuddy shell's two spellings: a block
+# that is nothing but the file the image was written to, and a query that is
+# nothing but a reference to it (`@image#1:Clipboard_Screenshot.png`). Neither
+# names a topic any more than claude's tmp path does, so neither may become a
+# turn or a title.
+IMAGE_REFERENCE_PREFIXES = ("<image_local_path", "@image#")
+
 # A resume seed written by another tool in this setup (aimux; not clisweave's
 # own wording, which names the source session): a session opened by it has
 # this as its only opening, ahead of the pasted transcript and the real
@@ -308,6 +315,38 @@ def unwrap_openclaw_ctx(text):
         end = rest.find("```", 3)
         rest = "" if end == -1 else rest[end + 3:]
     return rest.strip()
+
+
+# WorkBuddy is the CodeBuddy engine inside an Electron shell, and the shell
+# prepends a per-turn context block to every user message with the user's own
+# words at the end of it, inside the same block:
+#   <system-reminder data-role="user-context"> ... </system-reminder>
+#   <user_query>排查 Cisco VPN 连接报错</user_query>
+# The prefix test below throws that whole block away as the scaffolding it
+# mostly is -- which, for this store, would throw away the request with it. So
+# it is unwrapped rather than skipped, the way openclaw's relay header is,
+# because the words live in the same message. Only a message that OPENS with
+# the wrapper qualifies: the engine's compaction recap (`<cb_summary>` below)
+# quotes earlier queries inside itself, and taking the first `<user_query>`
+# anywhere would read a session's opening prompt as a turn it never had. The
+# engine's own CLI writes no wrapper at all (checked across
+# ~/.codebuddy/projects), so this is inert for the store that doesn't need it.
+USER_QUERY_RE = re.compile(r"<user_query>(.*?)(?:</user_query>|\Z)", re.S)
+SYSTEM_REMINDER_CLOSE = "</system-reminder>"
+
+
+def unwrap_user_query(text):
+    """What a user message actually says: the content of the `<user_query>`
+    the shell puts after its context wrapper, else the message itself. Only
+    worth calling on a *user* record -- see USER_QUERY_RE."""
+    stripped = text.strip()
+    if not stripped.startswith("<system-reminder"):
+        return text
+    end = stripped.rfind(SYSTEM_REMINDER_CLOSE)
+    if end == -1:
+        return text
+    m = USER_QUERY_RE.search(stripped[end + len(SYSTEM_REMINDER_CLOSE):])
+    return m.group(1).strip() if m else text
 
 # Injected when a session is picked up after it ran out of context: the
 # recap of the conversation being continued, ahead of anything the user
@@ -380,6 +419,11 @@ INJECTED_PREFIXES = (
     IMAGE_MESSAGE_PREFIX,
     CONTINUATION_PROMPT_PREFIX,
     RESUME_SEED_PREFIX,
+    # The codebuddy engine's own recap of the conversation so far, injected as
+    # a *user* record when it compacts a session to keep it under context.
+    # Read verbatim it is a session full of turns nobody asked for.
+    "<cb_summary", "<conversation_history_summary",
+    *IMAGE_REFERENCE_PREFIXES,
 )
 
 
@@ -403,7 +447,7 @@ def is_image_only(text):
     """True if a message is nothing but a serialized image -- a captionless
     screenshot paste, which names no topic and so can't be a title or even
     the fallback behind one (see claude_title_and_cwd)."""
-    return text.strip().startswith(IMAGE_MESSAGE_PREFIX)
+    return text.strip().startswith((IMAGE_MESSAGE_PREFIX, *IMAGE_REFERENCE_PREFIXES))
 
 # A pasted shell transcript with a full prompt -- "user@host:/path$ cmd" or
 # zsh's "(user@host)-[~] $ cmd". Only the opening is tested: multi-line

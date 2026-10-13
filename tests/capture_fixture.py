@@ -26,7 +26,7 @@ import json
 import os
 import sys
 
-TOOLS = ("claude", "codex", "kimi", "step", "codebuddy")
+TOOLS = ("claude", "codex", "kimi", "step", "codebuddy", "workbuddy")
 
 # Keys whose string values are structure rather than content. Everything
 # else a string rides on is blinded -- biased toward over-blinding, since

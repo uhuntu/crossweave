@@ -126,6 +126,7 @@ def own_index():
         lambda: sessions.step_light_records(False),
         lambda: sessions.zcode_light_records(False),
         sessions.codebuddy_light_records,
+        sessions.workbuddy_light_records,
     ):
         light += gather()
     return _build_index(light)

@@ -1,9 +1,10 @@
 """Session listing/resuming across the claude, codex, kimi, step, zcode,
-and codebuddy stores.
+codebuddy and workbuddy stores.
 Invoked via `cw sessions` / `cw resume`, or standalone as `ai-sessions`.
 
 The per-tool store readers live in claude.py, codex.py, kimi.py, step.py,
-zcode.py and codebuddy.py, on top of the shared primitives in common.py;
+zcode.py, codebuddy.py and workbuddy.py, on top of the shared primitives in
+common.py;
 the listing table draws itself in render.py, and the byte machinery behind
 `cw search`'s exact pre-pass lives in scan.py. This module keeps the
 commands, the row resolution, the per-row facts (turn counts, the "where
@@ -143,6 +144,12 @@ from .zcode import (
     zcode_tui_known_missing,
     zcode_workspace_link,
 )
+from .workbuddy import (
+    workbuddy_chat_link,
+    workbuddy_light_records,
+    workbuddy_open_command,
+    workbuddy_resolve,
+)
 from .render import (
     CWD_MIN_WIDTH,
     ELLIPSIS_CHOICES,
@@ -272,12 +279,13 @@ def session_literal_scan_files(record):
     which stays OUT of wire.jsonl -- a real session mentioned the searched
     term only there and was unfindable)."""
     tool = record["tool"]
-    if tool == "codebuddy":
+    if tool in ("codebuddy", "workbuddy"):
         # The transcript plus the tool-results sidecars: a big output lands
         # in <slug>/<sid>/tool-results/<callId>.txt, outside the jsonl --
         # the same shape of problem that gave kimi its output.log scan. The
         # sidecars are plain text, so _file_contains's tool=None path
-        # reads them as-is.
+        # reads them as-is. WorkBuddy is the same engine writing the same
+        # files under its own root, so it scans the same way.
         files = [record["path"]] if record.get("path") else []
         return files + codebuddy_tool_results(record)
     if tool in ("claude", "step"):
@@ -343,8 +351,10 @@ def session_handoff_details(tool, sid):
             return None
         cwd = record.get("cwd")
         messages = zcode_handoff_messages(sid)
-    elif tool == "codebuddy":
-        record = next((r for r in codebuddy_light_records(show_all=True) if r["id"] == sid), None)
+    elif tool in ("codebuddy", "workbuddy"):
+        records = (codebuddy_light_records(show_all=True) if tool == "codebuddy"
+                   else workbuddy_light_records(show_all=True))
+        record = next((r for r in records if r["id"] == sid), None)
         if not record:
             return None
         cwd = record.get("cwd")
@@ -500,6 +510,15 @@ def perform_handoff(source_tool, source_id, target_tool, extra, forced_cwd=None,
               "session from a prompt -- hand the context to claude, codex, kimi or step "
               "instead", file=sys.stderr)
         sys.exit(1)
+    if target_tool == "workbuddy":
+        # Nothing to seed, and no conditional that could change it: WorkBuddy
+        # has no CLI at all (see _resume_workbuddy), and its deep link opens a
+        # conversation rather than carrying one in. The export would land in a
+        # cache file nothing ever reads.
+        print("cw handoff: workbuddy is a desktop app that starts no session from a prompt "
+              "-- hand the context to claude, codex, kimi, step or codebuddy instead",
+              file=sys.stderr)
+        sys.exit(1)
     details = session_handoff_details(source_tool, source_id)
     if not details:
         print(f"cw handoff: source session {source_id} is no longer available", file=sys.stderr)
@@ -627,6 +646,7 @@ def _all_light_records():
     light += step_light_records(False)
     light += zcode_light_records(False)
     light += codebuddy_light_records(False)
+    light += workbuddy_light_records(False)
     return light
 
 
@@ -692,6 +712,7 @@ def cmd_list(args):
         ("step", lambda: step_light_records(show_all)),
         ("zcode", lambda: zcode_light_records(show_all)),
         ("codebuddy", lambda: codebuddy_light_records(show_all)),
+        ("workbuddy", lambda: workbuddy_light_records(show_all)),
     ):
         if publish or tool_filter in (None, tool):
             light += gather()
@@ -805,6 +826,8 @@ def cmd_stats(args):
         light += zcode_light_records(True)
     if tool_filter in (None, "codebuddy"):
         light += codebuddy_light_records(True)
+    if tool_filter in (None, "workbuddy"):
+        light += workbuddy_light_records(True)
 
     total = len(light)
     if total == 0:
@@ -828,7 +851,7 @@ def cmd_stats(args):
     print("By tool:")
     for tool in TOOLS:
         if tool in by_tool:
-            print(f"  {tool:<7} {by_tool[tool]}")
+            print(f"  {tool:<9} {by_tool[tool]}")
     print(f"Oldest:  {relative_time(oldest_ts)}")
     print(f"Newest:  {relative_time(newest_ts)}")
     print("Top directories:")
@@ -950,12 +973,12 @@ def _handoff_seed_texts(tool, d):
         if d.get("role") not in ("user", "assistant"):
             return []
         return _all_text_blocks(list_field(d, "content"), ("input_text", "output_text"))
-    if tool == "zcode":
-        # zcode is never a handoff target -- perform_handoff refuses it, no
-        # CLI there seeds a session -- so no zcode session can open with a
-        # handoff seed. Stated explicitly rather than left to fall through:
-        # everything below this branch is kimi's record shapes, which a
-        # zcode record would silently hit.
+    if tool in ("zcode", "workbuddy"):
+        # Neither is ever a handoff target -- perform_handoff refuses both,
+        # no CLI there seeds a session -- so no session of either can open
+        # with a handoff seed. Stated explicitly rather than left to fall
+        # through: everything below this branch is kimi's record shapes,
+        # which a zcode record would silently hit.
         return []
     if d.get("type") == "turn.prompt":
         return _all_text_blocks(list_field(d, "input"))
@@ -1033,6 +1056,8 @@ def _find_record(tool, sid):
         return next((r for r in zcode_light_records(show_all=True) if r["id"] == sid), None)
     if tool == "codebuddy":
         return next((r for r in codebuddy_light_records(show_all=True) if r["id"] == sid), None)
+    if tool == "workbuddy":
+        return next((r for r in workbuddy_light_records(show_all=True) if r["id"] == sid), None)
     return None
 
 
@@ -1052,7 +1077,7 @@ def _resolve_title_and_cwd(r, depth=0):
         # and the light record normalized it on the way in.
         title = r.get("title") or "(no title)"
         cwd_show = r.get("cwd") or "?"
-    elif tool == "codebuddy":
+    elif tool in ("codebuddy", "workbuddy"):
         # Same: the titler wrote into the file, and the light record read it
         title = r.get("title") or "(no title)"
         cwd_show = r.get("cwd") or "?"
@@ -1133,7 +1158,7 @@ def session_turns(record):
     reads as None rather than 0: a store that writes its JSON with spaces
     after the colons would otherwise show every session as turn-free."""
     tool = record.get("tool")
-    if tool == "codebuddy":
+    if tool in ("codebuddy", "workbuddy"):
         # The single-pass reader already counted the genuine prompts -- the
         # slash-command echoes it skips are the reason this tool has no
         # byte-marker here.
@@ -1211,7 +1236,7 @@ def _last_text_from_record(tool, d):
             return None
         return extract_text_from_content(payload.get("content"),
                                          ("output_text", "input_text", "text"))
-    if tool == "codebuddy":
+    if tool in ("codebuddy", "workbuddy"):
         # codex-rs record shapes: a call and its result are their own
         # records, and a message's blocks are typed input_text/output_text.
         if d.get("type") != "message":
@@ -1411,6 +1436,7 @@ def _zcode_next_instruction(extra):
 ID_RESOLVERS = {
     "claude": claude_resolve, "codex": codex_resolve, "kimi": kimi_resolve,
     "step": step_resolve, "zcode": zcode_resolve, "codebuddy": codebuddy_resolve,
+    "workbuddy": workbuddy_resolve,
 }
 
 
@@ -1425,6 +1451,60 @@ def resolve_any_id(prefix):
         for sid in resolve(prefix):
             hits.append((tool, sid))
     return hits
+
+
+def _resume_workbuddy(full_id, extra, forced_cwd):
+    """Open one WorkBuddy session in the app that owns it.
+
+    The app is the only thing that can: WorkBuddy puts no executable on PATH,
+    and the CLI it bundles requires modules from inside its own app.asar, so
+    that CLI runs only under Electron (see workbuddy.py). What the app does
+    register is a session-level deep link, so unlike zcode's desktop fallback
+    this lands on the conversation itself rather than on the workspace around
+    it -- and the link is built from the whole record rather than the id
+    alone, because which edition owns a session rides on the store it was
+    read out of, and the row cache a `cw resume <N>` reads back keeps no
+    such field.
+
+    Words after the id and `--cwd` both have nowhere to go -- a GUI takes no
+    instruction from a terminal, and a session lives in the directory it was
+    started in -- so each is refused with the route that does work named
+    instead: handing the context to a terminal tool. The store is read first
+    because both refusals are about a session, and a made-up id is the truer
+    error than a relocation request for something that is not here."""
+    record = _find_record("workbuddy", full_id)
+    if not record:
+        print(f"cw resume: no workbuddy session {full_id} on this machine -- it may live "
+              "on another one, or be a conversation the app keeps in the cloud, which "
+              "stores no transcript here", file=sys.stderr)
+        sys.exit(1)
+    if extra:
+        print("cw resume: the WorkBuddy app takes no instruction from here -- resume it "
+              "without words, or continue this session in a terminal with "
+              "`cw <N> claude` on its row", file=sys.stderr)
+        sys.exit(1)
+    if forced_cwd:
+        print("cw resume: a workbuddy session can't be relocated -- the app opens it where "
+              f"it lives ({record.get('cwd') or 'its own directory'}); hand its context to "
+              "a terminal tool instead (`cw <N> claude` on its row)", file=sys.stderr)
+        sys.exit(1)
+    cmd = workbuddy_open_command(record)
+    if not cmd:
+        print(f"cw resume: nothing here can open a {record.get('scheme') or 'workbuddy'}:// "
+              "link -- start the WorkBuddy app and pick the session from its own list",
+              file=sys.stderr)
+        sys.exit(1)
+    if record.get("cwd"):
+        print(f"cw resume: this workbuddy session lives in {record['cwd']}", file=sys.stderr)
+    print(f"cw resume: opening the WorkBuddy app on session {full_id[:ID_SHOW]} "
+          f"({workbuddy_chat_link(record)})", file=sys.stderr)
+    # Popen, not exec: the app is a window that was asked for, not the
+    # terminal's successor process, so the wrapper exits once it is up.
+    try:
+        subprocess.Popen(cmd)
+    except OSError as exc:
+        print(f"cw resume: could not open the app: {exc}", file=sys.stderr)
+        sys.exit(1)
 
 
 def cmd_resume(args):
@@ -1470,6 +1550,13 @@ def cmd_resume(args):
                       "pick a session) -- open the app and use its task list, or run "
                       "`cw sessions --tool zcode` for ids", file=sys.stderr)
             return
+        elif tool == "workbuddy":
+            # No CLI, so no picker to open: the app's own session list is the
+            # picker, and cw's listing is the one that spans every tool.
+            print("cw resume: workbuddy has no CLI to pick a session with -- run "
+                  "`cw sessions --tool workbuddy` and resume a row, or use the app's "
+                  "own session list", file=sys.stderr)
+            return
         else:
             # no id -> step opens its own session selector
             exec_or_die(["step", "--resume"])
@@ -1488,6 +1575,10 @@ def cmd_resume(args):
         for m in matches:
             print(f"  {m}", file=sys.stderr)
         sys.exit(1)
+
+    if tool == "workbuddy":
+        _resume_workbuddy(full_id, extra, forced_cwd)
+        return
 
     cwd_getter = {"claude": claude_session_cwd, "codex": codex_cwd, "kimi": kimi_session_cwd,
                   "step": step_session_cwd, "zcode": zcode_session_cwd,

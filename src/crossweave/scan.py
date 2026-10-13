@@ -78,9 +78,10 @@ def _literal_texts(tool, entry):
             elif btype == "toolCall":
                 texts.append(_step_tool_call_text(block))
         return texts
-    if tool == "codebuddy":
+    if tool in ("codebuddy", "workbuddy"):
         # One function covers every record kind the scan wants, because the
         # snippet reader shares it: messages, calls, and call results.
+        # WorkBuddy is the same engine's transcript under a different root.
         return codebuddy_record_texts(entry, with_tool_output=True)
     if tool == "kimi":
         if kind == "turn.prompt":

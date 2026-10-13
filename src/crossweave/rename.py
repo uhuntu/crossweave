@@ -21,8 +21,8 @@ title is native to the tool, not a cw-side overlay:
           titler path returns early on 'custom', so the name is
           permanent)
 
-codebuddy has no rename surface cw knows, and is refused rather than
-guessed at.
+codebuddy and workbuddy have no rename surface cw knows, and are refused
+rather than guessed at.
 
 The row number may lead or follow the verb: `cw rename 12 "..."` and
 `cw 12 rename "..."` are the same command, the latter reading the way
@@ -260,8 +260,10 @@ def _is_trivial(title):
 
 
 # zcode, codex, claude, step and kimi each have a rename surface cw can
-# write (see the module docstring); codebuddy does not, and is refused
-# before anything else happens to its rows.
+# write (see the module docstring); codebuddy and workbuddy do not -- the
+# only title field either offers sits in a live app's own database, not in
+# the transcript cw reads -- and both are refused before anything else
+# happens to their rows.
 _RENAMABLE = ("zcode", "codex", "claude", "step", "kimi")
 
 

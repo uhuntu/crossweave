@@ -1,7 +1,9 @@
 """cw - unified wrapper for the claude / codex / kimi / step / codebuddy
-CLIs, plus the zcode desktop app's session store. Normalizes a handful of
-common flags across the terminal tools and passes everything else straight
-through; zcode has no terminal interface, so `cw zcode` only opens the app.
+CLIs, plus the zcode and workbuddy desktop apps' session stores. Normalizes a
+handful of common flags across the terminal tools and passes everything else
+straight through; zcode has no terminal interface, so `cw zcode` only opens
+the app, and workbuddy has no interface at all -- its sessions are listed,
+searched and resumed, with nothing to wrap.
 """
 import os
 import re
@@ -9,7 +11,7 @@ import sys
 
 from . import __version__, alias, doctor, machines, rename, search, sessions, update
 
-TOOLS = ("claude", "codex", "kimi", "step", "zcode", "codebuddy")
+TOOLS = ("claude", "codex", "kimi", "step", "zcode", "codebuddy", "workbuddy")
 
 # USAGE is an f-string built from TOOLS, search.JUDGE_CMD and
 # search.DEFAULT_JUDGE for the same reason SUBCOMMANDS exists below: the
@@ -58,6 +60,7 @@ Per-tool --yolo mapping:
   step      -> --approval-mode auto + --non-interactive-approval allow
   codebuddy -> -y, --dangerously-skip-permissions (HIGH/CRITICAL still ask)
   zcode     -> (desktop app; no flags apply)
+  workbuddy -> (desktop app, no CLI; no flags apply)
 
 Examples:
   cw claude -p "summarize this repo"
@@ -67,6 +70,7 @@ Examples:
   cw codebuddy -p "summarize this repo"
   cw zcode            # open the ZCode app on this directory (its sessions
                       #   show in `cw sessions` too)
+  cw resume workbuddy 3f57c3fb   # open a WorkBuddy session in its app
   cw claude -- --agent reviewer "look at this diff"
   cw sessions --limit 10
   cw sessions --limit all   # same as `cw full`
@@ -254,6 +258,15 @@ def build_command(tool, rest):
             cmd = ["zcode"]
         else:
             cmd = ["zcode", sessions.zcode_workspace_link(os.getcwd())]
+    elif tool == "workbuddy":
+        # A desktop app with no executable on PATH to hand a flag to, and no
+        # deep link that names a directory -- its scheme routes to a session
+        # or to the app's home, neither of which is "work in this directory".
+        # So there is no `cw workbuddy` that could mean anything, and saying
+        # what does exist beats an unknown-tool list of seven names.
+        raise UsageError(
+            "workbuddy is a desktop app with no CLI on PATH -- its sessions are in "
+            "`cw sessions --tool workbuddy`, and `cw resume workbuddy <id>` opens one")
     else:  # kimi
         cmd = ["kimi"]
         if print_:

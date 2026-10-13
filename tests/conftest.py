@@ -13,7 +13,7 @@ the per-tool stores, the two listing caches, and the handoff export dir.
 
 import pytest
 
-from crossweave import cb, codebuddy, common, sessions, step, zcode
+from crossweave import cb, codebuddy, common, sessions, step, workbuddy, zcode
 
 
 @pytest.fixture(autouse=True)
@@ -24,6 +24,11 @@ def _isolate_stores(monkeypatch, tmp_path):
     monkeypatch.setattr(common, "KIMI_HOME", str(nowhere / "kimi"))
     monkeypatch.setattr(step, "STEP_SESSIONS", str(nowhere / "step"))
     monkeypatch.setattr(codebuddy, "CODEBUDDY_PROJECTS", str(nowhere / "cb-cli"))
+    # Both editions, so a machine with the real WorkBuddy installed leaks
+    # neither of its stores into a test that forgot its own isolation.
+    monkeypatch.setattr(workbuddy, "WORKBUDDY_ROOTS",
+                        ((str(nowhere / "workbuddy"), "workbuddy"),
+                         (str(nowhere / "workbuddy-ai"), "workbuddy-ai")))
     monkeypatch.setattr(zcode, "ZCODE_DB", str(nowhere / "zcode" / "db.sqlite"))
     monkeypatch.setattr(zcode, "ZCODE_TUI_MEMO", str(nowhere / "zcode-no-tui.json"))
     monkeypatch.setattr(sessions, "LIST_CACHE_FILE", str(nowhere / "last_list.json"))

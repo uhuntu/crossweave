@@ -20,7 +20,7 @@ import os
 import sqlite3
 import sys
 
-from . import codebuddy, color, common, step, zcode
+from . import codebuddy, color, common, step, workbuddy, zcode
 from .claude import claude_light_records
 from .codebuddy import codebuddy_light_records
 from .codex import codex_light_records, codex_rollout_files
@@ -112,6 +112,27 @@ def _check_codebuddy():
     return _verdict(files, records)
 
 
+def _check_workbuddy():
+    """Both editions' stores read as the one tool they are listed under.
+
+    A machine with only one of them installed is the normal case rather than
+    a half-broken one, so the note names the editions that keep a store here
+    -- and says plainly that there is no CLI, the way zcode's desktop-only
+    case does, since that is why a resume opens the app."""
+    roots = workbuddy.workbuddy_roots_present()
+    if not roots:
+        return MISSING, 0, None
+    files = sum(_file_count(os.path.join(root, workbuddy.PROJECTS_DIRNAME, "*", "*.jsonl"))
+                for root, _ in roots)
+    records = len(workbuddy.workbuddy_light_records())
+    state, count, note = _verdict(files, records)
+    if state is not OK:
+        return state, count, note
+    editions = " + ".join(scheme for _, scheme in roots)
+    suffix = f"desktop app only ({editions})"
+    return OK, count, f"{note}; {suffix}" if note else suffix
+
+
 def _verdict(files, records):
     """ok/empty/broken from the two counts a file-backed store offers.
 
@@ -136,6 +157,7 @@ CHECKS = (
     ("step", _check_step),
     ("zcode", _check_zcode),
     ("codebuddy", _check_codebuddy),
+    ("workbuddy", _check_workbuddy),
 )
 
 

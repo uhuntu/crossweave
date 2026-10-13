@@ -83,6 +83,7 @@ def _fake_scanners(monkeypatch, records):
     monkeypatch.setattr(sessions, "step_light_records", make("step"))
     monkeypatch.setattr(sessions, "zcode_light_records", make("zcode"))
     monkeypatch.setattr(sessions, "codebuddy_light_records", make("codebuddy"))
+    monkeypatch.setattr(sessions, "workbuddy_light_records", make("workbuddy"))
 
 
 def _cache(monkeypatch, entries):
@@ -409,13 +410,16 @@ def test_auto_renames_a_kimi_session(monkeypatch, tmp_path):
     assert sessions.kimi_title(str(sdir)) == "crossweave rename 接入 kimi"
 
 
-def test_a_tool_without_a_rename_surface_is_refused(monkeypatch, tmp_path, capsys):
-    """codebuddy is the one tool left with no rename surface cw knows: its
-    titler writes the title field of its own record, and there is no record
-    cw can append that its reader would keep."""
-    _fake_scanners(monkeypatch, [{"tool": "codebuddy", "id": "cb-1", "ts": OLD,
+@pytest.mark.parametrize("tool,row_id", [("codebuddy", "cb-1"), ("workbuddy", "wb-1")])
+def test_a_tool_without_a_rename_surface_is_refused(monkeypatch, tmp_path, capsys, tool, row_id):
+    """codebuddy and workbuddy are the two tools with no rename surface cw
+    knows: their titler writes the title field of its own record, and there
+    is no record cw can append that their reader would keep. workbuddy's
+    store is the same engine's under another root, so it inherits the
+    refusal rather than getting a guess of its own."""
+    _fake_scanners(monkeypatch, [{"tool": tool, "id": row_id, "ts": OLD,
                                   "title": "hi", "cwd": "/w"}])
-    _cache(monkeypatch, [{"tool": "codebuddy", "id": "cb-1"}])
+    _cache(monkeypatch, [{"tool": tool, "id": row_id}])
 
     assert rename.cmd_rename(["1", "whatever"]) == 1
     assert "no rename surface" in capsys.readouterr().err

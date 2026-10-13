@@ -48,8 +48,16 @@ def _sec(ms):
 
 
 def _message_texts(d):
-    """Every text block of a message record, in order, as strings."""
-    return common._all_text_blocks(d.get("content"), TEXT_TYPES)
+    """Every text block of a message record, in order, as strings.
+
+    A *user* block's context wrapper is unwrapped first: WorkBuddy puts the
+    user's words at the tail of the reminder block it prepends, so the block
+    reads as scaffolding with the request inside it (see common.USER_QUERY_RE).
+    Only the user's side, because that is the side the shell decorates."""
+    texts = common._all_text_blocks(d.get("content"), TEXT_TYPES)
+    if d.get("role") == "user":
+        texts = [common.unwrap_user_query(t) for t in texts]
+    return texts
 
 
 def _tool_call_text(d):

@@ -2731,8 +2731,8 @@ def test_cmd_stats_shows_counts_and_directories(monkeypatch, tmp_path, capsys):
     sessions.cmd_stats([])
     out = capsys.readouterr().out
     assert "Total sessions: 3" in out
-    assert "claude  2" in out
-    assert "codex   1" in out
+    assert "claude    2" in out
+    assert "codex     1" in out
     assert "Oldest:  1d ago" in out
     assert "Newest:  2h ago" in out
     assert "(2) /home/hunt/work/aimux" in out
@@ -2752,7 +2752,7 @@ def test_cmd_stats_tool_filter(monkeypatch, tmp_path, capsys):
     sessions.cmd_stats(["--tool", "codex"])
     out = capsys.readouterr().out
     assert "Total sessions: 1" in out
-    assert "codex   1" in out
+    assert "codex     1" in out
     assert "claude" not in out.split("By tool:")[-1]
 
 

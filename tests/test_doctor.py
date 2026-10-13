@@ -21,7 +21,7 @@ def test_an_empty_world_reports_every_store_missing(capsys):
     ordinary nobody-uses-this-tool case, not a failure."""
     assert doctor.cmd_doctor([]) == 0
     out = capsys.readouterr().out
-    assert out.count("missing") == 6
+    assert out.count("missing") == len(doctor.CHECKS)
     assert "0 sessions" in out
 
 

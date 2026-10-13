@@ -292,6 +292,7 @@ def test_cmd_list_counts_turns_for_the_rows_it_prints(monkeypatch, tmp_path, cap
                                                  "path": str(step), "cwd": "/work"}])
     monkeypatch.setattr(sessions, "zcode_light_records", lambda show_all=False: [])
     monkeypatch.setattr(sessions, "codebuddy_light_records", lambda show_all=False: [])
+    monkeypatch.setattr(sessions, "workbuddy_light_records", lambda show_all=False: [])
 
     sessions.cmd_list([])
 

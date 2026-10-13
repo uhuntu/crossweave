@@ -283,9 +283,10 @@ def _fake_scanners(monkeypatch, records, called=None):
     monkeypatch.setattr(sessions, "step_light_records", make("step"))
     monkeypatch.setattr(sessions, "zcode_light_records", make("zcode"))
     monkeypatch.setattr(sessions, "codebuddy_light_records", make("codebuddy"))
+    monkeypatch.setattr(sessions, "workbuddy_light_records", make("workbuddy"))
 
 
-ALL_TOOLS = {"claude", "codex", "kimi", "step", "zcode", "codebuddy"}
+ALL_TOOLS = {"claude", "codex", "kimi", "step", "zcode", "codebuddy", "workbuddy"}
 
 
 def test_a_plain_listing_publishes_the_index(monkeypatch):
