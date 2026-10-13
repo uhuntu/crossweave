@@ -379,10 +379,14 @@ def test_step_rows_appear_in_the_listing(monkeypatch, tmp_path, capsys):
 
 
 # ---------- the session's own display name ----------
-# step stores the name set with `step --name` or /name on the header record
-# ({"type":"session",...,"name":"refactor auth flow"}), and repeats it as a
-# session_info record when /name sets it after the fact. None of this
-# machine's sessions carry one yet, so the shape here is the documented one.
+# step's rename surface is the session_info record: `step --name`, /name and
+# the selector's rename key all call appendSessionInfo, which appends
+# {"type":"session_info","id","parentId","timestamp","name"} to the session
+# file. Both of step's readers keep the LAST one, and its selector renders
+# `session.name ?? session.firstMessage` -- the name takes the first prompt's
+# place in the row, is colored, and is what the "Name: Named" filter selects
+# on. A name on the header is the fallback, for a step that wrote one there;
+# the current CLI puts no name on the header at all.
 
 def test_a_named_session_shows_its_name_when_the_log_has_no_prompt(tmp_path):
     step_store(tmp_path, "--C--Users-huntl--", [
@@ -392,15 +396,19 @@ def test_a_named_session_shows_its_name_when_the_log_has_no_prompt(tmp_path):
     assert sessions.step_title_with_name(rec["path"]) == "refactor auth flow"
 
 
-def test_a_named_session_still_shows_its_own_prompt(monkeypatch, tmp_path):
-    """The display name is a fallback, not an override: what was actually
-    asked beats a name typed at startup, the same rule kimi's stored name
-    follows."""
+def test_a_name_replaces_the_first_prompt_in_the_row(tmp_path):
+    """step's own selector shows `session.name ?? session.firstMessage`, so a
+    renamed session keeps its name even though the conversation still opens
+    with the greeting it started with -- that is the whole point of a rename."""
     step_store(tmp_path, "--C--Users-huntl--", [
-        ("f_%s.jsonl" % SID, [header(name="refactor auth flow"), user("fix the login crash")]),
+        ("f_%s.jsonl" % SID, [
+            header(), user("中文"),
+            {"type": "session_info", "id": "si1", "parentId": "a1",
+             "timestamp": "2026-09-27T03:30:00.000Z", "name": "IPv6 开关排查"},
+        ]),
     ])
     rec = sessions.step_light_records()[0]
-    assert sessions.step_title_with_name(rec["path"]) == "fix the login crash"
+    assert sessions.step_title_with_name(rec["path"]) == "IPv6 开关排查"
 
 
 def test_a_blank_name_is_not_a_title(tmp_path):
@@ -426,6 +434,41 @@ def test_a_name_set_by_slash_name_is_found_in_session_info(tmp_path):
     ])
     rec = sessions.step_light_records()[0]
     assert sessions.step_title_with_name(rec["path"]) == "reproduce the MiMo login screen"
+
+
+def test_the_last_session_info_wins(tmp_path):
+    """Both of step's readers keep the newest record -- buildSessionInfo
+    overwrites the name as it scans forward, getSessionName scans backward --
+    so a second rename replaces the first rather than being ignored."""
+    step_store(tmp_path, "--C--Users-huntl--", [
+        ("f_%s.jsonl" % SID, [
+            header(), user("中文"),
+            {"type": "session_info", "id": "si1", "parentId": "a1",
+             "timestamp": "2026-09-27T03:30:00.000Z", "name": "first attempt"},
+            {"type": "session_info", "id": "si2", "parentId": "si1",
+             "timestamp": "2026-09-27T03:40:00.000Z", "name": "second attempt"},
+        ]),
+    ])
+    rec = sessions.step_light_records()[0]
+    assert sessions.step_title_with_name(rec["path"]) == "second attempt"
+
+
+def test_a_rename_at_the_end_of_a_long_session_is_found(tmp_path):
+    """The name scan runs to the end of the file: a session_info record lands
+    wherever the conversation had got to, and the one naming an 800-line
+    session is on its last line. Stopping the scan early -- the way the
+    first-prompt scan stops -- lost exactly those renames."""
+    lines = [header(), user("中文")]
+    for n in range(400):  # far past any early-scan cutoff
+        lines.append({"type": "message", "id": "m%d" % n, "parentId": "a1",
+                      "timestamp": "2026-09-27T03:%02d:%02d.000Z" % (n // 60 % 60, n % 60),
+                      "message": {"role": "assistant",
+                                  "content": [{"type": "text", "text": "turn %d" % n}]}})
+    lines.append({"type": "session_info", "id": "si-late", "parentId": "m399",
+                  "timestamp": "2026-09-27T09:00:00.000Z", "name": "late rename"})
+    step_store(tmp_path, "--C--Users-huntl--", [("f_%s.jsonl" % SID, lines)])
+    rec = sessions.step_light_records()[0]
+    assert sessions.step_title_with_name(rec["path"]) == "late rename"
 
 
 def test_a_name_with_newlines_is_flattened(tmp_path):

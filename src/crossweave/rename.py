@@ -14,9 +14,12 @@ title is native to the tool, not a cw-side overlay:
           most recently updated name per id)
   claude  append a custom-title record to the transcript (the reader
           keeps the last one it finds)
+  step    append a session_info record to the session file (both of
+          step's readers keep the last one, and its selector shows the
+          name in place of the first prompt)
 
-kimi, step and codebuddy have no rename surface cw knows, and are
-refused rather than guessed at.
+kimi and codebuddy have no rename surface cw knows, and are refused
+rather than guessed at.
 
 --auto proposes titles with the same judge `cw search` uses, one
 batched call per twenty sessions, for sessions whose titles are
@@ -28,8 +31,10 @@ their own titler.
 import datetime
 import json
 import os
+import re
 import sys
 import time
+import uuid
 
 # Sessions this young are live conversations -- the user is typing in
 # them right now, their own titler may be mid-flight, and a rename
@@ -86,6 +91,55 @@ def _rename_claude(sid, title, path):
     return True
 
 
+def _rename_step(title, path):
+    """Append a session_info record -- step's own rename surface.
+
+    `step --name`, /name and the selector's rename key all call
+    appendSessionInfo(name), which appends
+    {"type":"session_info","id","parentId","timestamp","name"} to the
+    session file. Both readers keep the LAST such record, and the
+    selector's row is `session.name ?? session.firstMessage` -- so this
+    record is what a rename is, and the name takes the first prompt's
+    place in step's own picker (see step._step_display_name).
+
+    The id is an 8-hex one retried while it collides with an id already
+    in the file (generateId's rule), and parentId is the last entry's id,
+    which keeps the file's id/parentId chain intact for step's tree."""
+    if not path or not os.path.isfile(path):
+        return False
+    from . import common
+
+    ids, last_id = set(), None
+    for d in common.read_jsonl(path):
+        if not isinstance(d, dict):
+            continue
+        entry_id = d.get("id")
+        if isinstance(entry_id, str):
+            ids.add(entry_id)
+            last_id = entry_id
+    for _ in range(100):
+        new_id = uuid.uuid4().hex[:8]
+        if new_id not in ids:
+            break
+    else:  # 8 hex collided a hundred times: take a whole uuid instead
+        new_id = uuid.uuid4().hex
+    stamp = datetime.datetime.now(datetime.timezone.utc).isoformat(
+        timespec="milliseconds").replace("+00:00", "Z")
+    record = {"type": "session_info", "id": new_id, "parentId": last_id,
+              "timestamp": stamp, "name": _step_name(title)}
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+    return True
+
+
+def _step_name(title):
+    """step's own sanitization of a name: newlines flattened to spaces,
+    then trimmed. appendSessionInfo does exactly this before writing, so
+    a title carrying a stray newline is stored the way step would have
+    stored it."""
+    return re.sub(r"[\r\n]+", " ", title).strip()
+
+
 def _apply(r, title):
     tool, sid = r["tool"], r["id"]
     if tool == "zcode":
@@ -94,6 +148,8 @@ def _apply(r, title):
         return _rename_codex(sid, title)
     if tool == "claude":
         return _rename_claude(sid, title, r.get("path"))
+    if tool == "step":
+        return _rename_step(title, r.get("path"))
     return False
 
 
@@ -108,9 +164,10 @@ def _is_trivial(title):
     return len(t) <= 2  # "中文", "测试" -- two characters say nothing
 
 
-# kimi, step and codebuddy have no rename surface cw knows; they are
-# refused before anything else happens to their rows.
-_RENAMABLE = ("zcode", "codex", "claude")
+# zcode, codex, claude and step each have a rename surface cw can write
+# (see the module docstring); kimi and codebuddy do not, and are refused
+# before anything else happens to their rows.
+_RENAMABLE = ("zcode", "codex", "claude", "step")
 
 
 def _is_live(r):
@@ -183,7 +240,7 @@ def _usage():
     print("Usage: cw rename <N> <title>\n"
           "       cw rename --auto [<N>... | --trivial] [-y] [--judge T]\n"
           "  <N> is a row from the last `cw`/`cw sessions` listing. Renames\n"
-          "  write through to the store itself (zcode, codex, claude).\n"
+          "  write through to the store itself (zcode, codex, claude, step).\n"
           "  --auto proposes titles with the judge; --trivial sweeps every\n"
           "  session whose title says nothing.", file=sys.stderr)
     return 2

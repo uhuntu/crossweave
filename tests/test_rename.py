@@ -11,13 +11,14 @@ anything without a yes or -y.
 
 import json
 import os
+import re
 import sqlite3
 import sys
 import time
 
 import pytest
 
-from crossweave import codex, common, rename, search, sessions, zcode
+from crossweave import codex, common, rename, search, sessions, step, zcode
 
 
 @pytest.fixture(autouse=True)
@@ -151,10 +152,123 @@ def test_manual_rename_appends_a_claude_custom_title(monkeypatch, tmp_path):
     assert last["type"] == "custom-title" and last["customTitle"] == "katago tuning"
 
 
+STEP_SID = "01a0e0e1-2965-79d4-aba9-3dd3bfc0f7cd"
+
+
+def _step_file(tmp_path, monkeypatch, lines, sid=STEP_SID):
+    """A real step session file in a store the step reader is pointed at,
+    plus the light record for it. The rename writer appends to the path and
+    the reader reads it back through step_title_with_name, so these tests
+    exercise the write against the real reader rather than a fake."""
+    d = tmp_path / "step" / "--home-hunt--"
+    d.mkdir(parents=True, exist_ok=True)
+    path = d / ("f_%s.jsonl" % sid)
+    path.write_text("".join(json.dumps(line) + "\n" for line in lines),
+                    encoding="utf-8")
+    monkeypatch.setattr(step, "STEP_SESSIONS", str(tmp_path / "step"))
+    return path
+
+
+def _step_record(path, sid=STEP_SID):
+    return {"tool": "step", "id": sid, "ts": OLD, "path": str(path),
+            "cwd": "/home/hunt", "started": 0, "name": None}
+
+
+def test_manual_rename_appends_a_step_session_info(monkeypatch, tmp_path):
+    path = _step_file(tmp_path, monkeypatch, [
+        {"type": "session", "version": 3, "id": STEP_SID,
+         "timestamp": "2026-10-12T02:47:14.509Z", "cwd": "/home/hunt"},
+        {"type": "message", "id": "a8831c82", "parentId": None,
+         "timestamp": "2026-10-12T02:47:19.139Z",
+         "message": {"role": "user", "content": [
+             {"type": "text", "text": "中文"}]}},
+        {"type": "message", "id": "81cc080a", "parentId": "a8831c82",
+         "timestamp": "2026-10-12T02:47:23.601Z",
+         "message": {"role": "assistant", "content": [
+             {"type": "text", "text": "好的，后续用中文回复。"}]}},
+    ])
+    _cache(monkeypatch, [{"tool": "step", "id": STEP_SID}])
+
+    assert rename.cmd_rename(["1", "pi 升级到 1.1.0"]) == 0
+
+    lines = [json.loads(l) for l in open(path, encoding="utf-8")]
+    assert len(lines) == 4  # the three that were there, plus one
+    record = lines[-1]
+    assert record["type"] == "session_info"
+    assert record["name"] == "pi 升级到 1.1.0"
+    # ...and step's own readers see it: the name takes the first prompt's
+    # place, which is what makes a session titled "中文" nameable at all
+    assert step.step_title_with_name(str(path)) == "pi 升级到 1.1.0"
+
+
+def test_the_step_record_is_shaped_the_way_step_writes_it(monkeypatch, tmp_path):
+    """appendSessionInfo's own shape: an 8-hex id that collides with none of
+    the file's, the last entry's id as parentId (the chain step's tree walks),
+    a millisecond ISO timestamp, and the sanitized name."""
+    path = _step_file(tmp_path, monkeypatch, [
+        {"type": "session", "version": 3, "id": STEP_SID,
+         "timestamp": "2026-10-12T02:47:14.509Z", "cwd": "/home/hunt"},
+        {"type": "message", "id": "a8831c82", "parentId": None,
+         "timestamp": "2026-10-12T02:47:19.139Z",
+         "message": {"role": "user", "content": [{"type": "text", "text": "中文"}]}},
+    ])
+    _cache(monkeypatch, [{"tool": "step", "id": STEP_SID}])
+
+    assert rename.cmd_rename(["1", "ipv6 开关排查"]) == 0
+
+    record = json.loads(open(path, encoding="utf-8").readlines()[-1])
+    assert re.fullmatch(r"[0-9a-f]{8}", record["id"]), record["id"]
+    assert record["id"] != STEP_SID  # the header's id is a uuid, not an entry id
+    assert record["parentId"] == "a8831c82"
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z",
+                        record["timestamp"]), record["timestamp"]
+
+
+def test_a_second_step_rename_replaces_the_first(monkeypatch, tmp_path):
+    """step keeps the LAST session_info record, so renaming twice shows the
+    second name -- the first is not an error, just superseded."""
+    path = _step_file(tmp_path, monkeypatch, [
+        {"type": "session", "version": 3, "id": STEP_SID,
+         "timestamp": "2026-10-12T02:47:14.509Z", "cwd": "/home/hunt"},
+        {"type": "message", "id": "a8831c82", "parentId": None,
+         "timestamp": "2026-10-12T02:47:19.139Z",
+         "message": {"role": "user", "content": [{"type": "text", "text": "中文"}]}},
+    ])
+    _cache(monkeypatch, [{"tool": "step", "id": STEP_SID}])
+
+    assert rename.cmd_rename(["1", "first attempt"]) == 0
+    assert rename.cmd_rename(["1", "second attempt"]) == 0
+
+    assert step.step_title_with_name(str(path)) == "second attempt"
+
+
+def test_a_step_rename_flattens_newlines_the_way_step_does(monkeypatch, tmp_path):
+    """appendSessionInfo replaces [\\r\\n]+ with a space before writing; a
+    title arriving with a stray newline is stored the way step would have
+    stored it, not as a record that breaks the file's one-record-per-line
+    shape."""
+    path = _step_file(tmp_path, monkeypatch, [
+        {"type": "session", "version": 3, "id": STEP_SID,
+         "timestamp": "2026-10-12T02:47:14.509Z", "cwd": "/home/hunt"},
+    ])
+    _cache(monkeypatch, [{"tool": "step", "id": STEP_SID}])
+
+    assert rename.cmd_rename(["1", "ipv6\n开关\r\n排查"]) == 0
+
+    assert step.step_title_with_name(str(path)) == "ipv6 开关 排查"
+
+
+def test_a_step_rename_refuses_a_file_that_is_gone():
+    """The writer's own guard: a record whose file is not there any more is
+    refused rather than appended to a path that would be created fresh."""
+    assert not rename._apply({"tool": "step", "id": STEP_SID,
+                              "path": "/nowhere.jsonl"}, "whatever")
+
+
 def test_a_tool_without_a_rename_surface_is_refused(monkeypatch, tmp_path, capsys):
-    _fake_scanners(monkeypatch, [{"tool": "step", "id": "01a12", "ts": OLD,
-                                  "path": "/nowhere.jsonl"}])
-    _cache(monkeypatch, [{"tool": "step", "id": "01a12"}])
+    _fake_scanners(monkeypatch, [{"tool": "kimi", "id": "km-1", "ts": OLD,
+                                  "dir": "/nowhere"}])
+    _cache(monkeypatch, [{"tool": "kimi", "id": "km-1"}])
 
     assert rename.cmd_rename(["1", "whatever"]) == 1
     assert "no rename surface" in capsys.readouterr().err
@@ -220,6 +334,31 @@ def test_auto_renames_via_the_judge_after_a_yes(monkeypatch, tmp_path):
     # one batched judge call, and the prompt asks for the session's own language
     assert len(calls) == 1
     assert "language" in calls[0][1]
+
+
+def test_auto_renames_a_step_session(monkeypatch, tmp_path):
+    """A step session that opened with "中文" is the case the whole feature
+    exists for: the title says nothing, the judge proposes from the content,
+    and the name lands as the session_info record step's own picker reads."""
+    path = _step_file(tmp_path, monkeypatch, [
+        {"type": "session", "version": 3, "id": STEP_SID,
+         "timestamp": "2026-10-12T02:47:14.509Z", "cwd": "/home/hunt"},
+        {"type": "message", "id": "a8831c82", "parentId": None,
+         "timestamp": "2026-10-12T02:47:19.139Z",
+         "message": {"role": "user", "content": [{"type": "text", "text": "中文"}]}},
+        {"type": "message", "id": "81cc080a", "parentId": "a8831c82",
+         "timestamp": "2026-10-12T02:47:23.601Z",
+         "message": {"role": "assistant", "content": [
+             {"type": "text", "text": "好的，后续用中文回复。你的 pi 已更新到 1.1.0。"}]}},
+    ])
+    _fake_scanners(monkeypatch, [_step_record(path)])
+    _cache(monkeypatch, [{"tool": "step", "id": STEP_SID}])
+    _judge_says(monkeypatch, "1. pi 升级到 1.1.0\n")
+    _confirm(monkeypatch)
+
+    assert rename.cmd_rename(["--auto", "1"]) == 0
+
+    assert step.step_title_with_name(str(path)) == "pi 升级到 1.1.0"
 
 
 def test_auto_without_a_yes_touches_nothing(monkeypatch, tmp_path):

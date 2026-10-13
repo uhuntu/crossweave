@@ -4,7 +4,13 @@ the encoded cwd -- the layout claude uses, and the same "every
 non-alphanumeric is a dash" encoding, so decode_project_dir_name reads it.
 The authoritative id and cwd are the `session` record on the file's first
 line; the filename carries a timestamp prefix, except for the
-`subagent-<uuid>` files step's own subagents write, which have none."""
+`subagent-<uuid>` files step's own subagents write, which have none.
+
+A session's display name lives in `session_info` records appended after
+the fact -- `step --name`, /name and the selector's rename key all call
+appendSessionInfo, and `cw rename` writes the same record. step's own
+readers keep the last one, and its selector shows the name in place of
+the first message."""
 import calendar
 import glob
 import json
@@ -198,36 +204,51 @@ def step_title(path):
 def _step_display_name(path):
     """The session's display name, if it has one, else None.
 
-    step writes it to the header ({"type":"session",...,"name":"refactor auth
-    flow"}), and a `session_info` record carries the same thing when /name
-    sets it after the fact. Only a real name counts: the selector shows it in
-    place of the first message, so a session named with whitespace or a
-    placeholder is better left to its own first prompt."""
-    _sid, _cwd, _started, name = step_session_header(path)
-    if name and name.strip():
-        return " ".join(name.split())[:70]
-    for i, d in enumerate(common.read_jsonl(path)):
-        if i > 200:
-            break
+    `step --name`, /name and the selector's rename key all call
+    appendSessionInfo, which appends a `session_info` record
+    ({"type":"session_info","id","parentId","timestamp","name"}) to the
+    session file -- `cw rename` writes the same record. Both of step's
+    readers keep the LAST one: buildSessionInfo overwrites the name as it
+    scans forward and getSessionName scans backward, so the newest rename
+    wins and a blank one clears the name.
+
+    So the scan runs to the end of the file rather than stopping early
+    the way step_title's does: a rename lands wherever the conversation
+    had got to, and the one record naming an 800-line session is on its
+    last line. A name on the header is the fallback, for a step that
+    wrote one there -- the current CLI puts no name on the header at
+    all."""
+    name = None
+    found = False
+    for d in common.read_jsonl(path):
         if not isinstance(d, dict) or d.get("type") != "session_info":
             continue
+        found = True
+        name = None
         for key in ("name", "displayName", "title"):
             value = d.get(key)
             if isinstance(value, str) and value.strip():
-                return " ".join(value.split())[:70]
-    return None
+                name = " ".join(value.split())[:70]
+                break
+    if not found:
+        _sid, _cwd, _started, header_name = step_session_header(path)
+        if header_name and header_name.strip():
+            name = " ".join(header_name.split())[:70]
+    return name
 
 
 def step_title_with_name(path):
-    """step_title, falling back to the session's own display name.
+    """The session's display name when it has one, else its first prompt.
 
-    A session opened as `step --name "refactor auth flow"` with no prompt yet
-    -- or one every message of which is noise -- names itself, and that name
-    describes the work where a seed prompt or `(no title)` would not."""
-    title = step_title(path)
-    if title == "(no title)":
-        return common._title_or_placeholder(_step_display_name(path), "")
-    return title
+    step's selector renders `session.name ?? session.firstMessage` -- the
+    name replaces the first prompt in the row, is colored, and is what
+    the "Name: Named" filter selects on. A session renamed with /name or
+    `cw rename` has to show the name here too, not the greeting it
+    opened with."""
+    name = _step_display_name(path)
+    if name:
+        return name
+    return step_title(path)
 
 
 def step_handoff_messages(path):
