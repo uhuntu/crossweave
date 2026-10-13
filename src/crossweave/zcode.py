@@ -7,6 +7,12 @@ conversation lives in the `part` table as typed JSON rows (text, reasoning,
 tool, file, ...), the cwd is `session.directory`, and the title is a stored
 one ZCode's own auto-titler keeps updated.
 
+The title's `title_source` column is CHECK-constrained to ('default',
+'first_input', 'generated', 'custom'): a row stamped 'custom' is a user
+rename and stays put, 'first_input'/'generated' are the titler's to
+replace. A rename writes both fields -- discovered by letting the
+constraint name the vocabulary (2026-10-13).
+
 Two executables answer to the name `zcode`: the desktop app (an Electron
 binary, e.g. /usr/bin/zcode) and a terminal CLI that often shadows it on
 PATH (~/.local/bin/zcode, v0.16.9 here). They are told apart by their file
