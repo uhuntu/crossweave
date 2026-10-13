@@ -645,6 +645,42 @@ def test_auto_renames_via_the_judge_after_a_yes(monkeypatch, tmp_path):
     assert "language" in calls[0][1]
 
 
+def test_a_proposal_that_restates_the_title_is_not_applied(monkeypatch, tmp_path, capsys):
+    """The judge answering "hi" for a session titled "hi" has said nothing
+    new -- and a custom rename is, in every store, exactly what stops the
+    tool's own titler from ever improving the name. Applying one would freeze
+    the bad title in place for good, so it is dropped and shown as kept. A
+    real sweep hit this for a fifth of its batch."""
+    _make_zcode_db(tmp_path)
+    _zcode_row("sess_abc", "hi", age_seconds=999_000)
+    _fake_scanners(monkeypatch, [_zcode_record("sess_abc", "hi", age_seconds=999_000)])
+    _cache(monkeypatch, [{"tool": "zcode", "id": "sess_abc"}])
+    _judge_says(monkeypatch, "1. hi\n")
+    _confirm(monkeypatch, answer="y")  # would apply it if it were offered
+
+    assert rename.cmd_rename(["--auto", "1"]) == 1
+
+    assert "judge proposed the title it already has" in capsys.readouterr().out
+    assert _zcode_title("sess_abc") == ("hi", "first_input")
+
+
+def test_a_case_only_difference_counts_as_the_same_title(monkeypatch, tmp_path, capsys):
+    """"hello" for a session titled "Hello" is the same nothing-new answer, and
+    writing it would still freeze the title -- case is not an improvement
+    worth a custom rename for."""
+    _make_zcode_db(tmp_path)
+    _zcode_row("sess_abc", "Hello", age_seconds=999_000)
+    _fake_scanners(monkeypatch, [_zcode_record("sess_abc", "Hello", age_seconds=999_000)])
+    _cache(monkeypatch, [{"tool": "zcode", "id": "sess_abc"}])
+    _judge_says(monkeypatch, "1. hello\n")
+    _confirm(monkeypatch, answer="y")
+
+    assert rename.cmd_rename(["--auto", "1"]) == 1
+
+    assert "judge proposed the title it already has" in capsys.readouterr().out
+    assert _zcode_title("sess_abc") == ("Hello", "first_input")
+
+
 def test_auto_renames_a_step_session(monkeypatch, tmp_path):
     """A step session that opened with "中文" is the case the whole feature
     exists for: the title says nothing, the judge proposes from the content,

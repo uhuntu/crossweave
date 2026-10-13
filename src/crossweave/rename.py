@@ -429,6 +429,14 @@ def _short(title, limit=48):
     return t if len(t) <= limit else t[:limit].rstrip() + "…"
 
 
+def _same_title(a, b):
+    """True if two titles say the same thing -- case and surrounding
+    whitespace aside. The judge answering "hello" for a session titled
+    "Hello" has said nothing new, and a rename that changes nothing is one
+    that should not be applied (see _rename_auto)."""
+    return a.strip().casefold() == (b or "").strip().casefold()
+
+
 def _rename_auto(positional, trivial, judge, yes):
     from . import search, sessions
 
@@ -502,15 +510,28 @@ def _rename_auto(positional, trivial, judge, yes):
     # Candidates without a proposal keep their title, and stay in the
     # table marked as such: the judge answering for 19 of 20 is a partial
     # result the user should see, not a silent shrink of the batch.
-    pending = [(r, proposals.get(k + 1, "").strip() or None)
-               for k, r in enumerate(rows)]
+    pending = []
+    for k, r in enumerate(rows):
+        new = proposals.get(k + 1, "").strip() or None
+        if new and _same_title(new, sessions._resolve_title_and_cwd(r)[0]):
+            # A proposal that restates the title already there. Applying it
+            # would write a custom rename that changes nothing -- and in every
+            # store a custom rename is exactly what stops the tool's own
+            # titler from ever improving the name, so this is worse than doing
+            # nothing: it freezes "hi" in place for good. A real sweep hit
+            # `hi -> hi` for a fifth of its batch.
+            new = None
+            why = "judge proposed the title it already has"
+        else:
+            why = "no proposal"
+        pending.append((r, new, why))
 
     print("proposed renames:\n")
-    for r, new in pending:
+    for r, new, why in pending:
         old = sessions._resolve_title_and_cwd(r)[0]
-        arrow = f"-> {new}" if new else "-> (no proposal -- keeping)"
+        arrow = f"-> {new}" if new else f"-> (keeping -- {why})"
         print(f"  [{r['tool']}] {r['id'][:12]}  {old}\n{'':16}{arrow}")
-    answered = [(r, new) for r, new in pending if new]
+    answered = [(r, new) for r, new, _ in pending if new]
     if not answered:
         print("cw rename: the judge proposed nothing usable -- nothing renamed",
               file=sys.stderr)
