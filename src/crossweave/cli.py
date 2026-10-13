@@ -99,6 +99,7 @@ Examples:
                             #   zcode/codex/claude/step/kimi today; --auto
                             #   proposes titles for the trivial ones via the judge
   cw 12 rename "USB 枚举握手排查"   # the same command, row first
+  cw 327e2ad9-210f-48cd-b    # a session id, not a row number: resumes it
 """
 
 # Everything `cw <x>` accepts that is not a tool. The unknown-tool error names
@@ -344,6 +345,37 @@ def main():
         sys.exit(machines.cmd_machines(rest))
     if tool == "rename":
         sys.exit(rename.cmd_rename(rest))
+
+    # A session id, not a tool. `cw search` prints ids, and the command after
+    # finding a session is pointing cw straight at it -- which used to fall
+    # through to build_command and answer "unknown tool '327e2ad9-…'", a list
+    # of tools for a thing that is not a tool, with no mention that ids go
+    # through resume. One hit resumes it; several are listed, because a bare
+    # prefix has no tool to narrow it; none falls through to the tool error
+    # below, so a mistyped command still gets the list of real ones.
+    #
+    # Two things keep this off the paths that are not about an id. A tool name
+    # never reaches it -- those are build_command's, and asking six stores
+    # whether any id starts with "claude" would tax every `cw claude ...` for
+    # an answer that is always no. And an argument with no digit, dash or
+    # underscore in it is a word, not an id: every id in every store is hex
+    # or carries a sess_/session_ prefix, while `cw session` is a typo of
+    # `cw sessions` and deserves that message rather than a list of every
+    # kimi session on the box.
+    if tool not in TOOLS and re.search(r"[0-9_-]", tool):
+        hits = sessions.resolve_any_id(tool)
+        if len(hits) == 1:
+            sessions.cmd_resume([hits[0][0], hits[0][1], *rest])
+            return
+        if len(hits) > 1:
+            print(f"cw: ambiguous id '{tool}' -- {len(hits)} sessions start with it:",
+                  file=sys.stderr)
+            for t, sid in hits[:10]:
+                print(f"  {t} {sid}", file=sys.stderr)
+            if len(hits) > 10:
+                print(f"  ... and {len(hits) - 10} more; narrow it with "
+                      f"`cw resume <tool> {tool}`", file=sys.stderr)
+            sys.exit(1)
 
     try:
         cmd = build_command(tool, rest)

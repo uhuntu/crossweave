@@ -3083,3 +3083,26 @@ def test_titles_collapse_runs_of_whitespace(tmp_path):
     title, _ = sessions.claude_title_and_cwd(str(session_file), cwd_fallback=None)
 
     assert title == "Dear PE guys, please check the build"
+
+
+def test_resolve_any_id_asks_every_store(monkeypatch):
+    """A prefix is offered to every store, through the same resolvers
+    `cw resume <tool> <id>` uses. One left out would make `cw <id>` quietly
+    unable to see a tool that `cw resume <tool> <id>` resumes fine -- the
+    same shape of bug as a fallback chain that names five judges and tries
+    four."""
+    assert set(sessions.ID_RESOLVERS) == set(sessions.TOOLS)
+
+    asked = []
+
+    def fake(prefix):
+        asked.append(prefix)
+        return ["hit"]
+
+    for tool in sessions.TOOLS:
+        monkeypatch.setitem(sessions.ID_RESOLVERS, tool, fake)
+
+    hits = sessions.resolve_any_id("abc")
+
+    assert asked == ["abc"] * len(sessions.TOOLS)
+    assert hits == [(tool, "hit") for tool in sessions.TOOLS]

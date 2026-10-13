@@ -1,9 +1,10 @@
 import inspect
 import re
+import sys
 
 import pytest
 
-from crossweave import cli, search
+from crossweave import cli, search, sessions
 from crossweave.cli import UsageError, build_command
 
 
@@ -136,3 +137,101 @@ def test_unknown_tool_raises_usage_error():
 def test_flag_missing_value_raises_usage_error(flag):
     with pytest.raises(UsageError, match="requires a value"):
         build_command("claude", [flag])
+
+
+# ---------- a session id where a tool name goes ----------
+
+def _run_main(monkeypatch, argv):
+    """`cw <argv>` all the way through main(), returning the exit code it
+    raised (None for the paths that just return). The id form exists only in
+    main()'s dispatch -- build_command knows nothing about it -- so it has to
+    be exercised from here."""
+    monkeypatch.setattr(sys, "argv", ["cw", *argv])
+    try:
+        cli.main()
+    except SystemExit as exc:
+        return exc.code
+    return None
+
+
+def test_an_id_prefix_resumes_the_session_it_names(monkeypatch):
+    """`cw search` prints ids, and the command after finding a session is
+    pointing cw straight at it. `cw 327e2ad9-210f-48cd-b` used to answer
+    "unknown tool" -- a list of tools for a thing that is not a tool, and no
+    mention that ids go through resume."""
+    calls = []
+    monkeypatch.setattr(sessions, "resolve_any_id",
+                        lambda prefix: [("claude", "327e2ad9-210f-48cd-b1f8-65a0cdabd7d8")]
+                        if prefix == "327e2ad9-210f-48cd-b" else [])
+    monkeypatch.setattr(sessions, "cmd_resume", lambda args: calls.append(args))
+
+    assert _run_main(monkeypatch, ["327e2ad9-210f-48cd-b"]) is None
+
+    assert calls == [["claude", "327e2ad9-210f-48cd-b1f8-65a0cdabd7d8"]]
+
+
+def test_an_id_prefix_carries_what_follows_it(monkeypatch):
+    """The same words after a row number already work (`cw 3 codex` hands
+    off, `cw 3 "..."` continues the session); an id gets them for free
+    because it routes through the same cmd_resume."""
+    calls = []
+    monkeypatch.setattr(sessions, "resolve_any_id", lambda prefix: [("claude", "abc123")])
+    monkeypatch.setattr(sessions, "cmd_resume", lambda args: calls.append(args))
+
+    _run_main(monkeypatch, ["abc123", "codex"])
+    _run_main(monkeypatch, ["abc123", "keep going"])
+
+    assert calls == [["claude", "abc123", "codex"], ["claude", "abc123", "keep going"]]
+
+
+def test_an_ambiguous_id_prefix_lists_the_matches(monkeypatch, capsys):
+    """A bare prefix has no tool to narrow it, so several hits are listed
+    rather than guessed at -- the answer `cw resume <tool> <id>` already
+    gives, capped, because here the list can be the whole history."""
+    hits = [("claude", f"1a{i:036d}") for i in range(12)]
+    monkeypatch.setattr(sessions, "resolve_any_id", lambda prefix: hits)
+    monkeypatch.setattr(sessions, "cmd_resume",
+                        lambda args: pytest.fail("resumed anyway"))
+
+    assert _run_main(monkeypatch, ["1a"]) == 1
+
+    err = capsys.readouterr().err
+    assert "ambiguous id '1a' -- 12 sessions start with it:" in err
+    assert len(re.findall(r"^  claude 1a", err, re.M)) == 10  # capped
+    assert "... and 2 more; narrow it with `cw resume <tool> 1a`" in err
+
+
+def test_a_word_is_not_an_id(monkeypatch, capsys):
+    """Every id in every store is hex or carries a sess_/session_ prefix, so
+    an argument with no digit, dash or underscore in it is a word -- and
+    `cw session` is a typo of `cw sessions`, which deserves that message
+    rather than a list of every kimi session on the box."""
+    monkeypatch.setattr(sessions, "resolve_any_id",
+                        lambda prefix: pytest.fail("a word was offered to the stores"))
+
+    assert _run_main(monkeypatch, ["session"]) == 1
+
+    assert "unknown tool 'session'" in capsys.readouterr().err
+
+
+def test_a_tool_name_is_never_read_as_an_id(monkeypatch):
+    """Asking six stores whether any id starts with "claude" would tax every
+    `cw claude ...` for an answer that is always no."""
+    monkeypatch.setattr(sessions, "resolve_any_id",
+                        lambda prefix: pytest.fail("a tool name was offered to the stores"))
+    ran = []
+    monkeypatch.setattr(sessions, "exec_or_die", lambda argv: ran.append(argv))
+
+    _run_main(monkeypatch, ["claude", "-p", "hi"])
+
+    assert ran == [["claude", "-p", "hi"]]
+
+
+def test_an_id_that_matches_nothing_is_still_an_unknown_command(monkeypatch, capsys):
+    """No hit falls through to the tool error, so a mistyped command keeps
+    the message that names the real ones."""
+    monkeypatch.setattr(sessions, "resolve_any_id", lambda prefix: [])
+
+    assert _run_main(monkeypatch, ["deadbeef99"]) == 1
+
+    assert "unknown tool 'deadbeef99'" in capsys.readouterr().err

@@ -120,6 +120,7 @@ cw resume claude            # no id -> tool's own interactive picker
 cw resume 3                 # resume row 3 from the last `cw`/`cw sessions` listing
 cw resume zcode <id> "..."  # continue a zcode session headlessly -- its one route in that needs no TUI
 cw 3 codex                  # hand row 3's context to a new Codex session
+cw 327e2ad9-210f-48cd-b     # an id where the row number goes -- the same resume, no listing needed
 
 cw search "the nfc frequency lock issue"   # find sessions relevant to a topic
 cw search "katago" --tool claude           # restrict the candidates to one tool
@@ -138,6 +139,8 @@ cw doctor --tool zcode      # one store only
 Sessions a tool started for itself are left out of `cw sessions` and `cw search`: Codex's command-approval reviews (one per command it asks you to approve), step's own `subagent-…` sessions, ZCode's subagent runs (sessions with a `parent_id` in its store), and `cw search`'s own judge runs. None of them is a conversation of yours, and a judge session literally contains every candidate's text, which makes it match nearly any topic. They stay reachable by id (`cw resume codex <id>`), and `cw sessions --all` lists them anyway.
 
 Every `cw`/`cw sessions` listing is numbered and cached, so `cw resume <N>` is usually the fastest way in: run `cw`, glance at the row you want, `cw resume 3`. The cache is just the last listing you saw — it's overwritten by the next `cw sessions` call and doesn't try to detect if the underlying sessions changed since.
+
+An id works wherever a row number does, and is the steadier of the two: `cw <id-prefix>` resolves the prefix against every store live, so it does not care what the last listing happened to be, and it survives sessions arriving or moving in the meantime. It is what `cw search` hands you — the ids in its output are the argument to the next command. One match resumes it (with anything after it meaning what it means after a row number: another tool hands the context off, words continue the session); several matches are listed rather than guessed at, because a bare prefix has no tool to narrow it — name one with `cw resume <tool> <prefix>`. A word with no digit, dash or underscore in it is not offered to the stores at all: `cw session` is a typo of `cw sessions` and gets that message, not a list of every kimi session on the box.
 
 ### What the listing shows
 

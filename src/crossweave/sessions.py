@@ -1404,6 +1404,29 @@ def _zcode_next_instruction(extra):
     return " ".join(extra).strip() or None
 
 
+# The per-tool id resolvers, named once. `cw resume <tool> <id>` and
+# `cw <id>` both walk a prefix through these, so a prefix that resolves for
+# one resolves for the other -- neither can be right about what a store
+# holds while the other is wrong.
+ID_RESOLVERS = {
+    "claude": claude_resolve, "codex": codex_resolve, "kimi": kimi_resolve,
+    "step": step_resolve, "zcode": zcode_resolve, "codebuddy": codebuddy_resolve,
+}
+
+
+def resolve_any_id(prefix):
+    """Every session in every store whose id starts with prefix, as (tool,
+    id) pairs -- the id spelling of `cw resume <tool> <id>` with no tool to
+    name. Read live rather than through the listing cache, which is what
+    makes an id a steadier thing to point at than a row number: the cache is
+    whatever the last listing happened to be, an id is the session."""
+    hits = []
+    for tool, resolve in ID_RESOLVERS.items():
+        for sid in resolve(prefix):
+            hits.append((tool, sid))
+    return hits
+
+
 def cmd_resume(args):
     args, forced_cwd = extract_cwd_override(args)
 
@@ -1453,9 +1476,7 @@ def cmd_resume(args):
         return
 
     prefix, extra = rest[0], rest[1:]
-    resolver = {"claude": claude_resolve, "codex": codex_resolve, "kimi": kimi_resolve,
-                "step": step_resolve, "zcode": zcode_resolve,
-                "codebuddy": codebuddy_resolve}[tool]
+    resolver = ID_RESOLVERS[tool]
     matches = resolver(prefix)
 
     if len(matches) == 1:
