@@ -458,6 +458,59 @@ def _is_injected_or_pasted(text):
     return bool(LS_OUTPUT_RE.match(head) or PATH_ONLY_RE.match(head))
 
 
+# Shapes a *title* takes that name no work, beyond the pastes
+# _is_injected_or_pasted already knows. Every one of these was a real listing
+# row, and every one is long enough to sail past a triviality check:
+#   URL_ONLY_RE    a bare link dropped in for context -- any scheme, so the
+#                  smb:// share and the file:// path count too
+#   LOG_LINE_RE    an Android logcat line ("2026-02-06 17:36:29.646 4759-…")
+#   BANNER_RE      a CLI's box-drawing startup art, six blocks or more
+# and the prefix tuples below, for a pasted email (Outlook's Chinese headers
+# and its [答复_] reply marker), claude-code's own `<!-- reply -->`
+# continuation wrapper, and a `[cron:…]` reminder injected into the turn.
+URL_ONLY_RE = re.compile(r"^[a-zA-Z][\w+.-]*://\S+$")
+LOG_LINE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}")
+BANNER_RE = re.compile(r"[\u2500-\u259f]{6,}")
+EMAIL_HEADER_PREFIXES = (
+    "From:", "To:", "Cc:", "Bcc:", "Sent:", "Subject:", "Reply-To:",
+    "发件人:", "收件人:", "主题:", "[mailto:", "[答复_", "[转发_",
+)
+TITLE_NOISE_PREFIXES = ("<!--", "[cron:")
+
+
+def title_says_nothing(text):
+    """True if a session's title tells a reader nothing about the work in it
+    -- the question `cw rename --auto --trivial` asks of every row.
+
+    Deliberately broader than the scan's own filters. A title is what a scan
+    falls back on when it found no genuine request in its window, so it lands
+    on whatever happened to open the session: a bare acknowledgement, or a
+    paste. `_is_injected_or_pasted` already recognizes most paste shapes when
+    deciding what may become a genuine title, but a title additionally turns
+    up as a bare URL, a pasted email, a logcat line, a startup banner or an
+    unbroken token -- and those rows are the ones a length-based triviality
+    check waves through. Length is not the test here: a long request is a
+    perfectly good title, so only shape counts."""
+    t = (text or "").strip()
+    if not t or t == "(no title)":
+        return True
+    if is_trivial_title(t):
+        return True
+    if _is_injected_or_pasted(t):
+        return True
+    if URL_ONLY_RE.match(t) or LOG_LINE_RE.match(t) or BANNER_RE.search(t):
+        return True
+    if t.startswith(TITLE_NOISE_PREFIXES) or t.startswith(EMAIL_HEADER_PREFIXES):
+        return True
+    # An unbroken token: no whitespace at all, long, and mixed-case with
+    # digits -- base64 blobs and API keys. A bare path or link is already
+    # PATH_ONLY_RE's and URL_ONLY_RE's, and a title a person would recognize
+    # has words in it.
+    return (len(t) > 40 and not any(c.isspace() for c in t)
+            and any(c.isupper() for c in t) and any(c.islower() for c in t)
+            and any(c.isdigit() for c in t))
+
+
 def _title_or_placeholder(title, fallback):
     """The title to show: the first genuine message, else the first message
     at all, else `(no title)` -- except for the sessions crossweave starts

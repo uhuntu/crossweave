@@ -568,6 +568,100 @@ def test_the_trivial_sweep_picks_only_titles_that_say_nothing(monkeypatch, tmp_p
     assert "Git rebase 问题" not in prompt
 
 
+# ---------- the sweep's notion of a title that says nothing ----------
+
+# Every noise case here is a row this machine's listing actually held, and
+# every good one is a long title that must survive the sweep -- the failure
+# that matters is the reverse, proposing for a session that already has a
+# real name.
+NOISE_TITLES = (
+    # a pasted shell transcript, with and without the host part
+    "(hunt@hunt-OptiPlex-7071)-[~] $ ai update all Updating git install ...",
+    "(hunt\\@hunt-OptiPlex-7071)-[\\~] $ df Filesystem 1K-blocks Used Avail",
+    "hunt@swc-build:~$ ai update all Updating git install at /home/hunt",
+    "$ kimi update error: failed to check for updates: This operation",
+    # pasted output with no prompt line at all
+    "drwxrwxr-x 36 1001 1001 4096 Aug 14 15:25 mt8390_android13_sdk d",
+    "/home/hunt/EDLA/A13/android-gts/tools",
+    # a bare link dropped in for context
+    "https://platform.stepfun.com/docs/zh/step-plan/integrations/pi",
+    "https://stepfun.ai/",
+    # a pasted email -- Outlook's Chinese headers and its reply marker
+    "发件人: Sam Wood [mailto:Sam.Wood@microtouch.com] 发送时间: Monday, Apr",
+    "Subject: Request for Frequency Lock Tools & Test Mode Support – ",
+    "[答复_ Zytronics Rain mode setting with MT7 tool - Max Chen 陳桂華 (M",
+    # claude-code's own wrappers and an injected cron reminder
+    "<!-- reply --> > Are you trying to find the bearer token to past",
+    "<!-- attach --> > investigate the crash further, check journal l",
+    "[cron:da2e196a-851c-4dc2-bd82-e21f487dee00 skill-collection-revi",
+    "<local-command-stdout> This conversation is from a different dir",
+    # a logcat line and a CLI's startup banner
+    "2026-02-06 17:36:29.646 4759-4759 OpenClawCanvas ai.openclaw.and",
+    "▄▄▄▄▄▄▄▄▄▄ ▄▄▄▄▄▄▄▄▄▄▄▄ ▄▄▄▄▄▄▄▄▄▄ ▄▄▄▄▄▄▄▄▄▄ ▄▄▄▄▄▄▄▄▄▄ ▄▄▄▄▄▄▄▄",
+    "Kimi Code · +1 model. ╭─────────────────────────────────────────",
+    # an unbroken token: base64, an API key, a bare smb:// path
+    "12XFZ75lYpdLKWcKvVd9kZ5METk61qiDoeprelndlJNE13ZXZ88JqeNCBhaU4jvp",
+    "2hPHI3syq5wVuqSEm7ti9Bo0oM9JQ7whztAeiLPfsiopA1vqDhRg26H2acedeiT2",
+    "smb://10.11.97.239/swc/Common/EDLA/GOTA_EN",
+)
+
+GOOD_TITLES = (
+    # long, but a request a person wrote
+    "I had install zsh and oh my zsh, but I want kali style auto comple",
+    "Do you know anything in your resume history about testing about bt",
+    "Please study if there are some services that connect to 10.11.108.",
+    "Why I can not type chinese in https://www.kimi.com/?chat_enter_method=",
+    "Use [http://127.0.0.1:9090](http://127.0.0.1:9090) as the API addr",
+    "That explanation gets the timing and the failed assertion right, b",
+    # a path or a URL inside a real sentence is not a bare paste
+    "修复 /etc/ssh/sshd_config 里的 PermitRootLogin 设置",
+    "看着 https://github.com/aa/bb 这个仓库说说发布流程",
+    # a banner glyph or two in a real title is not startup art
+    "修复 ▄▄▄ 方块显示问题",
+    # a date that opens a real title is not a logcat line
+    "2026-02-06 发布计划",
+    # short but real
+    "Git rebase 问题",
+    "连通性测试",
+)
+
+
+@pytest.mark.parametrize("title", NOISE_TITLES)
+def test_a_title_that_is_a_paste_says_nothing(title):
+    assert rename._is_trivial(title), title
+
+
+@pytest.mark.parametrize("title", GOOD_TITLES)
+def test_a_real_title_is_not_proposed_for(title):
+    assert not rename._is_trivial(title), title
+
+
+def test_the_sweep_reaches_the_long_pastes(monkeypatch, tmp_path):
+    """The case the shape test exists for: a session whose title is a pasted
+    shell transcript is a worse row than one titled "hi", and used to pass
+    every check the sweep made -- it is long, so nothing about its length
+    said otherwise."""
+    _make_zcode_db(tmp_path)
+    pasted = "(hunt@hunt-OptiPlex-7071)-[~] $ ai update all Updating git install ..."
+    real = "Please study if there are some services that connect to 10.11.108."
+    for sid, title in (("sess_paste", pasted), ("sess_real", real)):
+        _zcode_row(sid, title, age_seconds=999_000)
+    _fake_scanners(monkeypatch, [
+        _zcode_record("sess_paste", pasted, age_seconds=999_000),
+        _zcode_record("sess_real", real, age_seconds=999_000),
+    ])
+    calls = []
+    _judge_says(monkeypatch, "1. 各 CLI 自更新流程排查\n", calls)
+    _confirm(monkeypatch, answer="n")  # look, don't touch
+
+    assert rename.cmd_rename(["--auto", "--trivial"]) == 0
+
+    prompt = calls[0][1]
+    assert pasted in prompt
+    # the long but genuine title is left alone
+    assert "Please study" not in prompt
+
+
 def test_a_partial_judge_answer_renames_only_what_it_answered(monkeypatch, tmp_path, capsys):
     _make_zcode_db(tmp_path)
     _zcode_row("sess_a", "hi", age_seconds=999_000)

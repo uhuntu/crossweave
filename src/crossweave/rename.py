@@ -25,11 +25,15 @@ codebuddy has no rename surface cw knows, and is refused rather than
 guessed at.
 
 --auto proposes titles with the same judge `cw search` uses, one
-batched call per twenty sessions, for sessions whose titles are
-trivial -- never for good ones. Everything lands in a before/after
-table that waits for a yes unless -y, and sessions updated in the last
-five minutes are skipped: they are live conversations, mid-flight with
-their own titler.
+batched call per twenty sessions, for sessions whose titles say
+nothing -- never for good ones. "Says nothing" is broader than short:
+a row titled with a pasted shell transcript, an `ls -l` listing or a
+bare URL is worse than one titled "hi" and passes every length test,
+so the shape test in common.title_says_nothing decides it instead
+(see _is_trivial). Everything lands in a before/after table that waits
+for a yes unless -y, and sessions updated in the last five minutes are
+skipped: they are live conversations, mid-flight with their own
+titler.
 """
 import datetime
 import json
@@ -212,14 +216,17 @@ def _apply(r, title):
 
 
 def _is_trivial(title):
+    """A title the sweep should propose for: one that says nothing, whether
+    because it is a bare acknowledgement, two characters long, or a paste the
+    scan fell back on. See common.title_says_nothing for the shapes -- the
+    long ones matter most, since a pasted shell transcript or an `ls -l`
+    listing is a worse row than "hi" and used to pass every check."""
     from . import sessions
 
     t = (title or "").strip()
-    if not t or t == "(no title)":
+    if len(t) <= 2:  # "中文", "测试" -- two characters say nothing
         return True
-    if sessions.is_trivial_title(t):
-        return True
-    return len(t) <= 2  # "中文", "测试" -- two characters say nothing
+    return sessions.title_says_nothing(t)
 
 
 # zcode, codex, claude, step and kimi each have a rename surface cw can
