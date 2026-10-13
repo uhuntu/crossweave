@@ -431,10 +431,22 @@ def run_judge_with_fallback(prompt, n, judge, judge_explicit, label):
             # the common case for a DEFAULT_JUDGE this machine does not have:
             # it used to kill the search outright, on a box where the very
             # next judge in the chain worked fine.
-            if e.code in (124, 127) and has_fallback:
+            if e.code in (124, 127):
                 why = "timed out" if e.code == 124 else "could not be run"
-                print(f"  -> {why}; falling back to next judge", file=sys.stderr)
-                continue
+                if has_fallback:
+                    print(f"  -> {why}; falling back to next judge", file=sys.stderr)
+                    continue
+                # Nothing left to try: a pinned --judge, or the end of the
+                # chain. The bare re-raise said nothing at all here, so a
+                # search ended on "timed out after 240 seconds" followed by
+                # silence -- a batch that contributed nothing, with no way to
+                # tell that no other judge was ever going to be asked.
+                if judge_explicit:
+                    print(f"  -> {why}; --judge pinned {j}, so no other judge "
+                          "is tried", file=sys.stderr)
+                else:
+                    print(f"  -> {why}; that was the last judge in the chain",
+                          file=sys.stderr)
             raise
         if result.returncode == 0:
             # stdout can legitimately be None (a judge that died mid-write,
@@ -587,6 +599,7 @@ def cmd_search(argv):
                 sys.exit(e.code)
     else:
         failures = 0
+        failed_chunks = []
         # Let one real batch choose the usable judge before fanning out. This
         # avoids launching every chunk against a judge that is at its session
         # limit or otherwise unavailable.
@@ -596,6 +609,7 @@ def cmd_search(argv):
             chunk_reasons[0] = first_matches
         except JudgeError:
             failures += 1
+            failed_chunks.append(0)
 
         with concurrent.futures.ThreadPoolExecutor(
             max_workers=min(MAX_CONCURRENT_BATCHES, n_chunks - 1)
@@ -611,6 +625,7 @@ def cmd_search(argv):
                     chunk_reasons[futures[fut]] = chunk_matches
                 except JudgeError:
                     failures += 1
+                    failed_chunks.append(futures[fut])
         if failures == n_chunks:
             if exact_ids:
                 print(f"cw search: all {n_chunks} semantic batches failed; showing exact matches only", file=sys.stderr)
@@ -618,7 +633,14 @@ def cmd_search(argv):
                 print(f"cw search: all {n_chunks} batches failed", file=sys.stderr)
                 sys.exit(1)
         if failures:
-            print(f"cw search: {failures}/{n_chunks} batches failed; showing partial results", file=sys.stderr)
+            # "1/15 batches failed" is a number about the machinery. What the
+            # person searching wants to know is how much of their history went
+            # unread -- the batches are a fixed size, so the count of sessions
+            # in the failed ones is the answer, and it is otherwise invisible.
+            unsearched = sum(len(chunks[i]) for i in failed_chunks)
+            print(f"cw search: {failures}/{n_chunks} batches failed "
+                  f"({unsearched} sessions unsearched); showing partial results",
+                  file=sys.stderr)
 
     # The judge lists its strongest hit first; that order is the only ranking
     # available (it is the one thing here that actually read the content), so

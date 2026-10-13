@@ -986,7 +986,7 @@ def test_cmd_search_partial_failure_still_shows_other_chunks(monkeypatch, capsys
     search.cmd_search(["topic"])
 
     err = capsys.readouterr().err
-    assert "batches failed; showing partial results" in err
+    assert "1/2 batches failed (50 sessions unsearched); showing partial results" in err
     assert len(rendered) == 1
     matched_ids = {row[1] for row in rendered[0]}
     assert matched_ids == {f"id-{search.CHUNK_SIZE}"}  # only chunk 2's match survives
@@ -1239,3 +1239,53 @@ def test_cmd_search_no_matches_at_all(monkeypatch, capsys):
     search.cmd_search(["aria2c"])
 
     assert "No relevant sessions found." in capsys.readouterr().out
+
+
+def test_a_pinned_judge_that_times_out_says_why_nothing_else_was_tried(monkeypatch, capsys):
+    """A --judge pin leaves the chain one judge long, and a timeout on it used
+    to re-raise in silence: the user saw "timed out after 240 seconds", then
+    nothing -- no hint that the pin was the reason no other judge was asked."""
+    monkeypatch.setattr(search, "gather_candidates", lambda tool_filter, show_all=False: [
+        {"tool": "codex", "id": "id-1", "ts": 1, "title": "x"}])
+    _stub_resolve_and_render(monkeypatch)
+    pinned = search.fallback_order()[-1]
+
+    def fake_run(argv, **kwargs):
+        raise search.subprocess.TimeoutExpired(argv, kwargs["timeout"])
+
+    monkeypatch.setattr(search.subprocess, "run", fake_run)
+
+    with pytest.raises(SystemExit) as excinfo:  # nothing was searched, so it exits
+        search.cmd_search(["topic", "--judge", pinned])
+
+    err = capsys.readouterr().err
+    assert f"timed out; --judge pinned {pinned}, so no other judge is tried" in err
+    assert excinfo.value.code == 124
+
+
+def test_the_last_judge_in_the_chain_timing_out_says_so(monkeypatch, capsys):
+    """The same silence at the end of an unpinned chain: every judge has had
+    its turn and the last one hung."""
+    monkeypatch.setattr(search, "gather_candidates", lambda tool_filter, show_all=False: [
+        {"tool": "codex", "id": "id-1", "ts": 1, "title": "x"}])
+    _stub_resolve_and_render(monkeypatch)
+    order = search.fallback_order()
+
+    class SessionLimit:
+        # unusable for the rest of the run, which is what walks the chain
+        returncode = 1
+        stdout = ""
+        stderr = "claude session limit reached"
+
+    def fake_run(argv, **kwargs):
+        if argv[0] == order[-1]:
+            raise search.subprocess.TimeoutExpired(argv, kwargs["timeout"])
+        return SessionLimit()
+
+    monkeypatch.setattr(search.subprocess, "run", fake_run)
+
+    with pytest.raises(SystemExit):
+        search.cmd_search(["topic"])
+
+    err = capsys.readouterr().err
+    assert "timed out; that was the last judge in the chain" in err
