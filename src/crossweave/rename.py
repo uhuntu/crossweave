@@ -17,9 +17,12 @@ title is native to the tool, not a cw-side overlay:
   step    append a session_info record to the session file (both of
           step's readers keep the last one, and its selector shows the
           name in place of the first prompt)
+  kimi    rewrite state.json's title with titleKind 'custom' (every
+          titler path returns early on 'custom', so the name is
+          permanent)
 
-kimi and codebuddy have no rename surface cw knows, and are refused
-rather than guessed at.
+codebuddy has no rename surface cw knows, and is refused rather than
+guessed at.
 
 --auto proposes titles with the same judge `cw search` uses, one
 batched call per twenty sessions, for sessions whose titles are
@@ -91,6 +94,59 @@ def _rename_claude(sid, title, path):
     return True
 
 
+def _rename_kimi(sdir, title):
+    """Rewrite state.json's title with titleKind 'custom' -- kimi's own
+    rename surface.
+
+    setTitle(title) writes {title, titleKind: "custom"} into the session's
+    state.json (renameSession guards against an empty title), and every
+    titler path -- setGeneratedTitleIfUncustomized, generateTitleOnce,
+    generateAndApply -- returns early when titleKind is "custom", so the
+    name is permanent. The kind is kimi's own vocabulary: `replaceable` is
+    the first prompt echoed back and still the titler's to overwrite,
+    `generated` the titler's, `custom` a user's. `isCustomTitle` is the v1
+    spelling of the same fact and is recomputed the way encodeSessionMeta
+    recomputes it, so a reader on either schema sees the rename.
+
+    updatedAt is deliberately left alone: setTitle passes
+    touchUpdatedAt: false, and cw reads that field for a session's recency
+    -- bumping it would make a renamed old session look live and skip
+    itself next time.
+
+    The whole document is rewritten through a temp file and os.replace,
+    the way kimi's atomic document store writes it, so a reader sees either
+    the old state or the new one and never a half-written file. What that
+    cannot do is merge: kimi holds the document in memory and writes all of
+    it back on its next update, so renaming a session kimi currently has
+    open is last-writer-wins -- kimi's next turn can put its own title back,
+    and our write can drop a lastPrompt it had already recorded. --auto
+    skips those (a live session's state.json is fresh, and _is_live reads
+    it); a manual rename is deliberate and takes the risk."""
+    if not sdir or not os.path.isdir(sdir):
+        return False
+    from . import common
+
+    path = os.path.join(sdir, "state.json")
+    state = common.read_json(path)
+    if not isinstance(state, dict):
+        return False
+    state["title"] = title
+    state["titleKind"] = "custom"
+    state["isCustomTitle"] = True
+    tmp = f"{path}.{os.getpid()}.tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(state, fh, ensure_ascii=False)
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        return False
+    return True
+
+
 def _rename_step(title, path):
     """Append a session_info record -- step's own rename surface.
 
@@ -150,6 +206,8 @@ def _apply(r, title):
         return _rename_claude(sid, title, r.get("path"))
     if tool == "step":
         return _rename_step(title, r.get("path"))
+    if tool == "kimi":
+        return _rename_kimi(r.get("dir"), title)
     return False
 
 
@@ -164,10 +222,10 @@ def _is_trivial(title):
     return len(t) <= 2  # "中文", "测试" -- two characters say nothing
 
 
-# zcode, codex, claude and step each have a rename surface cw can write
-# (see the module docstring); kimi and codebuddy do not, and are refused
-# before anything else happens to their rows.
-_RENAMABLE = ("zcode", "codex", "claude", "step")
+# zcode, codex, claude, step and kimi each have a rename surface cw can
+# write (see the module docstring); codebuddy does not, and is refused
+# before anything else happens to its rows.
+_RENAMABLE = ("zcode", "codex", "claude", "step", "kimi")
 
 
 def _is_live(r):
@@ -240,7 +298,8 @@ def _usage():
     print("Usage: cw rename <N> <title>\n"
           "       cw rename --auto [<N>... | --trivial] [-y] [--judge T]\n"
           "  <N> is a row from the last `cw`/`cw sessions` listing. Renames\n"
-          "  write through to the store itself (zcode, codex, claude, step).\n"
+          "  write through to the store itself (zcode, codex, claude, step,\n"
+          "  kimi).\n"
           "  --auto proposes titles with the judge; --trivial sweeps every\n"
           "  session whose title says nothing.", file=sys.stderr)
     return 2

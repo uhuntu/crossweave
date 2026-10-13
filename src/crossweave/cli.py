@@ -92,8 +92,8 @@ Examples:
                       #   install; `cw alias add` with no names restores every
                       #   name in the manifest (the fresh-machine move)
   cw rename 12 "USB 枚举握手排查"   # rename row 12 in the store itself --
-                            #   zcode/codex/claude/step today; --auto proposes
-                            #   titles for the trivial ones via the judge
+                            #   zcode/codex/claude/step/kimi today; --auto
+                            #   proposes titles for the trivial ones via the judge
 """
 
 # Everything `cw <x>` accepts that is not a tool. The unknown-tool error names

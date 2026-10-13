@@ -2,9 +2,10 @@
 
 Each tool's rename surface is the record its own UI writes -- zcode's
 title_source='custom', codex's newest-wins index line, claude's
-last-wins custom-title record -- so the tests pin those contracts
-against the readers that have to see them, plus the row-number and
---auto flows: remote rows refuse, live sessions skip, the judge's
+last-wins custom-title record, step's last-wins session_info record,
+kimi's titleKind='custom' in state.json -- so the tests pin those
+contracts against the readers that have to see them, plus the row-number
+and --auto flows: remote rows refuse, live sessions skip, the judge's
 partial answers keep their titles, and the confirm layer never applies
 anything without a yes or -y.
 """
@@ -18,7 +19,7 @@ import time
 
 import pytest
 
-from crossweave import codex, common, rename, search, sessions, step, zcode
+from crossweave import codex, common, kimi, rename, search, sessions, step, zcode
 
 
 @pytest.fixture(autouse=True)
@@ -265,10 +266,156 @@ def test_a_step_rename_refuses_a_file_that_is_gone():
                               "path": "/nowhere.jsonl"}, "whatever")
 
 
+KIMI_SID = "session_ba9b3dc8-ba38-4e52-8222-382bbb5fba08"
+
+# The live session this was built for: kimi's own title is the pasted shell
+# transcript it opened with, still marked replaceable, while the wire log's
+# first real prompt is "中文" -- which is what cw's row showed.
+KIMI_PASTED_TITLE = ("(hunt@hunt-OptiPlex-7071)-[~] $ ai update all Updating "
+                     "git install at /home/hunt/work/crossweave")
+
+
+def _kimi_session(tmp_path, prompt="中文"):
+    """A real-shaped kimi session directory: state.json beside
+    agents/main/wire.jsonl, with the field set a current build writes."""
+    sdir = tmp_path / "kimi" / "wd_crossweave" / KIMI_SID
+    (sdir / "agents" / "main").mkdir(parents=True)
+    (sdir / "agents" / "main" / "wire.jsonl").write_text(json.dumps({
+        "type": "turn.prompt", "input": [{"type": "text", "text": prompt}],
+    }) + "\n", encoding="utf-8")
+    (sdir / "state.json").write_text(json.dumps({
+        "id": KIMI_SID, "version": 2, "cwd": "/home/hunt/work/crossweave",
+        "archived": False,
+        "agents": {"main": {"homedir": str(sdir / "agents" / "main"),
+                            "type": "main"}},
+        "custom": {}, "lastTurnReason": "completed",
+        "title": KIMI_PASTED_TITLE, "titleKind": "replaceable",
+        "createdAt": 1791854095494, "updatedAt": 1791856031638,
+        "lastPrompt": "好的", "isCustomTitle": False,
+    }), encoding="utf-8")
+    return sdir
+
+
+def _kimi_record(sdir):
+    """The light record kimi_light_records builds -- a kimi record carries
+    the session *directory*, not a transcript path."""
+    return {"tool": "kimi", "id": KIMI_SID, "ts": OLD, "started": OLD,
+            "cwd": "/home/hunt/work/crossweave", "dir": str(sdir)}
+
+
+def test_manual_rename_writes_kimi_state_with_the_custom_kind(monkeypatch, tmp_path):
+    sdir = _kimi_session(tmp_path)
+    _fake_scanners(monkeypatch, [_kimi_record(sdir)])
+    _cache(monkeypatch, [{"tool": "kimi", "id": KIMI_SID}])
+    # before: the row says nothing -- the wire's first prompt is "中文" and
+    # kimi's own title is a paste it is still holding as replaceable
+    assert sessions.kimi_title(str(sdir)) == "中文"
+
+    assert rename.cmd_rename(["1", "cw rename 接入 kimi"]) == 0
+
+    state = json.loads((sdir / "state.json").read_text(encoding="utf-8"))
+    assert state["title"] == "cw rename 接入 kimi"
+    assert state["titleKind"] == "custom"  # the kind every titler path bails on
+    assert state["isCustomTitle"] is True  # the v1 spelling of the same fact
+    # ...and kimi's own reader sees it: its picker card shows the stored
+    # title as the header, so the row changes with the store
+    assert sessions.kimi_title(str(sdir)) == "cw rename 接入 kimi"
+
+
+def test_the_kimi_rename_leaves_the_rest_of_the_state_alone(monkeypatch, tmp_path):
+    """setTitle passes touchUpdatedAt: false, and cw reads updatedAt for a
+    session's recency -- bumping it would make a renamed old session look
+    live and skip itself the next time. Everything else in the document is
+    kimi's own state and goes back untouched."""
+    sdir = _kimi_session(tmp_path)
+    before = json.loads((sdir / "state.json").read_text(encoding="utf-8"))
+    _fake_scanners(monkeypatch, [_kimi_record(sdir)])
+    _cache(monkeypatch, [{"tool": "kimi", "id": KIMI_SID}])
+
+    assert rename.cmd_rename(["1", "kimi state 正名"]) == 0
+
+    after = json.loads((sdir / "state.json").read_text(encoding="utf-8"))
+    assert after["updatedAt"] == before["updatedAt"]
+    assert after["createdAt"] == before["createdAt"]
+    for key in ("id", "version", "cwd", "archived", "agents", "custom",
+                "lastTurnReason", "lastPrompt"):
+        assert after[key] == before[key], key
+    # written through a temp file that is gone again -- not left in the
+    # session directory for kimi to trip over
+    assert [p.name for p in sdir.iterdir() if p.name.endswith(".tmp")] == []
+
+
+def test_the_kimi_rename_is_the_record_kimis_own_settitle_writes(monkeypatch, tmp_path):
+    """{title, titleKind: "custom"} is exactly what setTitle writes and
+    encodeSessionMeta mirrors isCustomTitle off -- so a state.json cw wrote
+    is indistinguishable from one kimi renamed itself, including to a reader
+    that only knows the v1 flag."""
+    sdir = _kimi_session(tmp_path)
+    _fake_scanners(monkeypatch, [_kimi_record(sdir)])
+    _cache(monkeypatch, [{"tool": "kimi", "id": KIMI_SID}])
+
+    assert rename.cmd_rename(["1", "v2 schema 迁移"]) == 0
+
+    state = json.loads((sdir / "state.json").read_text(encoding="utf-8"))
+    assert {k: state[k] for k in ("title", "titleKind")} == {
+        "title": "v2 schema 迁移", "titleKind": "custom"}
+    assert state["isCustomTitle"] == (state["titleKind"] == "custom")
+    # a v1 state.json read on its own flag alone sees the same rename
+    v1_only = {k: v for k, v in state.items() if k != "titleKind"}
+    (sdir / "state.json").write_text(json.dumps(v1_only), encoding="utf-8")
+    assert kimi.kimi_stored_title(str(sdir)) == "v2 schema 迁移"
+
+
+def test_a_second_kimi_rename_replaces_the_first(monkeypatch, tmp_path):
+    """The document is rewritten whole, so the second name is the one there
+    is -- there is no record stack to keep the last of."""
+    sdir = _kimi_session(tmp_path)
+    _fake_scanners(monkeypatch, [_kimi_record(sdir)])
+    _cache(monkeypatch, [{"tool": "kimi", "id": KIMI_SID}])
+
+    assert rename.cmd_rename(["1", "first attempt"]) == 0
+    assert rename.cmd_rename(["1", "second attempt"]) == 0
+
+    assert sessions.kimi_title(str(sdir)) == "second attempt"
+
+
+def test_a_kimi_rename_refuses_a_session_that_is_gone(tmp_path):
+    """The writer's own guards: no directory, or a state.json that is not
+    there (or is not a document) -- refused rather than written fresh."""
+    gone = tmp_path / "gone" / KIMI_SID
+    assert not rename._apply({"tool": "kimi", "id": KIMI_SID, "dir": str(gone)},
+                             "whatever")
+    broken = tmp_path / "broken" / KIMI_SID
+    broken.mkdir(parents=True)
+    (broken / "state.json").write_text("{not json", encoding="utf-8")
+    assert not rename._apply({"tool": "kimi", "id": KIMI_SID,
+                              "dir": str(broken)}, "whatever")
+    # nothing was created in its place
+    assert (broken / "state.json").read_text(encoding="utf-8") == "{not json"
+
+
+def test_auto_renames_a_kimi_session(monkeypatch, tmp_path):
+    """The live case: a kimi session that opened with "中文" gets a name from
+    the judge, and it lands as the custom kind kimi's own picker card shows
+    as its header."""
+    sdir = _kimi_session(tmp_path)
+    _fake_scanners(monkeypatch, [_kimi_record(sdir)])
+    _cache(monkeypatch, [{"tool": "kimi", "id": KIMI_SID}])
+    _judge_says(monkeypatch, "1. crossweave rename 接入 kimi\n")
+    _confirm(monkeypatch)
+
+    assert rename.cmd_rename(["--auto", "1"]) == 0
+
+    assert sessions.kimi_title(str(sdir)) == "crossweave rename 接入 kimi"
+
+
 def test_a_tool_without_a_rename_surface_is_refused(monkeypatch, tmp_path, capsys):
-    _fake_scanners(monkeypatch, [{"tool": "kimi", "id": "km-1", "ts": OLD,
-                                  "dir": "/nowhere"}])
-    _cache(monkeypatch, [{"tool": "kimi", "id": "km-1"}])
+    """codebuddy is the one tool left with no rename surface cw knows: its
+    titler writes the title field of its own record, and there is no record
+    cw can append that its reader would keep."""
+    _fake_scanners(monkeypatch, [{"tool": "codebuddy", "id": "cb-1", "ts": OLD,
+                                  "title": "hi", "cwd": "/w"}])
+    _cache(monkeypatch, [{"tool": "codebuddy", "id": "cb-1"}])
 
     assert rename.cmd_rename(["1", "whatever"]) == 1
     assert "no rename surface" in capsys.readouterr().err

@@ -1030,6 +1030,8 @@ def _find_record(tool, sid):
         return next((r for r in step_light_records(show_all=True) if r["id"] == sid), None)
     if tool == "zcode":
         return next((r for r in zcode_light_records(show_all=True) if r["id"] == sid), None)
+    if tool == "codebuddy":
+        return next((r for r in codebuddy_light_records(show_all=True) if r["id"] == sid), None)
     return None
 
 

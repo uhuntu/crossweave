@@ -1606,9 +1606,31 @@ def test_kimi_title_only_trusts_a_name_kimi_committed_to(tmp_path):
         assert sessions.kimi_title(str(sess_dir)) == expected, state
 
 
+def test_kimi_title_shows_kimis_own_name_over_a_pasted_first_prompt(tmp_path):
+    """kimi's own picker card puts session.title in the header and the last
+    prompt on a secondary line beneath it -- the stored name is what the tool
+    itself shows in place of a prompt. So a name kimi committed to wins over
+    the first prompt even when that prompt is only kept as the fallback,
+    which is the case here: the wire log's one prompt is a pasted transcript
+    the scan rejects, and the stored name was generated from that same
+    paste. Showing the paste would show the raw noise; kimi's summary of it
+    is the better row."""
+    sess_dir = tmp_path / "sessdir"
+    (sess_dir / "agents" / "main").mkdir(parents=True)
+    (sess_dir / "agents" / "main" / "wire.jsonl").write_text(json.dumps({
+        "type": "turn.prompt", "input": [{"type": "text", "text": "$ kimi update\nerror: fetch failed"}],
+    }) + "\n")
+    (sess_dir / "state.json").write_text(json.dumps({
+        "title": "Fix the updater", "titleKind": "generated",
+    }))
+
+    assert sessions.kimi_title(str(sess_dir)) == "Fix the updater"
+
+
 def test_kimi_title_prefers_a_real_prompt_over_kimis_own_name(tmp_path):
-    """The stored name is derived from whatever kimi saw first, so an actual
-    prompt always beats it -- even one the scan only keeps as a fallback."""
+    """The stored name is only worth showing once kimi has committed to it:
+    a "replaceable" one is the first prompt echoed back and still the
+    titler's to overwrite, so a genuine prompt in the wire log beats it."""
     sess_dir = tmp_path / "sessdir"
     (sess_dir / "agents" / "main").mkdir(parents=True)
     (sess_dir / "agents" / "main" / "wire.jsonl").write_text(json.dumps({
@@ -1621,20 +1643,20 @@ def test_kimi_title_prefers_a_real_prompt_over_kimis_own_name(tmp_path):
     assert sessions.kimi_title(str(sess_dir)) == "fix the updater"
 
 
-def test_kimi_title_keeps_wire_text_over_a_stored_name(tmp_path):
-    """Even a pasted transcript -- a prompt the scan rejects and keeps only
-    as the fallback -- wins over the stored name, which in that case was
-    generated from that same paste."""
+def test_kimi_title_never_shows_a_prompt_over_a_users_own_name(tmp_path):
+    """The rename contract: `cw rename` writes titleKind 'custom', and every
+    titler path returns early on it -- so a name a user set is permanent and
+    outranks anything the wire log has to say."""
     sess_dir = tmp_path / "sessdir"
     (sess_dir / "agents" / "main").mkdir(parents=True)
     (sess_dir / "agents" / "main" / "wire.jsonl").write_text(json.dumps({
-        "type": "turn.prompt", "input": [{"type": "text", "text": "$ kimi update\nerror: fetch failed"}],
+        "type": "turn.prompt", "input": [{"type": "text", "text": "why is the build red"}],
     }) + "\n")
     (sess_dir / "state.json").write_text(json.dumps({
-        "title": "Fix the updater", "titleKind": "generated",
+        "title": "构建失败排查", "titleKind": "custom", "isCustomTitle": True,
     }))
 
-    assert sessions.kimi_title(str(sess_dir)).startswith("$ kimi update")
+    assert sessions.kimi_title(str(sess_dir)) == "构建失败排查"
 
 
 def test_kimi_title_uses_the_message_behind_an_openclaw_header(tmp_path):

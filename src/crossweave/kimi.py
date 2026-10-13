@@ -80,7 +80,14 @@ KIMI_PLACEHOLDER_TITLES = {"new session", "[image]"}
 
 def kimi_stored_title(sdir):
     """kimi's own name for a session, or None when it has none worth showing
-    -- see KIMI_PLACEHOLDER_TITLES."""
+    -- see KIMI_PLACEHOLDER_TITLES.
+
+    `titleKind` decides what the title is: `replaceable` is the first prompt
+    echoed back and still the titler's to overwrite (not a name, and not
+    shown), `generated` is the titler's, and `custom` is a user's -- written
+    by kimi's own setTitle and by `cw rename`, and never overwritten again.
+    The v1 spellings are read too: `isCustomTitle` is the flag an older
+    state.json carries instead of the kind."""
     state = common.read_json(os.path.join(sdir, "state.json")) or {}
     title = state.get("title")
     if not isinstance(title, str) or not title.strip():
@@ -93,15 +100,27 @@ def kimi_stored_title(sdir):
 
 
 def kimi_title(sdir):
-    """First *genuine* user prompt in the session's wire log.
+    """kimi's own stored title when it has one worth showing, else the first
+    genuine prompt in the session's wire log.
 
-    Skips injected/pasted prompts the same way claude_title_and_cwd does
-    (see its docstring), including a bare acknowledgement ("yes") replying
-    to content this scan can't read: a kimi session can just as easily be
-    opened by a reminder, a pasted terminal transcript, or a one-word reply
-    as by a real question, and a title taken from those is unrecognizable in
-    the listing. Falls back to the first prompt when every one in the
-    window is noise."""
+    The stored title wins once kimi has named the session: `titleKind` is
+    `replaceable` while the title is still the first prompt echoed back and
+    the titler may still overwrite it, `generated` once the titler has named
+    it, and `custom` once a user renamed it -- and every titler path returns
+    early on `custom`. So a generated or custom title takes the first
+    prompt's place in the row, the way zcode's stored title and step's
+    display name do, and `cw rename` writes exactly that `custom` kind.
+
+    The wire scan below is what remains: it skips injected/pasted prompts
+    the way claude_title_and_cwd does, including a bare acknowledgement
+    ("yes") replying to content this scan can't read -- a kimi session can
+    just as easily be opened by a reminder, a pasted terminal transcript, or
+    a one-word reply as by a real question, and a title taken from those is
+    unrecognizable in the listing. Falls back to the first prompt when every
+    one in the window is noise."""
+    stored = kimi_stored_title(sdir)
+    if stored:
+        return stored
     wire = os.path.join(sdir, "agents", "main", "wire.jsonl")
     fallback = None
     title = None
@@ -132,15 +151,12 @@ def kimi_title(sdir):
                     break
     except OSError:
         pass
-    resolved = common._title_or_placeholder(title, fallback)
-    if resolved == "(no title)":
-        # Nothing in the wire log to name it by: newer kimi builds keep a
-        # screenshot paste's prompt in context.append_message rather than
-        # turn.prompt, so a session opened by an image has no text here at
-        # all. kimi names such a session itself -- show its name rather than
-        # a blank row (see kimi_stored_title for what it won't show).
-        return kimi_stored_title(sdir) or resolved
-    return resolved
+    # The wire log had nothing to name it by: newer kimi builds keep a
+    # screenshot paste's prompt in context.append_message rather than
+    # turn.prompt, so a session opened by an image has no text here at all.
+    # kimi's own name for such a session was already tried above, so this row
+    # is genuinely unnamed -- say so rather than guess.
+    return common._title_or_placeholder(title, fallback)
 
 
 def kimi_snippet(sdir, max_messages=12, max_chars=800):
