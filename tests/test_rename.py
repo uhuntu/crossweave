@@ -522,7 +522,8 @@ def test_a_missing_title_resolves_the_name_the_listing_shows(monkeypatch, tmp_pa
     assert rename.cmd_rename(["1"]) == 2
 
     err = capsys.readouterr().err
-    assert 'row 1 (step %s, "中文") needs a title' % STEP_SID[:12] in err
+    assert ('row 1 (step %s, "中文") needs a title'
+            % STEP_SID[:sessions.ID_SHOW]) in err
     assert "(no title)" not in err
     # nothing was written -- this is still the missing-title path
     assert len(open(path, encoding="utf-8").readlines()) == 2
@@ -659,6 +660,86 @@ def test_auto_renames_via_the_judge_after_a_yes(monkeypatch, tmp_path):
     # one batched judge call, and the prompt asks for the session's own language
     assert len(calls) == 1
     assert "language" in calls[0][1]
+
+
+# ---------- a rename is not the conversation happening again ----------
+
+def test_renaming_a_claude_session_leaves_its_mtime_alone(monkeypatch, tmp_path):
+    """claude takes the session's timestamp from the file's mtime, so a plain
+    append reads a months-old conversation as active a minute ago -- it floats
+    above genuinely recent work, and the sweep's own liveness guard skips it
+    next run. The clock is restored, the record is not."""
+    # a claude-shaped transcript, since that is the store under test
+    cpath = tmp_path / "claude.jsonl"
+    cpath.write_text(json.dumps({"type": "user", "sessionId": "cs-1",
+                                 "message": {"role": "user", "content": "hi"}}) + "\n",
+                     encoding="utf-8")
+    cbefore = os.stat(cpath).st_mtime
+
+    assert rename._rename_claude("cs-1", "A real name", str(cpath)) is True
+
+    assert os.stat(cpath).st_mtime == cbefore
+    lines = [json.loads(ln) for ln in
+             cpath.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    assert lines[-1] == {"type": "custom-title", "customTitle": "A real name",
+                         "sessionId": "cs-1"}
+    # the mtime is untouched, but the record is really there
+    assert len(lines) == 2
+
+
+def test_renaming_a_step_session_leaves_its_mtime_alone(monkeypatch, tmp_path):
+    """Same clock, same store problem: step also derives ts from mtime."""
+    path = _step_file(tmp_path, monkeypatch, [
+        {"type": "session", "version": 3, "id": STEP_SID,
+         "timestamp": "2026-10-12T02:47:14.509Z", "cwd": "/home/hunt"},
+        {"type": "message", "id": "a8831c82", "parentId": None,
+         "timestamp": "2026-10-12T02:47:19.139Z",
+         "message": {"role": "user", "content": [{"type": "text", "text": "hi"}]}}],
+        sid=STEP_SID)
+    before = os.stat(path).st_mtime
+
+    assert rename._rename_step("A real name", str(path)) is True
+
+    assert os.stat(path).st_mtime == before
+    lines = [json.loads(ln) for ln in
+             path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    assert lines[-1]["type"] == "session_info"
+    assert lines[-1]["name"] == "A real name"
+
+
+# ---------- the id column has to tell sessions apart ----------
+
+def test_the_listing_shows_enough_id_to_tell_sessions_apart(monkeypatch):
+    """Twelve characters was not enough: 43 of this machine's sessions share a
+    12-character prefix with another, so a row could not be pointed at. The
+    width is a named constant so a store that starts issuing denser ids has
+    one place to change."""
+    assert sessions.ID_SHOW >= 13
+    # and it is actually used by the row the listing builds
+    row = sessions.resolve_row({"tool": "codex", "id": "a" * 40, "ts": 0,
+                                "cwd": "/w", "title": "t"})
+    assert row[3] == "a" * sessions.ID_SHOW
+
+
+def test_the_proposal_table_widens_the_id_and_lines_the_arrow_up(
+        monkeypatch, tmp_path, capsys):
+    """The continuation line used a hardcoded 16-space indent while the title
+    started at column 25, so every arrow sat nine columns left of the thing it
+    was explaining."""
+    _make_zcode_db(tmp_path)
+    _zcode_row("sess_abc", "hi", age_seconds=999_000)
+    _fake_scanners(monkeypatch, [_zcode_record("sess_abc", "hi", age_seconds=999_000)])
+    _cache(monkeypatch, [{"tool": "zcode", "id": "sess_abc"}])
+    _judge_says(monkeypatch, "1. a much better name\n")
+    _confirm(monkeypatch, answer="n")  # look, don't touch
+
+    assert rename.cmd_rename(["--auto", "1"]) == 0
+
+    out = capsys.readouterr().out.splitlines()
+    head = next(ln for ln in out if "sess_abc" in ln)
+    arrow = next(ln for ln in out if "-> a much better name" in ln)
+    # the arrow starts exactly where the old title does
+    assert arrow.index("->") == head.index("hi")
 
 
 def test_a_proposal_that_restates_the_title_is_not_applied(monkeypatch, tmp_path, capsys):

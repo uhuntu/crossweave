@@ -104,12 +104,28 @@ def _rename_codex(sid, title):
     return True
 
 
+def _append_keep_mtime(path, line):
+    """Append one JSON line to a session file and put the mtime back.
+
+    claude and step both take a session's timestamp from the file's mtime,
+    so appending a rename record makes a months-old conversation read as
+    active a minute ago: it floats to the top of the listing above
+    genuinely recent work, and the sweep's own liveness guard then skips
+    it on the next run. kimi sidesteps this by leaving `updatedAt` alone;
+    these two stores have no such field to leave alone and appending is
+    the only way to write, so the clock is restored instead. A rename is
+    not the conversation happening again."""
+    st = os.stat(path)
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(line + "\n")
+    os.utime(path, (st.st_atime, st.st_mtime))
+
+
 def _rename_claude(sid, title, path):
     if not path or not os.path.isfile(path):
         return False
     record = {"type": "custom-title", "customTitle": title, "sessionId": sid}
-    with open(path, "a", encoding="utf-8") as fh:
-        fh.write(json.dumps(record) + "\n")
+    _append_keep_mtime(path, json.dumps(record, ensure_ascii=False))
     return True
 
 
@@ -202,8 +218,7 @@ def _rename_step(title, path):
         timespec="milliseconds").replace("+00:00", "Z")
     record = {"type": "session_info", "id": new_id, "parentId": last_id,
               "timestamp": stamp, "name": _step_name(title)}
-    with open(path, "a", encoding="utf-8") as fh:
-        fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+    _append_keep_mtime(path, json.dumps(record, ensure_ascii=False))
     return True
 
 
@@ -285,7 +300,7 @@ def _resolve_row(n, cache):
                       "there, or mirror that machine's session store")
     r = sessions._find_record(entry["tool"], entry["id"])
     if r is None:
-        return None, (f"row {n} ({entry['tool']} {entry['id'][:12]}) is no "
+        return None, (f"row {n} ({entry['tool']} {entry['id'][:sessions.ID_SHOW]}) is no "
                       "longer in the store -- run `cw sessions` to refresh")
     return r, None
 
@@ -421,7 +436,7 @@ def _rename_manual(positional):
         # it separately, so reading the field directly printed "(no title)"
         # for a row that plainly had one.
         old = sessions._resolve_title_and_cwd(r)[0]
-        print(f"cw rename: row {n} ({r['tool']} {r['id'][:12]}, "
+        print(f"cw rename: row {n} ({r['tool']} {r['id'][:sessions.ID_SHOW]}, "
               f"\"{_short(old)}\") needs a title", file=sys.stderr)
         print("Usage: cw rename <N> <title>   (or: cw <N> rename <title>)",
               file=sys.stderr)
@@ -432,7 +447,7 @@ def _rename_manual(positional):
         return 1
     old = sessions._resolve_title_and_cwd(r)[0]
     if not _apply(r, title):
-        print(f"cw rename: {r['tool']} {r['id'][:12]}: the store did not "
+        print(f"cw rename: {r['tool']} {r['id'][:sessions.ID_SHOW]}: the store did not "
               "take the rename", file=sys.stderr)
         return 1
     print(f"renamed: {old} -> {title}")
@@ -502,7 +517,7 @@ def _rename_auto(positional, trivial, judge, yes):
             rows.append(r)
 
     for r, why in skipped:
-        print(f"cw rename: skipping {r['tool']} {r['id'][:12]}: {why}", file=sys.stderr)
+        print(f"cw rename: skipping {r['tool']} {r['id'][:sessions.ID_SHOW]}: {why}", file=sys.stderr)
     if not rows:
         if trivial:
             print("cw rename: nothing to propose -- every candidate already "
@@ -562,7 +577,12 @@ def _rename_auto(positional, trivial, judge, yes):
     for r, new, why in pending:
         old = sessions._resolve_title_and_cwd(r)[0]
         arrow = f"-> {new}" if new else f"-> (keeping -- {why})"
-        print(f"  [{r['tool']}] {r['id'][:12]}  {old}\n{'':16}{arrow}")
+        # The arrow goes under the title it replaces, measured rather than
+        # assumed: the indent was a hardcoded 16 while the title actually
+        # started at column 25, so every continuation line sat nine columns
+        # to the left of the thing it was explaining.
+        head = f"  [{r['tool']}] {r['id'][:sessions.ID_SHOW]}"
+        print(f"{head}  {old}\n{' ' * (len(head) + 2)}{arrow}")
     answered = [(r, new) for r, new, _ in pending if new]
     if not answered:
         print("cw rename: the judge proposed nothing usable -- nothing renamed",
@@ -585,7 +605,7 @@ def _rename_auto(positional, trivial, judge, yes):
             applied += 1
             print(f"renamed: {old} -> {new}")
         else:
-            print(f"cw rename: {r['tool']} {r['id'][:12]}: the store did not "
+            print(f"cw rename: {r['tool']} {r['id'][:sessions.ID_SHOW]}: the store did not "
                   "take the rename", file=sys.stderr)
     print(f"{applied} of {len(pending)} renamed.")
     return 0 if applied else 1

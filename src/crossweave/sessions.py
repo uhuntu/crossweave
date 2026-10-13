@@ -759,7 +759,7 @@ def cmd_list(args):
             print()
         print("on other machines:")
         render_rows(
-            [(s["tool"], s["id"], relative_time(s["ts"]), s["id"][:12],
+            [(s["tool"], s["id"], relative_time(s["ts"]), s["id"][:ID_SHOW],
               s["cwd"], s["title"]) for s in remotes],
             write_cache=False, start=len(rows) + 1,
             notes={(s["tool"], s["id"]): s["machine"] for s in remotes},
@@ -1101,7 +1101,8 @@ def resolve_row(r):
     title, cwd_show = _resolve_title_and_cwd(r)
     if not isinstance(cwd_show, str):
         cwd_show = "?"
-    return (r["tool"], r["id"], relative_time(r["ts"]), r["id"][:12], cwd_show, title)
+    return (r["tool"], r["id"], relative_time(r["ts"]), r["id"][:ID_SHOW],
+            cwd_show, title)
 
 
 def is_tool_started_row(row):
@@ -1274,6 +1275,15 @@ def session_last_message(record):
 # superscripts and other numeric characters that int() then rejects, so
 # `cw ²` used to end in a ValueError traceback.
 ROW_NUMBER_RE = re.compile(r"^\d+$")
+
+# How much of a session id to show in a listing row. Twelve characters was
+# not enough to tell sessions apart: 43 of this machine's sessions share a
+# 12-character prefix with another (the 01a0379e-* codex family alone has
+# fifteen such prefixes, four sessions deep in one of them), so a row could
+# not be pointed at and a rename proposal could not be told from the
+# session next to it. Thirteen would separate today's set with nothing to
+# spare; twenty leaves room for the next batch.
+ID_SHOW = 20
 
 
 def extract_cwd_override(args):
