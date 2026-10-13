@@ -514,6 +514,7 @@ def test_update_tools_falls_back_to_install_script_when_step_binary_is_busy(
     failure and rerun the update through step's install script, which downloads
     to a temp file and mv's into place."""
     monkeypatch.setattr(update.shutil, "which", lambda tool: f"/usr/bin/{tool}")
+    monkeypatch.setattr(update, "_platform_name", lambda: "posix")
     monkeypatch.delenv(update.UPDATE_PROXY_ENV, raising=False)
 
     class FakeResult:
@@ -541,6 +542,37 @@ def test_update_tools_falls_back_to_install_script_when_step_binary_is_busy(
     assert "install.sh" in bash_calls[0][2]
     out = capsys.readouterr().out
     assert "install script" in out
+
+
+def test_update_tools_falls_back_to_powershell_installer_for_windows_archive(
+    monkeypatch, capsys
+):
+    """Step 0.1.3 cannot recognize the current Windows release archive, but
+    the official PowerShell installer can, so cw should use it as a fallback."""
+    monkeypatch.setattr(update.shutil, "which", lambda tool: f"C:/bin/{tool}.exe")
+    monkeypatch.setattr(update, "_platform_name", lambda: "nt")
+    monkeypatch.delenv(update.UPDATE_PROXY_ENV, raising=False)
+
+    class FakeResult:
+        def __init__(self, code, stdout=""):
+            self.returncode = code
+            self.stdout = stdout
+
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        if argv[0] == "step":
+            return FakeResult(1, "Step update failed: release archive does not contain the Step binary\n")
+        return FakeResult(0, "installed StepCode 0.1.4\n")
+
+    monkeypatch.setattr(update.subprocess, "run", fake_run)
+
+    assert update.update_tools() == 0
+    ps_calls = [c for c in calls if c[0] == "powershell.exe"]
+    assert len(ps_calls) == 1
+    assert "install.ps1" in ps_calls[0][-1]
+    assert "install script" in capsys.readouterr().out
 
 
 def test_update_tools_no_fallback_when_step_fails_for_other_reasons(monkeypatch):
@@ -574,6 +606,7 @@ def test_update_tools_step_fallback_detects_curl_failure_hidden_by_zero_exit(
     bash reading empty input, exiting 0 -- same false-success shape as codex's
     own updater, and it must not count as an updated step."""
     monkeypatch.setattr(update.shutil, "which", lambda tool: f"/usr/bin/{tool}")
+    monkeypatch.setattr(update, "_platform_name", lambda: "posix")
     monkeypatch.delenv(update.UPDATE_PROXY_ENV, raising=False)
 
     class FakeResult:

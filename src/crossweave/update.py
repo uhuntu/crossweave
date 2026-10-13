@@ -116,21 +116,19 @@ TOOL_UPDATE_RECOVERY_MARKERS = {
     ),
 }
 
-# step's self-updater writes the new binary over its own currently-executing
-# file, which Linux refuses with ETXTBSY -- confirmed live 2026-10-13: the
-# only process holding ~/.stepcode/bin/step open during `step update` was the
-# updater itself, so the command can never succeed until upstream switches to
-# temp-file + rename. step's install script downloads to a temp file and
-# `mv -f`s it into place, which sidesteps the busy binary entirely, so an
-# ETXTBSY failure falls back to running that script instead.
-TOOL_UPDATE_BUSY_MARKER = {
-    "step": "ETXTBSY",
+# step's self-updater currently has two platform-specific packaging failures:
+# Linux tries to overwrite its running binary (ETXTBSY), while Windows 0.1.3
+# rejects the current release layout with "release archive does not contain
+# the Step binary".  The official installers handle both layouts correctly,
+# so either diagnostic falls back to the installer for the current platform.
+TOOL_UPDATE_FALLBACK_MARKERS = {
+    "step": ("ETXTBSY", "release archive does not contain the Step binary"),
 }
 TOOL_UPDATE_FALLBACK_CMD = {
-    # The same installer as a fresh `curl .../install.sh | bash` install.
-    # Pipe to bash, not sh: the script is bash (#!/usr/bin/env bash, [[, etc).
-    "step": ["bash", "-c",
-             "curl -fsSL https://static-openapi.stepfun.com/stepcode/install.sh | bash"],
+    "posix": ["bash", "-c",
+              "curl -fsSL https://static-openapi.stepfun.com/stepcode/install.sh | bash"],
+    "nt": ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
+           "irm https://static-openapi.stepfun.com/stepcode/install.ps1 | iex"],
 }
 
 # The fallback pipes curl into bash without pipefail, so a dead curl leaves
@@ -138,6 +136,11 @@ TOOL_UPDATE_FALLBACK_CMD = {
 # as codex's own updater, caught the same way.
 TOOL_UPDATE_FAILURE_MARKERS["step"] = ("curl: (",)
 TOOL_UPDATE_RECOVERY_MARKERS["step"] = ("installed StepCode",)
+
+
+def _platform_name():
+    """Small seam for testing platform-specific updater commands."""
+    return os.name
 
 
 def detect_repo_dir(package_dir):
@@ -297,25 +300,24 @@ def update_tools():
             # attempt -- without this, codex (0 retries) could never reach it.
             retries = 1
         print(f"Updating {tool} ...", flush=True)
-        # Tools in TOOL_UPDATE_BUSY_MARKER get their output captured even with
-        # no retry policy, so a self-update-that-cannot-replace-its-own-binary
-        # failure is recognized and routed to the fallback installer.
-        busy_marker = TOOL_UPDATE_BUSY_MARKER.get(tool)
+        # Tools with fallback markers get their output captured even with no
+        # retry policy, so known updater defects can be routed to the official
+        # platform installer.
+        fallback_markers = TOOL_UPDATE_FALLBACK_MARKERS.get(tool, ())
         last_code, _gave_up, output = run_with_retries(
             argv, retries, proxy,
             failure_markers=TOOL_UPDATE_FAILURE_MARKERS.get(tool, ()),
             recovery_markers=TOOL_UPDATE_RECOVERY_MARKERS.get(tool, ()),
-            capture=busy_marker is not None,
+            capture=bool(fallback_markers),
         )
 
-        fallback = TOOL_UPDATE_FALLBACK_CMD.get(tool)
+        fallback = TOOL_UPDATE_FALLBACK_CMD.get(_platform_name())
         if (
-            last_code != 0 and busy_marker and busy_marker in output
-            and fallback and os.name != "nt"
+            last_code != 0
+            and any(marker in output for marker in fallback_markers)
+            and fallback
         ):
-            # os.name guard: the fallback is a bash one-liner, meaningless
-            # where bash does not exist.
-            print(f"  {tool}'s own updater cannot replace its running binary; "
+            print(f"  {tool}'s own updater cannot install this release; "
                   f"trying its install script instead ...", flush=True)
             fb_retries = 1 if proxy else 0
             last_code, _gave_up, _output = run_with_retries(
