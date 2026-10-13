@@ -305,7 +305,7 @@ def _resolve_row(n, cache):
     return r, None
 
 
-def _propose_titles(rows, judge):
+def _propose_titles(rows, snippets, judge):
     """({position: title}, positions shown to the judge) from one batched
     judge call, or raise search.JudgeError.
 
@@ -314,12 +314,15 @@ def _propose_titles(rows, judge):
     the honest answer, so an empty snippet buys an invented one. Three of
     a real sweep's sixty proposals were fabricated that way -- sessions
     opened and abandoned before a single word was typed.
+
+    `snippets` runs parallel to `rows` and is read once, at selection: the
+    sweep needs to know whether a candidate holds anything before it
+    spends one of its per-run slots on it.
     """
     from . import search, sessions
 
     lines, asked = [], []
-    for n, r in enumerate(rows, 1):
-        snippet = (search.snippet_for(r) or "").strip()
+    for n, (r, snippet) in enumerate(zip(rows, snippets), 1):
         if not snippet:
             continue
         asked.append(n)
@@ -473,8 +476,9 @@ def _rename_auto(positional, trivial, judge, yes):
     from . import search, sessions
 
     cache = sessions.read_list_cache()
-    rows = []
+    rows, snips = [], []
     skipped = []
+    empty = 0
     if trivial:
         # The sweep resolves every session's title -- a full-store walk,
         # and the price of finding the unnamed. The judge batches keep it
@@ -488,12 +492,25 @@ def _rename_auto(positional, trivial, judge, yes):
             if _is_live(r):
                 skipped.append((r, "still live"))
                 continue
-            if _is_trivial(row[5]):
-                rows.append(r)
-                if len(rows) >= AUTO_CAP:
-                    print(f"cw rename: capped at {AUTO_CAP} per run -- "
-                          "rerun for the rest", file=sys.stderr)
-                    break
+            if not _is_trivial(row[5]):
+                continue
+            snippet = (search.snippet_for(r) or "").strip()
+            if not snippet:
+                # Holds no words at all: an abandoned launch, a cancelled
+                # /resume, a kimi session whose directory has only a
+                # state.json. There is no topic to name, so it is counted
+                # rather than carried -- carrying it would spend a slot of
+                # the per-run cap on a row that can never be renamed, and
+                # since it can never be renamed it would be re-offered on
+                # every run from here on. This machine has 27 of them.
+                empty += 1
+                continue
+            rows.append(r)
+            snips.append(snippet)
+            if len(rows) >= AUTO_CAP:
+                print(f"cw rename: capped at {AUTO_CAP} per run -- "
+                      "rerun for the rest", file=sys.stderr)
+                break
     else:
         if not cache:
             print("cw rename: no session list cached yet -- run `cw sessions` first",
@@ -515,9 +532,14 @@ def _rename_auto(positional, trivial, judge, yes):
                 skipped.append((r, "still live"))
                 continue
             rows.append(r)
+            snips.append((search.snippet_for(r) or "").strip())
 
     for r, why in skipped:
         print(f"cw rename: skipping {r['tool']} {r['id'][:sessions.ID_SHOW]}: {why}", file=sys.stderr)
+    if empty:
+        noun = "session" if empty == 1 else "sessions"
+        print(f"cw rename: {empty} {noun} with no content to name -- not "
+              "proposed for", file=sys.stderr)
     if not rows:
         if trivial:
             print("cw rename: nothing to propose -- every candidate already "
@@ -533,7 +555,7 @@ def _rename_auto(positional, trivial, judge, yes):
         # numbering); keep that keying so chunk offsets line up
         for start in range(0, len(rows), BATCH):
             chunk = rows[start:start + BATCH]
-            got, asked = _propose_titles(chunk, judge)
+            got, asked = _propose_titles(chunk, snips[start:start + BATCH], judge)
             for pos, title in got.items():
                 proposals[start + pos] = title
             nameable.update(start + pos for pos in asked)

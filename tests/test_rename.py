@@ -952,6 +952,34 @@ def test_the_trivial_sweep_picks_only_titles_that_say_nothing(monkeypatch, tmp_p
     assert "Git rebase 问题" not in prompt
 
 
+def test_the_sweep_counts_empty_sessions_instead_of_carrying_them(
+        monkeypatch, tmp_path, capsys):
+    """A session holding no words can never be renamed, so carrying it through
+    the sweep spends one of the run's sixty slots on it and re-offers it on
+    every run from then on. It is counted instead -- and the count is the only
+    place it appears, so a batch is not a third empty rows."""
+    _make_zcode_db(tmp_path)
+    for sid, title in (("sess_hi", "hi"), ("sess_gone", "hi"), ("sess_real", "hi")):
+        _zcode_row(sid, title, age_seconds=999_000)
+    _fake_scanners(monkeypatch, [
+        _zcode_record("sess_hi", "hi", age_seconds=999_000),
+        _zcode_record("sess_gone", "hi", age_seconds=999_000),
+        _zcode_record("sess_real", "hi", age_seconds=999_000),
+    ])
+    _judge_says(monkeypatch, "1. a real answer\n")
+    monkeypatch.setattr(search, "snippet_for",
+                        lambda r: "" if r["id"] == "sess_gone" else "real content")
+    _confirm(monkeypatch, answer="n")  # look, don't touch
+
+    assert rename.cmd_rename(["--trivial"]) == 0
+
+    out = capsys.readouterr()
+    assert "1 session with no content to name" in out.err
+    # counted, not tabled -- and the judge was asked about the other two only
+    assert "sess_gone" not in out.out
+    assert "a real answer" in out.out
+
+
 def test_trivial_alone_is_the_sweep(monkeypatch, tmp_path):
     """`cw rename --trivial` with no --auto is the same sweep. --trivial picks
     neither a title nor a row, so there is nothing else it could be asking
