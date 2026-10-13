@@ -43,6 +43,12 @@ so the shape test in common.title_says_nothing decides it instead
 for a yes unless -y, and sessions updated in the last five minutes are
 skipped: they are live conversations, mid-flight with their own
 titler.
+
+--auto and --trivial answer different questions -- who writes the
+title, and which sessions -- so `--auto 3 7` names the rows and lets
+the judge title them, while `--auto --trivial` finds the rows too.
+--trivial alone means the latter: it picks neither a title nor a row,
+so there is nothing else it could be asking for.
 """
 import datetime
 import json
@@ -317,7 +323,8 @@ def _usage():
           "  write through to the store itself (zcode, codex, claude, step,\n"
           "  kimi).\n"
           "  --auto proposes titles with the judge; --trivial sweeps every\n"
-          "  session whose title says nothing.", file=sys.stderr)
+          "  session whose title says nothing (and implies --auto).",
+          file=sys.stderr)
     return 2
 
 
@@ -345,10 +352,15 @@ def cmd_rename(args):
         else:
             positional.append(a); i += 1
 
+    if trivial and not auto:
+        # --trivial is a selector inside --auto, not a mode of its own -- but
+        # it names neither a title nor a row, so there is nothing else it could
+        # be asking for. Saying it is saying both, and the sweep is the command
+        # people actually reach for.
+        auto = True
+
     if not auto and not positional:
         return _usage()
-    if not auto and trivial:
-        return _usage()  # --trivial is an --auto selector, not a mode
 
     from . import search, sessions
 

@@ -730,6 +730,43 @@ def test_the_trivial_sweep_picks_only_titles_that_say_nothing(monkeypatch, tmp_p
     assert "Git rebase 问题" not in prompt
 
 
+def test_trivial_alone_is_the_sweep(monkeypatch, tmp_path):
+    """`cw rename --trivial` with no --auto is the same sweep. --trivial picks
+    neither a title nor a row, so there is nothing else it could be asking
+    for -- and the two-flag spelling was one word longer for no distinction."""
+    _make_zcode_db(tmp_path)
+    for sid, title in (("sess_hi", "hi"), ("sess_cn", "中文")):
+        _zcode_row(sid, title, age_seconds=999_000)
+    _fake_scanners(monkeypatch, [
+        _zcode_record("sess_hi", "hi", age_seconds=999_000),
+        _zcode_record("sess_cn", "中文", age_seconds=999_000),
+    ])
+    calls = []
+    _judge_says(monkeypatch, "1. 跨机索引设计\n2. 中文环境配置\n", calls)
+    _confirm(monkeypatch, answer="n")
+
+    assert rename.cmd_rename(["--trivial"]) == 0
+
+    assert len(calls) == 1
+    assert "hi" in calls[0][1] and "中文" in calls[0][1]
+
+
+def test_auto_with_neither_rows_nor_trivial_still_says_so(monkeypatch, tmp_path, capsys):
+    """--auto alone has nothing to work on: it names no rows and asks for no
+    sweep, so it says exactly that rather than sweeping unprompted."""
+    _make_zcode_db(tmp_path)
+    _zcode_row("sess_abc", "hi", age_seconds=999_000)
+    _fake_scanners(monkeypatch, [_zcode_record("sess_abc", "hi", age_seconds=999_000)])
+    _cache(monkeypatch, [{"tool": "zcode", "id": "sess_abc"}])
+    calls = []
+    _judge_says(monkeypatch, "1. anything\n", calls)
+
+    assert rename.cmd_rename(["--auto"]) == 0
+
+    assert calls == []  # the judge was never asked
+    assert "no eligible sessions" in capsys.readouterr().err
+
+
 # ---------- the sweep's notion of a title that says nothing ----------
 
 # Every noise case here is a row this machine's listing actually held, and

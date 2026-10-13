@@ -31,6 +31,7 @@ USAGE = f"""Usage: cw <{'|'.join(TOOLS)}> [common-options] [prompt] [-- extra na
        cw machines           # the ssh endpoint: prints this machine's index JSON
        cw rename <N> <title> [--judge T]
        cw rename --auto [<N>... | --trivial] [-y] [--judge T]
+       cw rename --trivial              # the sweep -- --auto implied
 
 Common options (translated per-tool, all optional):
   -p, --print              Non-interactive: print response and exit
