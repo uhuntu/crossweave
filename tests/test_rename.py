@@ -594,6 +594,7 @@ def test_the_row_first_spelling_takes_an_auto_selector(monkeypatch, tmp_path, ca
             stderr = "no judge"
         return R()
     monkeypatch.setattr(search, "_call_judge", judge_refuses)
+    _snippet_says(monkeypatch)
 
     assert _run_cli(monkeypatch, ["1", "rename", "--auto"]) == 1
 
@@ -616,7 +617,21 @@ def _confirm(monkeypatch, answer="y"):
     monkeypatch.setattr("builtins.input", lambda _: answer)
 
 
-def _judge_says(monkeypatch, text, calls=None):
+def _snippet_says(monkeypatch, text="hello, can you help me look at something"):
+    """Stand in for what the judge is shown -- see _judge_says."""
+    monkeypatch.setattr(search, "snippet_for", lambda r: text)
+
+
+def _judge_says(monkeypatch, text, calls=None,
+                snippet="hello, can you help me look at something"):
+    """Stub the judge's answer.
+
+    `snippet` stands in for what the judge gets shown. The real readers
+    find nothing in these fixtures, and a row with nothing to show is not
+    offered to the judge at all (see _propose_titles), so a test that
+    wants its row to reach the judge has to give it something to be
+    shown. Pass snippet="" for the other case.
+    """
     def fake_call(judge, prompt):
         if calls is not None:
             calls.append((judge, prompt))
@@ -626,6 +641,7 @@ def _judge_says(monkeypatch, text, calls=None):
             stderr = ""
         return R()
     monkeypatch.setattr(search, "_call_judge", fake_call)
+    _snippet_says(monkeypatch, snippet)
 
 
 def test_auto_renames_via_the_judge_after_a_yes(monkeypatch, tmp_path):
@@ -679,6 +695,95 @@ def test_a_case_only_difference_counts_as_the_same_title(monkeypatch, tmp_path, 
 
     assert "judge proposed the title it already has" in capsys.readouterr().out
     assert _zcode_title("sess_abc") == ("Hello", "first_input")
+
+
+# ---------- a session with nothing in it is not offered to the judge ----------
+
+def test_a_session_with_no_content_is_never_offered_to_the_judge(
+        monkeypatch, tmp_path, capsys):
+    """A session opened and abandoned -- a cancelled /resume, a codex launch
+    closed before a word was typed -- has no topic to name. Sending it to the
+    judge anyway buys an invented title, because the prompt says to propose
+    one for every line and forbids the honest answer. It stays in the table
+    marked as considered, so the sweep is not silently smaller than it looks.
+    """
+    _make_zcode_db(tmp_path)
+    _zcode_row("sess_abc", "hi", age_seconds=999_000)
+    _zcode_row("sess_xyz", "hello", age_seconds=999_000)
+    _fake_scanners(monkeypatch, [
+        _zcode_record("sess_abc", "hi", age_seconds=999_000),
+        _zcode_record("sess_xyz", "hello", age_seconds=999_000),
+    ])
+    _cache(monkeypatch, [{"tool": "zcode", "id": "sess_abc"},
+                         {"tool": "zcode", "id": "sess_xyz"}])
+    # sess_abc holds nothing; the judge is asked about sess_xyz alone
+    # (after _judge_says, which installs its own snippet stand-in)
+    _judge_says(monkeypatch, "1. a real answer\n")
+    monkeypatch.setattr(search, "snippet_for",
+                        lambda r: "" if r["id"] == "sess_abc" else "a real question")
+    _confirm(monkeypatch, answer="n")  # look, don't touch
+
+    assert rename.cmd_rename(["--auto", "1", "2"]) == 0
+
+    out = capsys.readouterr().out
+    assert "no content to name" in out
+    assert "a real answer" in out
+    assert _zcode_title("sess_abc") == ("hi", "first_input")
+
+
+def test_a_batch_of_empty_sessions_never_calls_the_judge(monkeypatch, tmp_path,
+                                                         capsys):
+    """Every candidate empty is the degenerate sweep: there is nothing to ask
+    about, so the judge is not called at all rather than called to invent
+    sixty titles."""
+    _make_zcode_db(tmp_path)
+    for sid in ("sess_a", "sess_b"):
+        _zcode_row(sid, "hi", age_seconds=999_000)
+    _fake_scanners(monkeypatch, [
+        _zcode_record("sess_a", "hi", age_seconds=999_000),
+        _zcode_record("sess_b", "hi", age_seconds=999_000),
+    ])
+    _cache(monkeypatch, [{"tool": "zcode", "id": "sess_a"},
+                         {"tool": "zcode", "id": "sess_b"}])
+    calls = []
+    _judge_says(monkeypatch, "1. invented\n2. invented\n", calls, snippet="")
+
+    assert rename.cmd_rename(["--auto", "1", "2", "-y"]) == 1
+
+    assert not calls
+    assert "hold any content to name" in capsys.readouterr().err
+
+
+def test_skipping_an_empty_row_keeps_the_judge_numbering_lined_up(
+        monkeypatch, tmp_path, capsys):
+    """The renumbering is the whole risk in not sending empty rows: the judge
+    is handed lines 1..K, so its "2." has to land on the row that was third
+    in the batch, not the second. Getting this wrong renames the wrong
+    session."""
+    _make_zcode_db(tmp_path)
+    for sid in ("sess_one", "sess_two", "sess_three"):
+        _zcode_row(sid, "hi", age_seconds=999_000)
+    _fake_scanners(monkeypatch, [
+        _zcode_record("sess_one", "hi", age_seconds=999_000),
+        _zcode_record("sess_two", "hi", age_seconds=999_000),
+        _zcode_record("sess_three", "hi", age_seconds=999_000),
+    ])
+    _cache(monkeypatch, [{"tool": "zcode", "id": "sess_one"},
+                         {"tool": "zcode", "id": "sess_two"},
+                         {"tool": "zcode", "id": "sess_three"}])
+    # only the middle session is empty, so the judge sees two lines and its
+    # second answer belongs to sess_three (installed after _judge_says, which
+    # brings its own snippet stand-in)
+    _judge_says(monkeypatch, "1. first answer\n2. third answer\n")
+    monkeypatch.setattr(search, "snippet_for",
+                        lambda r: "" if r["id"] == "sess_two" else "real content")
+    _confirm(monkeypatch, answer="y")
+
+    assert rename.cmd_rename(["--auto", "1", "2", "3"]) == 0
+
+    assert _zcode_title("sess_one") == ("first answer", "custom")
+    assert _zcode_title("sess_two") == ("hi", "first_input")
+    assert _zcode_title("sess_three") == ("third answer", "custom")
 
 
 def test_auto_renames_a_step_session(monkeypatch, tmp_path):
@@ -925,6 +1030,7 @@ def test_a_judge_failure_renames_nothing(monkeypatch, tmp_path, capsys):
         raise search.JudgeError(124)
 
     monkeypatch.setattr(search, "_call_judge", judge_dies)
+    _snippet_says(monkeypatch)
 
     assert rename.cmd_rename(["--auto", "1", "-y"]) == 1
     assert "judge" in capsys.readouterr().err

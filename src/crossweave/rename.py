@@ -291,15 +291,28 @@ def _resolve_row(n, cache):
 
 
 def _propose_titles(rows, judge):
-    """{position: title} from one batched judge call, or raise
-    search.JudgeError."""
+    """({position: title}, positions shown to the judge) from one batched
+    judge call, or raise search.JudgeError.
+
+    A row with nothing to show is left out of the batch rather than sent
+    empty: the prompt says to propose a title for each line and forbids
+    the honest answer, so an empty snippet buys an invented one. Three of
+    a real sweep's sixty proposals were fabricated that way -- sessions
+    opened and abandoned before a single word was typed.
+    """
     from . import search, sessions
 
-    lines = []
+    lines, asked = [], []
     for n, r in enumerate(rows, 1):
+        snippet = (search.snippet_for(r) or "").strip()
+        if not snippet:
+            continue
+        asked.append(n)
         title_now = sessions._resolve_title_and_cwd(r)[0]
-        lines.append(f"{n}. [{r['tool']}] {r.get('cwd') or '?'} — "
-                     f"{title_now} :: {search.snippet_for(r)}")
+        lines.append(f"{len(asked)}. [{r['tool']}] {r.get('cwd') or '?'} — "
+                     f"{title_now} :: {snippet}")
+    if not asked:
+        return {}, set()
     prompt = (
         "Each line below describes a past AI coding-assistant session whose "
         "title is useless (a greeting, a fragment, a test phrase). Propose a "
@@ -313,7 +326,11 @@ def _propose_titles(rows, judge):
     proc = search._call_judge(judge, prompt)
     if proc is None or proc.returncode != 0:
         raise search.JudgeError(proc.returncode if proc else 127)
-    return search.parse_numbered_reasons(proc.stdout, len(rows))
+    # parse_numbered_reasons numbers the lines it was handed, so map its
+    # 1..K back onto the positions those lines came from
+    return ({asked[pos - 1]: title for pos, title in
+             search.parse_numbered_reasons(proc.stdout, len(asked)).items()},
+            set(asked))
 
 
 def _usage():
@@ -496,15 +513,26 @@ def _rename_auto(positional, trivial, judge, yes):
 
     try:
         proposals = {}
+        nameable = set()
         # the judge numbers from 1 (parse_numbered_reasons keeps its
         # numbering); keep that keying so chunk offsets line up
         for start in range(0, len(rows), BATCH):
             chunk = rows[start:start + BATCH]
-            for pos, title in _propose_titles(chunk, judge).items():
+            got, asked = _propose_titles(chunk, judge)
+            for pos, title in got.items():
                 proposals[start + pos] = title
+            nameable.update(start + pos for pos in asked)
     except search.JudgeError as e:
         print(f"cw rename: judge ({judge}) unavailable -- nothing renamed "
               f"(exit {e})", file=sys.stderr)
+        return 1
+
+    if not nameable:
+        # Every candidate is a session that holds no words -- nothing was
+        # ever asked in them, so there is nothing to name. Saying that
+        # beats a judge call that returns sixty invented titles.
+        print("cw rename: none of these sessions hold any content to name "
+              "-- nothing renamed", file=sys.stderr)
         return 1
 
     # Candidates without a proposal keep their title, and stay in the
@@ -522,6 +550,10 @@ def _rename_auto(positional, trivial, judge, yes):
             # `hi -> hi` for a fifth of its batch.
             new = None
             why = "judge proposed the title it already has"
+        elif k + 1 not in nameable:
+            # Never offered to the judge: the session holds no words at
+            # all, so there was no topic to propose one for.
+            why = "no content to name"
         else:
             why = "no proposal"
         pending.append((r, new, why))
