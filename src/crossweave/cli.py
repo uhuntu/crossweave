@@ -6,7 +6,7 @@ through; zcode has no terminal interface, so `cw zcode` only opens the app.
 import os
 import sys
 
-from . import __version__, alias, doctor, machines, search, sessions, update
+from . import __version__, alias, doctor, machines, rename, search, sessions, update
 
 TOOLS = ("claude", "codex", "kimi", "step", "zcode", "codebuddy")
 
@@ -28,6 +28,8 @@ USAGE = f"""Usage: cw <{'|'.join(TOOLS)}> [common-options] [prompt] [-- extra na
        cw doctor [--tool T]
        cw alias add <name>... | list | remove <name>...
        cw machines           # the ssh endpoint: prints this machine's index JSON
+       cw rename <N> <title> [--judge T]
+       cw rename --auto [<N>... | --trivial] [-y] [--judge T]
 
 Common options (translated per-tool, all optional):
   -p, --print              Non-interactive: print response and exit
@@ -89,13 +91,16 @@ Examples:
   cw alias add xx     # personal command names -- launchers pointing at this
                       #   install; `cw alias add` with no names restores every
                       #   name in the manifest (the fresh-machine move)
+  cw rename 12 "USB 枚举握手排查"   # rename row 12 in the store itself --
+                            #   zcode/codex/claude today; --auto proposes
+                            #   titles for the trivial ones via the judge
 """
 
 # Everything `cw <x>` accepts that is not a tool. The unknown-tool error names
 # this list, and the test asserts it matches what main() actually dispatches,
 # so adding a subcommand cannot leave the message stale the way it was when
 # `stats` and `step` were both missing from it.
-SUBCOMMANDS = ("sessions", "full", "search", "resume", "update", "stats", "doctor", "alias", "machines")
+SUBCOMMANDS = ("sessions", "full", "search", "resume", "update", "stats", "doctor", "alias", "machines", "rename")
 
 
 class UsageError(Exception):
@@ -302,6 +307,8 @@ def main():
         # The ssh endpoint of the pull mode: `ssh <host> cw machines` runs
         # this and ships the JSON back to the caller's `--machines`.
         sys.exit(machines.cmd_machines(rest))
+    if tool == "rename":
+        sys.exit(rename.cmd_rename(rest))
 
     try:
         cmd = build_command(tool, rest)

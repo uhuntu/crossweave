@@ -210,6 +210,18 @@ Pass `--cwd <dir>` to send it somewhere else instead, e.g. `cw resume 2 --cwd /p
 
 ZCode ships both a desktop app and a terminal CLI under the same name, sharing this store. When the CLI is the `zcode` on PATH (told apart by file header — probing either with `--help` boots the desktop GUI), `cw resume zcode <id>` is a real resume (`zcode --resume <id>`, the TUI opening in the session's own directory), bare `cw zcode` opens the CLI's TUI here, and a `--cwd` relocation or `cw <N> zcode` hands off by seeding one headless `zcode -p` run and resuming the session it just persisted — the same two-step kimi needs. An install whose CLI bundles no `@zcode/tui` (one checked: the CLI delegating to the desktop's core) has no TUI at all, so a resume there lands on a hint instead of a node traceback — and the fact is remembered per install, keyed by the `zcode` executable's path, size and mtime so that an upgrade invalidates it by itself. After that the doomed start is skipped and the two ways forward are named outright: the desktop app's task list, or the headless `zcode --resume <id> -p "<next instruction>"` continuation (verified 2026-10-10 — the follow-up turn appends to the same session, context intact). cw takes that route itself when the instruction is on the command line: `cw resume zcode <id> "<next instruction>"`, or `cw resume <N> "..."` by row number, which also gives words after an id a meaning, since a TUI would only reject them. Only on a machine where the desktop app is all there is does the wrapper fall back to the workspace deep link, `zcode://workspace/open?path=…`, which opens the right workspace but no particular session, and says so.
 
+## Renaming sessions
+
+A listing is scanned, not read, and the tools themselves name sessions well only when the first message cooperates — a conversation that opened with "hi" or "中文" is indistinguishable from every other one that did. `cw rename` writes a better title through to the store itself, using each tool's own rename surface, so the name is native to the tool and every listing shows it:
+
+```bash
+cw rename 12 "USB 枚举握手排查"        # row 12 from the last listing
+cw rename --auto --trivial            # propose titles for every trivial one
+cw rename --auto 3 7 -y               # only these rows; no confirmation
+```
+
+Three stores have a surface cw can write: **zcode** (`title_source='custom'`, which its own auto-titler respects), **codex** (a newer `session_index.jsonl` line — the index keeps the most recent name per id) and **claude** (a `custom-title` record appended to the transcript — the reader keeps the last one). The others are refused rather than guessed at. `--auto` extracts each candidate's content, asks the same judge `cw search` uses — one batched call per twenty sessions — and shows a before/after table that waits for a yes; it never proposes for a session that already has a real title, and skips sessions updated in the last five minutes, which are live conversations mid-flight with their own titler.
+
 ## `cb`: CodeBuddy
 
 CodeBuddy ships as a CLI, a VS Code extension and a desktop app, and the three keep their own, unrelated stores. `cb` lists all of them as one table. The CLI client also appears in `cw` as the `codebuddy` tool, where it is a full citizen — resumed, searched, and handed to and from like the rest. What `cb` still uniquely offers is the GUI clients' rows and the `--cluster` view that guesses which of the three clients' unrelated ids are one conversation; it keeps listing the CLI client so that table stays whole (its row numbers are its own cache and never collide with a `cw` listing).

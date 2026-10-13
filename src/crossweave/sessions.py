@@ -616,6 +616,19 @@ def handoff_by_number(n, target_tool, extra, forced_cwd=None):
 
 
 
+def _all_light_records():
+    """Every session from every store, unfiltered. The machines index and
+    the rename sweep both describe the machine, not the question -- the
+    display filters are their callers' business."""
+    light = list(claude_light_records())
+    light += codex_light_records()
+    light += kimi_light_records(False)
+    light += step_light_records(False)
+    light += zcode_light_records(False)
+    light += codebuddy_light_records(False)
+    return light
+
+
 def cmd_list(args):
     limit = 20
     tool_filter = None
