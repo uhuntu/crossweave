@@ -1220,3 +1220,34 @@ def test_a_judge_failure_renames_nothing(monkeypatch, tmp_path, capsys):
     assert rename.cmd_rename(["--auto", "1", "-y"]) == 1
     assert "judge" in capsys.readouterr().err
     assert _zcode_title("sess_abc")[0] == "hi"
+
+
+@pytest.mark.parametrize('output', [
+    '1. 蓝牙 HCD 固件加载验证',
+    '**1. 蓝牙 HCD 固件加载验证**',
+    '- 1：蓝牙 HCD 固件加载验证',
+    '1、蓝牙 HCD 固件加载验证',
+    '1）蓝牙 HCD 固件加载验证',
+])
+def test_title_reply_formats(output):
+    assert rename._parse_titles(output, 1) == {1: '蓝牙 HCD 固件加载验证'}
+
+
+@pytest.mark.parametrize('output', ['', 'Unable to connect', '1', '2. wrong session'])
+def test_unstructured_reply_never_becomes_a_title(output):
+    assert rename._parse_titles(output, 1) == {}
+
+
+@pytest.mark.parametrize('output, diagnostic', [
+    ('', 'returned empty output'),
+    ('Unable to connect', 'returned no numbered titles'),
+])
+def test_unusable_reply_explains_failure(monkeypatch, tmp_path, capsys, output, diagnostic):
+    _make_zcode_db(tmp_path)
+    _zcode_row('sess_abc', 'Hello')
+    _fake_scanners(monkeypatch, [_zcode_record('sess_abc', 'Hello')])
+    _cache(monkeypatch, [{'tool': 'zcode', 'id': 'sess_abc'}])
+    _judge_says(monkeypatch, output)
+    assert rename.cmd_rename(['1']) == 1
+    assert diagnostic in capsys.readouterr().err
+    assert _zcode_title('sess_abc') == ('Hello', 'first_input')
