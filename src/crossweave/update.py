@@ -4,6 +4,7 @@ zcode, codebuddy and workbuddy are absent from TOOL_UPDATE_CMD on purpose --
 zcode and workbuddy are desktop apps that update themselves, and codebuddy is
 an npm package the user updates through their package manager -- and
 `cw update tools` only iterates this dict."""
+import importlib
 import os
 import shutil
 import subprocess
@@ -76,11 +77,10 @@ TOOL_UPDATE_HINTS = {
         "via a proxy and install it manually."
     ),
     "codex": (
-        "codex's asset is ~146MB from releases.openai.com (it does fall back to "
-        "GitHub Releases, but a network that severs long TLS transfers kills "
-        "that too, and resume won't help). If you have a working proxy, set "
-        f"{UPDATE_PROXY_ENV}=<proxy-url> and rerun -- failed updates retry "
-        "through it automatically."
+        "cw can install the GitHub Releases package for standalone Codex "
+        "installs when a recognized installer or installation-detection "
+        "failure occurs. Check the error above; if a download failed, set "
+        f"{UPDATE_PROXY_ENV}=<proxy-url> and rerun to try a working proxy."
     ),
 }
 
@@ -121,14 +121,39 @@ TOOL_UPDATE_RECOVERY_MARKERS = {
 # rejects the current release layout with "release archive does not contain
 # the Step binary".  The official installers handle both layouts correctly,
 # so either diagnostic falls back to the installer for the current platform.
+#
+# codex's updater fails in two observed shapes, and both names are echoed in
+# its output: on <=0.163 it bootstraps through OpenAI's install script --
+# which answered 404 at chatgpt.com/codex/install.ps1|install.sh on
+# 2026-10-24, killing `codex update` before any download. An unrecognized
+# installation layout can instead produce "Could not detect the Codex
+# installation method. Please update manually". Only those failures route to
+# the direct-install fallback; an unrelated codex crash must not trigger a
+# ~350MB download.  If codex changes its failure text again the marker
+# stops matching and cw is back to the hint.
 TOOL_UPDATE_FALLBACK_MARKERS = {
     "step": ("ETXTBSY", "release archive does not contain the Step binary"),
+    "codex": ("install.ps1", "install.sh",
+              "Could not detect the Codex installation method",
+              "Please update manually"),
 }
+
+# Installer-script fallbacks, keyed by tool then platform: the tool's own
+# updater cannot handle this release, but its official installer can.
 TOOL_UPDATE_FALLBACK_CMD = {
-    "posix": ["bash", "-c",
-              "curl -fsSL https://static-openapi.stepfun.com/stepcode/install.sh | bash"],
-    "nt": ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
-           "irm https://static-openapi.stepfun.com/stepcode/install.ps1 | iex"],
+    "step": {
+        "posix": ["bash", "-c",
+                  "curl -fsSL https://static-openapi.stepfun.com/stepcode/install.sh | bash"],
+        "nt": ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
+               "irm https://static-openapi.stepfun.com/stepcode/install.ps1 | iex"],
+    },
+}
+
+# Python fallbacks for failures no installer script can fix.  codex's
+# install script itself 404s, so cw downloads the GitHub Releases package
+# and installs it (lazy import: update.py is on the cw startup path).
+TOOL_UPDATE_PY_FALLBACK = {
+    "codex": ("crossweave.codexpkg", "install_latest"),
 }
 
 # The fallback pipes curl into bash without pipefail, so a dead curl leaves
@@ -283,10 +308,11 @@ def update_tools():
 
     A failed update is retried (per-tool counts in TOOL_UPDATE_RETRIES), and
     when UPDATE_PROXY_ENV is set the retries go through that proxy -- the
-    first attempt is always direct, so a proxy is only ever a fallback. A
-    self-updater that fails with its busy-binary marker (TOOL_UPDATE_BUSY_MARKER,
-    e.g. step's ETXTBSY) is routed to the tool's install script instead
-    (TOOL_UPDATE_FALLBACK_CMD)."""
+    first attempt is always direct, so a proxy is only ever a fallback.  A
+    self-updater whose failure matches a marker in TOOL_UPDATE_FALLBACK_MARKERS
+    is routed onward: step gets its official install script
+    (TOOL_UPDATE_FALLBACK_CMD), codex gets a direct GitHub Releases install
+    (TOOL_UPDATE_PY_FALLBACK -- OpenAI's install script itself 404s)."""
     worst = 0
     for tool, argv in TOOL_UPDATE_CMD.items():
         if shutil.which(tool) is None:
@@ -311,20 +337,31 @@ def update_tools():
             capture=bool(fallback_markers),
         )
 
-        fallback = TOOL_UPDATE_FALLBACK_CMD.get(_platform_name())
+        fallback_cmd = TOOL_UPDATE_FALLBACK_CMD.get(tool, {}).get(_platform_name())
         if (
             last_code != 0
             and any(marker in output for marker in fallback_markers)
-            and fallback
+            and fallback_cmd
         ):
             print(f"  {tool}'s own updater cannot install this release; "
                   f"trying its install script instead ...", flush=True)
             fb_retries = 1 if proxy else 0
             last_code, _gave_up, _output = run_with_retries(
-                fallback, fb_retries, proxy,
+                fallback_cmd, fb_retries, proxy,
                 failure_markers=TOOL_UPDATE_FAILURE_MARKERS.get(tool, ()),
                 recovery_markers=TOOL_UPDATE_RECOVERY_MARKERS.get(tool, ()),
             )
+
+        py_fallback = TOOL_UPDATE_PY_FALLBACK.get(tool)
+        if (
+            last_code != 0
+            and py_fallback
+            and any(marker in output for marker in fallback_markers)
+        ):
+            print(f"  {tool}'s own updater cannot install this release; "
+                  f"installing the GitHub Releases package directly ...", flush=True)
+            module = importlib.import_module(py_fallback[0])
+            last_code = getattr(module, py_fallback[1])(proxy=proxy)
 
         if last_code != 0:
             worst = last_code

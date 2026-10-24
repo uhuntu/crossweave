@@ -626,6 +626,120 @@ def test_update_tools_step_fallback_detects_curl_failure_hidden_by_zero_exit(
     assert "reported success after its installer failed" in captured.err
 
 
+# ---------- codex's dead-install-script fallback ----------
+
+CODEX_DEAD_SCRIPT_OUTPUT = (
+    "Updating Codex via `powershell -ExecutionPolicy Bypass -c "
+    "'$env:CODEX_NON_INTERACTIVE=1; irm https://chatgpt.com/codex/install.ps1 | iex'`...\n"
+    "irm : Remote server returned error: (404) Not Found.\n"
+)
+
+CODEX_UNDETECTED_INSTALL_OUTPUT = (
+    "Error: Could not detect the Codex installation method. "
+    "Please update manually: https://developers.openai.com/codex/cli/\n"
+)
+
+
+def test_update_tools_codex_404_install_script_runs_direct_install(monkeypatch, capsys):
+    """OpenAI's install script 404s (live 2026-10-24), so `codex update` dies
+    before any download.  cw should recognize the script-shaped failure and
+    install the GitHub Releases package itself."""
+    _assert_codex_failure_runs_direct_install(monkeypatch, capsys,
+                                              CODEX_DEAD_SCRIPT_OUTPUT)
+
+
+def test_update_tools_codex_undetected_install_method_runs_direct_install(
+    monkeypatch, capsys
+):
+    """0.164+'s updater no longer runs the install script; it fails to detect
+    this install and asks for a manual update instead (live 2026-10-24).  The
+    fallback must cover that shape too."""
+    _assert_codex_failure_runs_direct_install(monkeypatch, capsys,
+                                              CODEX_UNDETECTED_INSTALL_OUTPUT)
+
+
+def _assert_codex_failure_runs_direct_install(monkeypatch, capsys, codex_output):
+    monkeypatch.setattr(update.shutil, "which", lambda tool: f"/usr/bin/{tool}")
+    monkeypatch.delenv(update.UPDATE_PROXY_ENV, raising=False)
+
+    class FakeResult:
+        def __init__(self, code, stdout=""):
+            self.returncode = code
+            self.stdout = stdout
+
+    def fake_run(argv, **kwargs):
+        if argv[0] == "codex":
+            return FakeResult(1, codex_output)
+        return FakeResult(0)
+
+    monkeypatch.setattr(update.subprocess, "run", fake_run)
+
+    from crossweave import codexpkg
+    calls = []
+    monkeypatch.setattr(codexpkg, "install_latest", lambda proxy=None: calls.append(proxy) or 0)
+
+    assert update.update_tools() == 0
+    assert calls == [None]
+    out = capsys.readouterr().out
+    assert "cannot install this release" in out
+    assert "GitHub Releases" in out
+
+
+def test_update_tools_codex_direct_install_failure_still_reports_and_hints(
+    monkeypatch, capsys
+):
+    monkeypatch.setattr(update.shutil, "which", lambda tool: f"/usr/bin/{tool}")
+    monkeypatch.delenv(update.UPDATE_PROXY_ENV, raising=False)
+
+    class FakeResult:
+        def __init__(self, code, stdout=""):
+            self.returncode = code
+            self.stdout = stdout
+
+    def fake_run(argv, **kwargs):
+        if argv[0] == "codex":
+            return FakeResult(1, CODEX_DEAD_SCRIPT_OUTPUT)
+        return FakeResult(0)
+
+    monkeypatch.setattr(update.subprocess, "run", fake_run)
+
+    from crossweave import codexpkg
+    monkeypatch.setattr(codexpkg, "install_latest", lambda proxy=None: 1)
+
+    assert update.update_tools() != 0
+    err = capsys.readouterr().err
+    assert "hint:" in err
+    assert update.UPDATE_PROXY_ENV in err
+
+
+def test_update_tools_codex_failure_without_script_marker_gets_no_direct_install(
+    monkeypatch, capsys
+):
+    """Only the script-shaped failure triggers a ~350MB download; an ordinary
+    codex crash (here: a segfault) must not."""
+    monkeypatch.setattr(update.shutil, "which", lambda tool: f"/usr/bin/{tool}")
+    monkeypatch.delenv(update.UPDATE_PROXY_ENV, raising=False)
+
+    class FakeResult:
+        def __init__(self, code, stdout=""):
+            self.returncode = code
+            self.stdout = stdout
+
+    def fake_run(argv, **kwargs):
+        if argv[0] == "codex":
+            return FakeResult(1, "Segmentation fault (core dumped)\n")
+        return FakeResult(0)
+
+    monkeypatch.setattr(update.subprocess, "run", fake_run)
+
+    from crossweave import codexpkg
+    monkeypatch.setattr(codexpkg, "install_latest",
+                        lambda proxy=None: pytest.fail("direct install attempted"))
+
+    assert update.update_tools() != 0
+    assert "GitHub Releases" not in capsys.readouterr().out
+
+
 # ---------- cmd_update dispatch modes ----------
 
 def test_cmd_update_tools_mode_only_updates_tools(monkeypatch):
