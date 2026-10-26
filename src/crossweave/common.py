@@ -379,7 +379,7 @@ SEED_PREFIXES = (JUDGE_PROMPT_PREFIX, HANDOFF_PROMPT_PREFIX, CODEX_APPROVAL_PROM
 # But a store that ever quoted an old listing row carries the literal
 # string, and one tuple entry is cheaper than being wrong about that.
 TOOL_STARTED_TITLES = (JUDGE_SESSION_TITLE, CODEX_APPROVAL_SESSION_TITLE,
-                       "ai search judge")
+                       "ai search judge", "Guardian review")
 
 # First messages that are not the user asking anything: what Claude Code
 # injects (scheduled-task reminders that woke the session, system reminders,

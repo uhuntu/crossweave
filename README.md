@@ -137,7 +137,7 @@ cw doctor                   # per-tool store health: is each store readable,
 cw doctor --tool zcode      # one store only
 ```
 
-Sessions a tool started for itself are left out of `cw sessions` and `cw search`: Codex's command-approval reviews (one per command it asks you to approve), step's own `subagent-…` sessions, ZCode's subagent runs (sessions with a `parent_id` in its store), WorkBuddy's subagent runs (an `agent-*.jsonl` under its parent's session directory), and `cw search`'s own judge runs. None of them is a conversation of yours, and a judge session literally contains every candidate's text, which makes it match nearly any topic. They stay reachable by id (`cw resume codex <id>`), and `cw sessions --all` lists them anyway.
+Sessions a tool started for itself are left out of `cw sessions` and `cw search`: Codex's command-approval reviews (`Guardian review` or `codex approval review`, one per command it asks you to approve), step's own `subagent-…` sessions, ZCode's subagent runs (sessions with a `parent_id` in its store), WorkBuddy's subagent runs (an `agent-*.jsonl` under its parent's session directory), and `cw search`'s own judge runs. None of them is a conversation of yours, and a judge session literally contains every candidate's text, which makes it match nearly any topic. They stay reachable by id (`cw resume codex <id>`), and `cw sessions --all` lists them anyway.
 
 Every `cw`/`cw sessions` listing is numbered and cached, so `cw resume <N>` is usually the fastest way in: run `cw`, glance at the row you want, `cw resume 3`. The cache is just the last listing you saw — it's overwritten by the next `cw sessions` call and doesn't try to detect if the underlying sessions changed since.
 
