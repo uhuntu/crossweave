@@ -69,6 +69,7 @@ from .common import (
     unwrap_openclaw_ctx,
 )
 from .claude import (
+    claude_custom_title,
     claude_handoff_messages,
     claude_is_empty,
     claude_light_records,
@@ -97,6 +98,7 @@ from .codex import (
 )
 from .kimi import (
     KIMI_PLACEHOLDER_TITLES,
+    kimi_has_custom_title,
     kimi_handoff_messages,
     kimi_index,
     kimi_light_records,
@@ -108,6 +110,7 @@ from .kimi import (
     parse_kimi_timestamp,
 )
 from .step import (
+    _step_display_name,
     _step_message_text,
     _step_tool_call_text,
     parse_step_timestamp,
@@ -1065,6 +1068,22 @@ def _find_record(tool, sid):
     return None
 
 
+def _has_user_title(r):
+    """True if the session carries a name a user set, as opposed to one its
+    tool's titler or a handoff seed produced. Only tools whose rename record
+    is user-only can say: codex writes the same thread_name when it
+    auto-names a thread, and zcode/codebuddy/workbuddy are never handoff
+    targets."""
+    tool = r["tool"]
+    if tool == "claude":
+        return bool(r.get("path") and claude_custom_title(r["path"]))
+    if tool == "step":
+        return bool(r.get("path") and _step_display_name(r["path"]))
+    if tool == "kimi":
+        return bool(r.get("dir") and kimi_has_custom_title(r["dir"]))
+    return False
+
+
 def _resolve_title_and_cwd(r, depth=0):
     tool = r["tool"]
     if tool == "step":
@@ -1092,8 +1111,11 @@ def _resolve_title_and_cwd(r, depth=0):
     # A session `cw handoff` started is named by its seed prompt ("Continue
     # codex session 019eb5f4"), which says where it came from but nothing
     # about what it is *about* -- and the listing exists to tell topics
-    # apart. Show the source session's topic instead, when it can be found.
-    if depth < HANDOFF_MAX_DEPTH:
+    # apart. Show the source session's topic instead, when it can be found
+    # -- unless the user has since named the session themselves: that name
+    # is the one they chose for it, and `cw rename` reporting success while
+    # the row kept its `(handoff) ...` label read as a rename that failed.
+    if depth < HANDOFF_MAX_DEPTH and not _has_user_title(r):
         path = _transcript_path(r)
         source = handoff_source(path, tool) if path else None
         record = _find_record(*source) if source else None

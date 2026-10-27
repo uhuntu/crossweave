@@ -175,6 +175,31 @@ def claude_title_and_cwd(path, cwd_fallback):
     return resolved, (cwd if isinstance(cwd, str) and cwd else cwd_fallback)
 
 
+def claude_custom_title(path):
+    """The session's user-set name (the last `custom-title` record), or None.
+
+    Claude Code writes that record only for a user rename (/rename, or
+    `cw rename`), never for its own titler -- that one is `ai-title` -- so
+    it marks a name the user chose. "New session" is the default, not a
+    choice, and a seed restatement is a handoff's own label."""
+    custom = None
+    try:
+        with common.open_text(path) as fh:
+            for line in fh:
+                if '"custom-title"' not in line:
+                    continue
+                try:
+                    custom = common._as_title(json.loads(line).get("customTitle")) or custom
+                except Exception:
+                    pass
+    except OSError:
+        return None
+    custom = common._as_title(custom)
+    if not custom or custom == "New session" or common.is_seed_restatement(custom):
+        return None
+    return custom
+
+
 # User records Claude Code writes on its own when a slash command runs or a
 # session opens: none of them is something the user said.
 _CLAUDE_NON_MESSAGE_PREFIXES = ("<command-name>", "<command-message>", "<local-command-",

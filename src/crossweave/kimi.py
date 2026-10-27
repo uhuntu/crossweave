@@ -99,6 +99,16 @@ def kimi_stored_title(sdir):
     return " ".join(title.split())[:70]
 
 
+def kimi_has_custom_title(sdir):
+    """True if a user named the session (titleKind 'custom', or v1's
+    isCustomTitle) -- kimi's titler never writes that kind."""
+    state = common.read_json(os.path.join(sdir, "state.json")) or {}
+    title = state.get("title")
+    if not isinstance(title, str) or not title.strip():
+        return False
+    return state.get("titleKind") == "custom" or bool(state.get("isCustomTitle"))
+
+
 def kimi_title(sdir):
     """kimi's own stored title when it has one worth showing, else the first
     genuine prompt in the session's wire log.

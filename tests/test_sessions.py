@@ -2986,6 +2986,24 @@ def test_handoff_session_shows_source_topic(monkeypatch, tmp_path):
     assert titles["hand-1"] == "(handoff) why does the OTA boot loop roll back?"
 
 
+def test_renamed_handoff_session_keeps_the_users_name(monkeypatch, tmp_path):
+    """Regression test: `cw 4 rename` on a handoff session printed `renamed:
+    (handoff) DevGetter APK build/signing -> TesSmartUpdater 签名与账号权限`
+    and wrote the custom-title, yet the next listing still showed the
+    `(handoff) ...` label -- the source's topic overrode the user's name."""
+    projects = tmp_path / "projects"
+    _write_claude_session(projects, "src-1", "why does the OTA boot loop roll back?")
+    path = _write_claude_session(projects, "hand-1", _handoff_seed("claude", "src-1"))
+    with open(path, "a") as fh:
+        fh.write(json.dumps({"type": "ai-title", "aiTitle": "Crossweave session handoff continuation"}) + "\n")
+        fh.write(json.dumps({"type": "custom-title", "customTitle": "OTA 回滚排查",
+                             "sessionId": "hand-1"}, ensure_ascii=False) + "\n")
+
+    titles = _resolved_titles(monkeypatch, tmp_path)
+
+    assert titles["hand-1"] == "OTA 回滚排查"
+
+
 def test_handoff_of_a_handoff_shows_the_original_topic(monkeypatch, tmp_path):
     projects = tmp_path / "projects"
     _write_claude_session(projects, "root", "scan the tree for open-source licenses")
