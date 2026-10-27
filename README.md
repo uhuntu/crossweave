@@ -231,7 +231,7 @@ WorkBuddy is the other kind of desktop case: it registers a *session-level* deep
 
 ## Notes in an Obsidian vault
 
-Every agent keeps its own sessions, and none reads the others'. `cw note` carries the part worth keeping across: the judge `cw search` uses reads the session (the same digest `cw rename` titles from) and writes three short sections — what was done, why, what is still open — in the session's own language. The note lands in your vault as plain Markdown, in one folder per project (the session directory's basename), with frontmatter Obsidian's properties and Dataview can query: `tool`, `session`, `cwd`, `project`, `updated`, and the `resume` command that reopens it.
+Every agent keeps its own sessions, and none reads the others'. `cw note` carries the part worth keeping across: the judge `cw search` uses reads the session (the same digest `cw rename` titles from) and writes three short sections — what was done, why, what is still open — in the session's own language. The note lands in your vault as plain Markdown, in one folder per project (the session directory's basename; sessions started in your home directory go to `_home`), with frontmatter Obsidian's properties and Dataview can query: `tool`, `session`, `cwd`, `project`, `updated`, and the `resume` command that reopens it.
 
 The vault is `--vault DIR` or `CW_VAULT`, and must already exist. Noting a session again rewrites its note (found by its `session:` line) rather than adding a second one, so edits made to the note itself are replaced: keep your own writing in other notes.
 

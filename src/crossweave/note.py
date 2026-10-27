@@ -37,6 +37,10 @@ NAME_CHARS = 60
 # a dozen lines, and a note is never read past it.
 FRONTMATTER_LINES = 30
 NO_PROJECT = "_unsorted"
+# Sessions started in the home directory share no project -- they are
+# whatever was asked from wherever a terminal opened -- and folding them
+# under the user's own login name read as though that were one.
+HOME_PROJECT = "_home"
 
 
 def _usage():
@@ -140,6 +144,8 @@ def _summarize(r, title, cwd, digest, judge):
 def _project(cwd):
     if not cwd or cwd == "?":
         return NO_PROJECT
+    if os.path.normpath(cwd) == os.path.normpath(os.path.expanduser("~")):
+        return HOME_PROJECT
     name = os.path.basename(os.path.normpath(cwd))
     return _safe_name(name) or NO_PROJECT
 
