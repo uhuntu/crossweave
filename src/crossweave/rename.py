@@ -439,15 +439,27 @@ def _propose_titles(rows, snippets, judge):
         "question -- never 'discussion' or 'help' or '问题排查'.\n"
         "Reply with exactly one line per session, `N. title`, nothing else."
     )
-    proc = search._call_judge(judge, prompt)
-    if proc is None or proc.returncode != 0:
-        raise search.JudgeError(proc.returncode if proc else 127)
-    # parse_numbered_reasons numbers the lines it was handed, so map its
-    # 1..K back onto the positions those lines came from
-    output = proc.stdout or ""
-    titles = _parse_titles(output, len(asked))
+    # A judge that answers in prose once usually answers properly the next
+    # time: a `cw 1 rename` failed with "no numbered titles" and the same
+    # prompt then came back numbered five times running. So a reply with no
+    # numbered title is asked again once before it is reported.
+    for attempt in range(2):
+        proc = search._call_judge(judge, prompt)
+        if proc is None or proc.returncode != 0:
+            raise search.JudgeError(proc.returncode if proc else 127)
+        output = proc.stdout or ""
+        titles = _parse_titles(output, len(asked))
+        if titles:
+            break
     if not titles:
-        why = "returned empty output" if not output.strip() else "returned no numbered titles"
+        if not output.strip():
+            why = "returned empty output"
+        else:
+            # what it said instead, so the next failure can be read rather
+            # than guessed at
+            head = " ".join(output.split())
+            head = head if len(head) <= 120 else head[:119] + "…"
+            why = f"returned no numbered titles (it said: {head})"
         print(f"cw rename: judge ({judge}) {why}; expected `1. title`. "
               "Retry with --judge <tool> or supply an explicit title.", file=sys.stderr)
     return ({asked[pos - 1]: title for pos, title in titles.items()}, set(asked))

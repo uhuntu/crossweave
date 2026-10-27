@@ -1240,7 +1240,7 @@ def test_unstructured_reply_never_becomes_a_title(output):
 
 @pytest.mark.parametrize('output, diagnostic', [
     ('', 'returned empty output'),
-    ('Unable to connect', 'returned no numbered titles'),
+    ('Unable to connect', 'returned no numbered titles (it said: Unable to connect)'),
 ])
 def test_unusable_reply_explains_failure(monkeypatch, tmp_path, capsys, output, diagnostic):
     _make_zcode_db(tmp_path)
@@ -1251,6 +1251,33 @@ def test_unusable_reply_explains_failure(monkeypatch, tmp_path, capsys, output, 
     assert rename.cmd_rename(['1']) == 1
     assert diagnostic in capsys.readouterr().err
     assert _zcode_title('sess_abc') == ('Hello', 'first_input')
+
+
+def test_prose_reply_is_asked_again_once(monkeypatch, tmp_path, capsys):
+    """Regression test: `cw 1 rename` failed with "no numbered titles" once
+    and the same prompt came back numbered on each of five reruns -- one
+    stray prose answer should not cost the rename."""
+    _make_zcode_db(tmp_path)
+    _zcode_row('sess_abc', 'Hello')
+    _fake_scanners(monkeypatch, [_zcode_record('sess_abc', 'Hello')])
+    _cache(monkeypatch, [{'tool': 'zcode', 'id': 'sess_abc'}])
+    replies = iter(["Here is a title for the session.", "1. 流控实测\n"])
+    calls = []
+
+    def fake_call(judge, prompt):
+        calls.append(prompt)
+        class R:
+            returncode = 0
+            stdout = next(replies)
+            stderr = ""
+        return R()
+    monkeypatch.setattr(search, "_call_judge", fake_call)
+    _snippet_says(monkeypatch)
+
+    assert rename.cmd_rename(['1']) == 0
+    assert len(calls) == 2
+    assert _zcode_title('sess_abc') == ('流控实测', 'custom')
+    assert "no numbered titles" not in capsys.readouterr().err
 
 
 # ---------- what the judge reads to name a session ----------
