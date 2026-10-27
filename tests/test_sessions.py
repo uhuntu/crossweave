@@ -287,6 +287,7 @@ def test_codex_rollout_title_skips_injected_boilerplate(monkeypatch, tmp_path):
 
 @pytest.mark.parametrize("noise", [
     "<recommended_plugins> Here is a list of plugins that are available but not enabled.",
+    '<external_codex_apps_open_page>{"page_id":null}</external_codex_apps_open_page>',
     "The following is the Codex agent history whose request action you are responding to.",
     "This session is being continued from a previous conversation that ran out of "
     "context. The conversation is summarized below:",

@@ -153,6 +153,10 @@ CODEX_BOILERPLATE_PREFIXES = (
     # titled `<recommended_plugins> Here is a list of plugins...` -- not a
     # request, and it pushed the real first message off the title.
     "<recommended_plugins>",
+    # The Codex desktop app's page-state notice, e.g.
+    # `<external_codex_apps_open_page>{"page_id":null}</...>`, sent as a
+    # user message when a session opens -- it became a listing's title.
+    "<external_",
     # The wrapper Codex's clipboard-paste feature injects ahead of a pasted
     # image: a bare paste with no comment reads as "# Files mentioned by
     # the user:\n\n## codex-clipboard-<uuid>.png: ...\n\n## My request:\n\n"
