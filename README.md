@@ -134,6 +134,8 @@ cw search "..." --all                      # list every hit, not just the strong
 cw note 3                   # row 3 as a done/why/open note in your Obsidian vault
 cw note 327e2ad9 --vault ~/Notes   # by id; CW_VAULT sets the vault once
 cw 3 note                   # the same, row first
+cw context                  # this project's newest notes, to hand a new session
+cw codex "$(cw context) 接着做"   # ...like this, in any of the tools
 
 cw stats                    # session counts per tool, oldest/newest, top directories
 cw stats --tool claude      # stats for one tool only
@@ -232,6 +234,8 @@ WorkBuddy is the other kind of desktop case: it registers a *session-level* deep
 Every agent keeps its own sessions, and none reads the others'. `cw note` carries the part worth keeping across: the judge `cw search` uses reads the session (the same digest `cw rename` titles from) and writes three short sections — what was done, why, what is still open — in the session's own language. The note lands in your vault as plain Markdown, in one folder per project (the session directory's basename), with frontmatter Obsidian's properties and Dataview can query: `tool`, `session`, `cwd`, `project`, `updated`, and the `resume` command that reopens it.
 
 The vault is `--vault DIR` or `CW_VAULT`, and must already exist. Noting a session again rewrites its note (found by its `session:` line) rather than adding a second one, so edits made to the note itself are replaced: keep your own writing in other notes.
+
+`cw context [DIR]` reads them back: the newest three notes for that directory's project (the current one by default; `--limit N` for more), printed as one Markdown block a new session can start from — in whichever tool, since it is only text: `cw claude "$(cw context) 接着做"`. With no notes it prints nothing and exits 1, so the substitution stays empty.
 
 ## Renaming sessions
 

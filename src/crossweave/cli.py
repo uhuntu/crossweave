@@ -40,6 +40,7 @@ USAGE = f"""Usage: cw <{'|'.join(TOOLS)}> [common-options] [prompt] [-- extra na
        cw rename --trivial              # the sweep -- --auto implied
        cw note <N|session-id>... [--vault DIR] [--judge T]
        cw <N> note              # summarize a session into an Obsidian vault (CW_VAULT)
+       cw context [DIR] [--limit N]   # print that project's newest notes, for a new session
 
 Common options (translated per-tool, all optional):
   -p, --print              Non-interactive: print response and exit
@@ -111,6 +112,7 @@ Examples:
   cw 12 rename "USB 枚举握手排查"   # the same command, row first
   CW_VAULT=~/Notes cw note 3   # row 3 as a done/why/open note in the vault,
                             #   one folder per project; again rewrites it
+  cw claude "$(cw context) 接着做"   # start a session on top of this project's notes
   cw 327e2ad9-210f-48cd-b    # a session id, not a row number: resumes it
 """
 
@@ -118,7 +120,7 @@ Examples:
 # this list, and the test asserts it matches what main() actually dispatches,
 # so adding a subcommand cannot leave the message stale the way it was when
 # `stats` and `step` were both missing from it.
-SUBCOMMANDS = ("sessions", "full", "search", "resume", "update", "stats", "doctor", "alias", "machines", "rename", "delete", "note")
+SUBCOMMANDS = ("sessions", "full", "search", "resume", "update", "stats", "doctor", "alias", "machines", "rename", "delete", "note", "context")
 
 
 def usage(name="cw"):
@@ -390,6 +392,8 @@ def main():
         sys.exit(rename.cmd_rename(rest))
     if tool == "note":
         sys.exit(note.cmd_note(rest))
+    if tool == "context":
+        sys.exit(note.cmd_context(rest))
 
     # A session id, not a tool. `cw search` prints ids, and the command after
     # finding a session is pointing cw straight at it -- which used to fall

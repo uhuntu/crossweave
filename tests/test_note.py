@@ -145,3 +145,48 @@ def test_unsafe_title_characters_are_dropped_from_the_file_name(world):
     assert note.cmd_note(["1"]) == 0
     name = os.path.basename(_notes(world.vault)[0])
     assert name.endswith(" fix a b tag why.md"), name
+
+
+# ---------- cw context ----------
+
+def test_context_prints_the_projects_notes_newest_first(world, monkeypatch, capsys):
+    assert note.cmd_note(["1"]) == 0
+    world.records.append(_record("sess_new", "later work"))
+    world.records[-1]["ts"] = time.time()
+    world.reply = "## Done\n- the newer thing"
+    assert note.cmd_note(["sess_new"]) == 0
+    capsys.readouterr()
+
+    assert note.cmd_context(["/w/board"]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("# Notes from earlier sessions in board\n")
+    assert out.index("## later work (zcode,") < out.index("## USB 枚举握手排查 (zcode,")
+    assert "### Done\n- the newer thing" in out  # sections sit one level down
+    assert "Resume: `cw resume zcode sess_new`" in out
+    assert "title:" not in out  # frontmatter is not repeated
+
+    assert note.cmd_context(["/w/board", "--limit", "1"]) == 0
+    assert "USB" not in capsys.readouterr().out
+
+
+def test_context_defaults_to_the_current_directory(world, monkeypatch, tmp_path, capsys):
+    assert note.cmd_note(["1"]) == 0
+    here = tmp_path / "board"
+    here.mkdir()
+    monkeypatch.chdir(here)
+    capsys.readouterr()
+    assert note.cmd_context([]) == 0
+    assert "USB 枚举握手排查" in capsys.readouterr().out
+
+
+def test_context_with_no_notes_says_how_to_make_one(world, capsys):
+    assert note.cmd_context(["/w/elsewhere"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""  # nothing to splice into a prompt
+    assert "cw note" in captured.err
+
+
+def test_context_ignores_markdown_cw_did_not_write(world, capsys):
+    (world.vault / "board").mkdir()
+    (world.vault / "board" / "mine.md").write_text("# my own thoughts\n", encoding="utf-8")
+    assert note.cmd_context(["/w/board"]) == 1
