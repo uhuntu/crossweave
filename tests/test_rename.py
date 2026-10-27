@@ -1251,3 +1251,69 @@ def test_unusable_reply_explains_failure(monkeypatch, tmp_path, capsys, output, 
     assert rename.cmd_rename(['1']) == 1
     assert diagnostic in capsys.readouterr().err
     assert _zcode_title('sess_abc') == ('Hello', 'first_input')
+
+
+# ---------- what the judge reads to name a session ----------
+
+def _claude_transcript(tmp_path, records):
+    path = tmp_path / "claude" / "-home-hunt" / "digest-1.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = []
+    for role, text in records:
+        lines.append(json.dumps({"type": role, "cwd": "/home/hunt",
+                                 "message": {"content": text}}, ensure_ascii=False))
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return {"tool": "claude", "id": "digest-1", "path": str(path), "cwd": "/home/hunt"}
+
+
+def test_digest_reads_the_whole_conversation_not_a_dozen_scraps(monkeypatch, tmp_path):
+    """Regression test: a 478-turn session reached the judge as `cw search`'s
+    dozen 60-character fragments, and came back titled after two of them
+    ("CYW54591 蓝牙固件 0415 与 eMMC 写入测试") instead of its main thread.
+    The digest keeps the user's own requests from across the conversation --
+    minus pastes, acknowledgements and repeats -- and the assistant's replies."""
+    records = [("user", "帮我整理成 Case 回复草稿")]
+    for i in range(200):
+        records.append(("assistant", f"第 {i} 轮：CYW55560 加载测试 HCD 后卡死"))
+        records.append(("user", "好的"))
+        records.append(("user", "给我看完整的草稿"))
+    records.append(("user", "<pasted_content id=\"x\">$ adb shell\nroot# ls</pasted_content>"))
+    records.append(("user", "<pasted_content id=\"x\">log</pasted_content> 把这次输出加进附件说明"))
+    records.append(("user", "Rock 5B 怎么烧录 eMMC"))
+    r = _claude_transcript(tmp_path, records)
+    monkeypatch.setattr(search, "snippet_for", lambda r: "should not be used")
+
+    digest = rename._digest_for(r)
+
+    requests, replies = digest.split(" || ")
+    assert requests.startswith("User asked: 帮我整理成 Case 回复草稿")
+    assert requests.count("给我看完整的草稿") == 1
+    assert "好的" not in requests
+    assert "adb shell" not in requests
+    assert "把这次输出加进附件说明" in requests
+    assert "Rock 5B 怎么烧录 eMMC" in requests
+    assert replies.startswith("Assistant replied: ")
+    assert replies.count("CYW55560") == rename.DIGEST_REPLIES + 1  # +1: the last is always kept
+
+
+def test_digest_falls_back_on_the_search_snippet(monkeypatch, tmp_path):
+    r = _claude_transcript(tmp_path, [("user", "<system-reminder>x</system-reminder>")])
+    monkeypatch.setattr(search, "snippet_for", lambda r: "the snippet")
+
+    assert rename._digest_for(r) == "the snippet"
+
+
+def test_suggested_rename_shows_the_judge_the_digest(monkeypatch, tmp_path):
+    r = _claude_transcript(tmp_path, [("user", "CYW55560 HCD 加载失败怎么回复 Infineon"),
+                                      ("assistant", "先看 Launch RAM 之后的 HCI 日志")])
+    calls = []
+    _judge_says(monkeypatch, "1. CYW55560 HCD 加载失败\n", calls)
+
+    assert rename._rename_suggested(r, "step") == 0
+
+    prompt = calls[0][1]
+    assert "User asked: CYW55560 HCD 加载失败怎么回复 Infineon" in prompt
+    assert "main thread" in prompt
+    assert "should not" not in prompt
+    with open(r["path"], encoding="utf-8") as fh:
+        assert '"customTitle": "CYW55560 HCD 加载失败"' in fh.read()
