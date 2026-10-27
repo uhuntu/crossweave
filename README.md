@@ -131,6 +131,10 @@ cw search "..." --judge step                # ... or step
 cw search "..." --why                      # print each hit's reason in full, on its own line
 cw search "..." --all                      # list every hit, not just the strongest 10
 
+cw note 3                   # row 3 as a done/why/open note in your Obsidian vault
+cw note 327e2ad9 --vault ~/Notes   # by id; CW_VAULT sets the vault once
+cw 3 note                   # the same, row first
+
 cw stats                    # session counts per tool, oldest/newest, top directories
 cw stats --tool claude      # stats for one tool only
 cw doctor                   # per-tool store health: is each store readable,
@@ -222,6 +226,12 @@ Pass `--cwd <dir>` to send it somewhere else instead, e.g. `cw resume 2 --cwd /p
 ZCode ships both a desktop app and a terminal CLI under the same name, sharing this store. When the CLI is the `zcode` on PATH (told apart by file header — probing either with `--help` boots the desktop GUI), `cw resume zcode <id>` is a real resume (`zcode --resume <id>`, the TUI opening in the session's own directory), bare `cw zcode` opens the CLI's TUI here, and a `--cwd` relocation or `cw <N> zcode` hands off by seeding one headless `zcode -p` run and resuming the session it just persisted — the same two-step kimi needs. An install whose CLI bundles no `@zcode/tui` (one checked: the CLI delegating to the desktop's core) has no TUI at all, so a resume there lands on a hint instead of a node traceback — and the fact is remembered per install, keyed by the `zcode` executable's path, size and mtime so that an upgrade invalidates it by itself. After that the doomed start is skipped and the two ways forward are named outright: the desktop app's task list, or the headless `zcode --resume <id> -p "<next instruction>"` continuation (verified 2026-10-10 — the follow-up turn appends to the same session, context intact). cw takes that route itself when the instruction is on the command line: `cw resume zcode <id> "<next instruction>"`, or `cw resume <N> "..."` by row number, which also gives words after an id a meaning, since a TUI would only reject them. Only on a machine where the desktop app is all there is does the wrapper fall back to the workspace deep link, `zcode://workspace/open?path=…`, which opens the right workspace but no particular session, and says so.
 
 WorkBuddy is the other kind of desktop case: it registers a *session-level* deep link (`workbuddy://chat/<id>`, or `workbuddy-ai://chat/<id>` for the AI edition — the id percent-encoded exactly as the app does it), so `cw resume workbuddy <id>` lands on the conversation itself rather than on the workspace around it. Nothing has to be on `PATH` for that; cw asks the platform what opens a URL — `open` on macOS, `xdg-open` on Linux, and on Windows the executable registered under `HKCU\Software\Classes\<scheme>\shell\open\command`, falling back to the installer's known path, then to `cmd /c start` if the registry answers nothing. The app is launched rather than exec'd, so the terminal stays where it was and just reports which session it opened and where that session lives. Words after the id and `--cwd` both have nowhere to go — a GUI takes no instruction from a terminal, and a session lives in the directory it was started in — so each is refused, naming `cw <N> claude` on its row as the way forward.
+
+## Notes in an Obsidian vault
+
+Every agent keeps its own sessions, and none reads the others'. `cw note` carries the part worth keeping across: the judge `cw search` uses reads the session (the same digest `cw rename` titles from) and writes three short sections — what was done, why, what is still open — in the session's own language. The note lands in your vault as plain Markdown, in one folder per project (the session directory's basename), with frontmatter Obsidian's properties and Dataview can query: `tool`, `session`, `cwd`, `project`, `updated`, and the `resume` command that reopens it.
+
+The vault is `--vault DIR` or `CW_VAULT`, and must already exist. Noting a session again rewrites its note (found by its `session:` line) rather than adding a second one, so edits made to the note itself are replaced: keep your own writing in other notes.
 
 ## Renaming sessions
 

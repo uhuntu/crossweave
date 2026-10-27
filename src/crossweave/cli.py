@@ -9,7 +9,7 @@ import os
 import re
 import sys
 
-from . import __version__, alias, delete, doctor, machines, rename, search, sessions, update
+from . import __version__, alias, delete, doctor, machines, note, rename, search, sessions, update
 
 TOOLS = ("claude", "codex", "kimi", "step", "zcode", "codebuddy", "workbuddy")
 
@@ -38,6 +38,8 @@ USAGE = f"""Usage: cw <{'|'.join(TOOLS)}> [common-options] [prompt] [-- extra na
        cw rename <N> <title> [--judge T]
        cw rename --auto [<N>... | --trivial] [-y] [--judge T]
        cw rename --trivial              # the sweep -- --auto implied
+       cw note <N|session-id>... [--vault DIR] [--judge T]
+       cw <N> note              # summarize a session into an Obsidian vault (CW_VAULT)
 
 Common options (translated per-tool, all optional):
   -p, --print              Non-interactive: print response and exit
@@ -107,6 +109,8 @@ Examples:
                             #   zcode/codex/claude/step/kimi today; --auto
                             #   proposes titles for the trivial ones via the judge
   cw 12 rename "USB 枚举握手排查"   # the same command, row first
+  CW_VAULT=~/Notes cw note 3   # row 3 as a done/why/open note in the vault,
+                            #   one folder per project; again rewrites it
   cw 327e2ad9-210f-48cd-b    # a session id, not a row number: resumes it
 """
 
@@ -114,7 +118,7 @@ Examples:
 # this list, and the test asserts it matches what main() actually dispatches,
 # so adding a subcommand cannot leave the message stale the way it was when
 # `stats` and `step` were both missing from it.
-SUBCOMMANDS = ("sessions", "full", "search", "resume", "update", "stats", "doctor", "alias", "machines", "rename", "delete")
+SUBCOMMANDS = ("sessions", "full", "search", "resume", "update", "stats", "doctor", "alias", "machines", "rename", "delete", "note")
 
 
 def usage(name="cw"):
@@ -358,6 +362,9 @@ def main():
             # continued with the single word "rename" as its instruction).
             # `cw resume 3 rename` still spells it out for anyone who meant it.
             sys.exit(rename.cmd_rename([tool, *rest[1:]]))
+        if rest and rest[0] == "note":
+            # `cw 3 note`, row first -- lifted out for the reason rename is
+            sys.exit(note.cmd_note([tool, *rest[1:]]))
         sessions.cmd_resume(argv)
         return
     if tool == "update":
@@ -381,6 +388,8 @@ def main():
         sys.exit(delete.cmd_delete(rest))
     if tool == "rename":
         sys.exit(rename.cmd_rename(rest))
+    if tool == "note":
+        sys.exit(note.cmd_note(rest))
 
     # A session id, not a tool. `cw search` prints ids, and the command after
     # finding a session is pointing cw straight at it -- which used to fall

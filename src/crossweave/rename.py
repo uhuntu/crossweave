@@ -328,7 +328,7 @@ _PASTE_RE = re.compile(r"<pasted_content\b[^>]*>.*?</pasted_content[^>]*>", re.S
 
 
 def _session_messages(r):
-    """[(role, text)] for a renamable row, read from its own store."""
+    """[(role, text)] for a row, read from its own store."""
     from . import sessions
 
     tool = r["tool"]
@@ -344,6 +344,9 @@ def _session_messages(r):
             return sessions.kimi_handoff_messages(r["dir"]) if r.get("dir") else []
         if tool == "zcode":
             return sessions.zcode_handoff_messages(r["id"])
+        # not renamable, but `cw note` digests them the same way
+        if tool in ("codebuddy", "workbuddy"):
+            return sessions.codebuddy_handoff_messages(r["path"]) if r.get("path") else []
     except (OSError, KeyError):
         pass
     return []
