@@ -3119,3 +3119,48 @@ def test_resolve_any_id_asks_every_store(monkeypatch):
 
     assert asked == ["abc"] * len(sessions.TOOLS)
     assert hits == [(tool, "hit") for tool in sessions.TOOLS]
+
+
+def _write_claude_records(projects, sid, records):
+    proj = projects / "-home-hunt-work-app"
+    proj.mkdir(parents=True, exist_ok=True)
+    path = proj / f"{sid}.jsonl"
+    path.write_text("".join(json.dumps(r) + "\n" for r in records))
+    return path
+
+
+_CLEARED_SESSION = [
+    {"type": "custom-title", "customTitle": "APK signing"},
+    {"type": "user", "isMeta": True, "cwd": "/home/hunt/work/app",
+     "message": {"role": "user", "content": "<local-command-caveat>The command below was run directly</local-command-caveat>"}},
+    {"type": "user", "cwd": "/home/hunt/work/app",
+     "message": {"role": "user", "content": "<command-name>/clear</command-name>\n<command-message>clear</command-message>\n<command-args></command-args>"}},
+    {"type": "user", "isMeta": True, "cwd": "/home/hunt/work/app",
+     "message": {"role": "user", "content": [{"type": "text", "text": "<system-reminder>\nThe user started this conversation instead of resuming</system-reminder>"}]}},
+]
+
+
+def test_claude_is_empty_after_clear_and_not_once_the_user_speaks(tmp_path):
+    """`/clear` leaves a session that carries the old title but no
+    conversation; the first thing the user types makes it a real one."""
+    projects = tmp_path / "projects"
+    cleared = _write_claude_records(projects, "aaaa0000-0000-0000-0000-000000000001", _CLEARED_SESSION)
+    asked = _write_claude_records(projects, "aaaa0000-0000-0000-0000-000000000002", _CLEARED_SESSION + [
+        {"type": "user", "message": {"role": "user", "content": "now build the release APK"}}])
+    answered = _write_claude_records(projects, "aaaa0000-0000-0000-0000-000000000003", [
+        {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "hi"}]}}])
+    assert sessions.claude_is_empty(str(cleared))
+    assert not sessions.claude_is_empty(str(asked))
+    assert not sessions.claude_is_empty(str(answered))
+
+
+def test_cmd_list_hides_a_cleared_claude_session_unless_all(monkeypatch, tmp_path, capsys):
+    projects = tmp_path / "projects"
+    _write_claude_records(projects, "aaaa0000-0000-0000-0000-000000000001", _CLEARED_SESSION)
+    monkeypatch.setattr(common, "CLAUDE_PROJECTS", str(projects))
+    monkeypatch.setattr(sessions, "CACHE_FILE", str(tmp_path / "cache.json"), raising=False)
+
+    sessions.cmd_list([])
+    assert "aaaa0000" not in capsys.readouterr().out
+    sessions.cmd_list(["--all"])
+    assert "aaaa0000" in capsys.readouterr().out

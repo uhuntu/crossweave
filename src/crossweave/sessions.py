@@ -70,6 +70,7 @@ from .common import (
 )
 from .claude import (
     claude_handoff_messages,
+    claude_is_empty,
     claude_light_records,
     claude_resolve,
     claude_session_cwd,
@@ -733,6 +734,9 @@ def cmd_list(args):
     rows = []
     sources = {}
     for r in light:
+        # A Claude session `/clear` left behind holds nothing to resume.
+        if not show_all and r["tool"] == "claude" and r.get("path") and claude_is_empty(r["path"]):
+            continue
         row = resolve_row(r)
         if not show_all and is_tool_started_row(row):
             continue

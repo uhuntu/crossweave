@@ -175,6 +175,43 @@ def claude_title_and_cwd(path, cwd_fallback):
     return resolved, (cwd if isinstance(cwd, str) and cwd else cwd_fallback)
 
 
+# User records Claude Code writes on its own when a slash command runs or a
+# session opens: none of them is something the user said.
+_CLAUDE_NON_MESSAGE_PREFIXES = ("<command-name>", "<command-message>", "<local-command-",
+                                "<system-reminder>")
+
+
+def claude_is_empty(path):
+    """True if a session holds no conversation: no assistant reply and no
+    message the user typed. `/clear` leaves one of these behind -- a new
+    session that carries the old one's custom-title, so it listed under the
+    old topic with no preview and a turn count made of the /clear command
+    and Claude Code's own notices. Stops reading at the first sign of
+    content, so a real session costs a line or two."""
+    try:
+        with common.open_text(path) as fh:
+            for line in fh:
+                # Cheap pre-check before parsing; the role words appear in
+                # every user/assistant record however the JSON is spaced.
+                if '"assistant"' not in line and '"user"' not in line:
+                    continue
+                try:
+                    d = json.loads(line)
+                except Exception:
+                    continue
+                if d.get("type") == "assistant":
+                    return False
+                if d.get("type") != "user" or d.get("isMeta"):
+                    continue
+                text = common.extract_text_from_content(common.dict_field(d, "message").get("content"))
+                text = (text or "").strip()
+                if text and not text.startswith(_CLAUDE_NON_MESSAGE_PREFIXES):
+                    return False
+    except OSError:
+        return False
+    return True
+
+
 def claude_session_cwd(sid):
     record = next((r for r in claude_light_records() if r["id"] == sid), None)
     if not record:
