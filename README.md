@@ -134,6 +134,8 @@ cw search "..." --all                      # list every hit, not just the strong
 cw note 3                   # row 3 as a done/why/open note in your Obsidian vault
 cw note 327e2ad9 --vault ~/Notes   # by id; CW_VAULT sets the vault once
 cw 3 note                   # the same, row first
+cw note --all               # every session with no note yet, or one that moved on since (asks first)
+cw note --since 2d -y       # only the last two days, no question -- the shape for cron
 cw context                  # this project's newest notes, to hand a new session
 cw codex "$(cw context) 接着做"   # ...like this, in any of the tools
 
@@ -234,6 +236,12 @@ WorkBuddy is the other kind of desktop case: it registers a *session-level* deep
 Every agent keeps its own sessions, and none reads the others'. `cw note` carries the part worth keeping across: the judge `cw search` uses reads the session (the same digest `cw rename` titles from) and writes three short sections — what was done, why, what is still open — in the session's own language. The note lands in your vault as plain Markdown, in one folder per project (the session directory's basename; sessions started in your home directory go to `_home`), with frontmatter Obsidian's properties and Dataview can query: `tool`, `session`, `cwd`, `project`, `updated`, and the `resume` command that reopens it.
 
 The vault is `--vault DIR` or `CW_VAULT`, and must already exist. Noting a session again rewrites its note (found by its `session:` line) rather than adding a second one, so edits made to the note itself are replaced: keep your own writing in other notes.
+
+`cw note --all` picks the sessions itself: every one with no note, or whose note it has outgrown (the `✎+` below), skipping sessions active in the last five minutes and ones under three turns. It says how many before starting and waits for a yes; `-y` skips that, and `--since 2d` (or `12h`, `1w`) narrows it to recent work. Four sessions are summarized at a time. Run from cron, it keeps the vault current on its own:
+
+```cron
+0 * * * *  PATH=$HOME/.local/bin:/usr/local/bin:/usr/bin CW_VAULT="$HOME/Documents/Obsidian Vault" cw note --since 2d -y >>$HOME/.cache/crossweave/note.log 2>&1
+```
 
 With `CW_VAULT` set, the listing marks every session that has a note: `✎` before its title, or `✎+` (in yellow) when the session has moved on since the note was written and `cw note` would say something new.
 

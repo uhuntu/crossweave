@@ -40,6 +40,7 @@ USAGE = f"""Usage: cw <{'|'.join(TOOLS)}> [common-options] [prompt] [-- extra na
        cw rename --trivial              # the sweep -- --auto implied
        cw note <N|session-id>... [--vault DIR] [--judge T]
        cw <N> note              # summarize a session into an Obsidian vault (CW_VAULT)
+       cw note --all [--since 7d] [-y]   # every session with no note, or a stale one
        cw context [DIR] [--limit N]   # print that project's newest notes, for a new session
 
 Common options (translated per-tool, all optional):

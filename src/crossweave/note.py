@@ -28,6 +28,8 @@ import json
 import os
 import re
 import sys
+import threading
+import time
 
 # Characters Obsidian (or one of the filesystems a vault syncs to) will not
 # take in a note's file name; `#`, `^`, `[`, `]` and `|` break its links.
@@ -46,6 +48,8 @@ HOME_PROJECT = "_home"
 def _usage():
     print("Usage: cw note <N|session-id>... [--vault DIR] [--judge T]\n"
           "       cw <N> note [--vault DIR] [--judge T]\n"
+          "       cw note --all [--since 7d] [-y]   # every session not yet noted,\n"
+          "                                       # or noted and moved on since\n"
           "  Summarizes each session (done / why / open) with the judge and\n"
           "  writes it as a Markdown note into an Obsidian vault: --vault, or\n"
           "  CW_VAULT. Notes go in a folder per project; noting a session\n"
@@ -229,6 +233,11 @@ def _note_one(r, vault, judge):
               "try again or use --judge <tool>", file=sys.stderr)
         return None
 
+    with _WRITE_LOCK:
+        return _write_note(r, vault, title, cwd, body)
+
+
+def _write_note(r, vault, title, cwd, body):
     folder = os.path.join(vault, _project(cwd))
     os.makedirs(folder, exist_ok=True)
     path = _existing_note(folder, r["id"])
@@ -238,30 +247,132 @@ def _note_one(r, vault, judge):
         path = os.path.join(folder, f"{when:%Y-%m-%d} {name}.md")
         if os.path.exists(path):  # another session, same day and title
             path = os.path.join(folder, f"{when:%Y-%m-%d} {name} {r['id'][:8]}.md")
-    tmp = f"{path}.{os.getpid()}.tmp"
+    tmp = f"{path}.{os.getpid()}.{threading.get_ident()}.tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
         fh.write(render(r, title, cwd, body))
     os.replace(tmp, path)
     return path
 
 
+# --all: what is worth a judge call. A session of one or two turns is a
+# question asked and answered -- "hi", a quick lookup -- and the note would
+# be longer than the session.
+MIN_TURNS = 3
+# Judge calls in flight at once -- the bound `cw search` keeps under the
+# step account's concurrency limit, for the same reason.
+WORKERS = 4
+_SINCE_RE = re.compile(r"^(\d+)([mhdw])$")
+_SINCE_UNIT = {"m": 60, "h": 3600, "d": 86400, "w": 7 * 86400}
+# One lock around choosing a file name and writing it, so two workers
+# noting same-titled sessions on the same day cannot pick one name.
+_WRITE_LOCK = threading.Lock()
+
+
+def _parse_since(text):
+    m = _SINCE_RE.match(text or "")
+    return int(m[1]) * _SINCE_UNIT[m[2]] if m else None
+
+
+def _ts(r):
+    ts = r.get("ts") or 0
+    return ts / 1000 if ts > 1e12 else ts
+
+
+def _pick_all(since_seconds, vault):
+    """(to note, how many skipped as noted / live / short): every local
+    session with no note or a stale one, newest first."""
+    from . import rename, search, sessions
+
+    noted = noted_index(vault)
+    cutoff = time.time() - since_seconds if since_seconds else 0
+    picked, skipped = [], {"noted": 0, "live": 0, "short": 0}
+    for r in search.gather_candidates(None):
+        if cutoff and _ts(r) and _ts(r) < cutoff:
+            continue
+        if r["id"] in noted and not is_stale(r, noted[r["id"]]):
+            skipped["noted"] += 1
+            continue
+        if rename._is_live(r):
+            skipped["live"] += 1
+            continue
+        try:
+            turns = sessions.session_turns(r)
+        except Exception:  # a store that cannot be counted is still offered
+            turns = None
+        if turns is not None and turns < MIN_TURNS:
+            skipped["short"] += 1
+            continue
+        picked.append(r)
+    return picked, skipped
+
+
+def _confirm(question):
+    if not sys.stdin.isatty():
+        return False
+    try:
+        return input(question).strip().lower() in ("y", "yes", "是", "好")
+    except EOFError:
+        return False
+
+
+def _note_all(since_seconds, since_text, vault, judge, yes):
+    from concurrent.futures import ThreadPoolExecutor
+
+    picked, skipped = _pick_all(since_seconds, vault)
+    window = f" from the last {since_text}" if since_seconds else ""
+    print(f"cw note: {len(picked)} sessions{window} to note "
+          f"(skipping {skipped['noted']} already noted, {skipped['live']} live, "
+          f"{skipped['short']} under {MIN_TURNS} turns)", file=sys.stderr)
+    if not picked:
+        return 0
+    if not yes:
+        minutes = max(1, round(len(picked) * 40 / WORKERS / 60))
+        if not _confirm(f"That is {len(picked)} judge calls, about {minutes} min. "
+                        "Go ahead? [y/N] "):
+            print("cw note: nothing noted (pass -y to skip this question)", file=sys.stderr)
+            return 1
+    done = failed = 0
+    with ThreadPoolExecutor(max_workers=WORKERS) as pool:
+        for r, path in zip(picked, pool.map(lambda r: _note_one(r, vault, judge), picked)):
+            if path:
+                done += 1
+                print(f"noted: {os.path.relpath(path, vault)}", flush=True)
+            else:
+                failed += 1
+    print(f"cw note: {done} noted, {failed} failed", file=sys.stderr)
+    return 1 if failed else 0
+
+
+
 def cmd_note(args):
     from . import search, sessions
 
-    judge = vault_flag = None
+    judge = vault_flag = since = since_text = None
+    every = yes = False
     targets = []
     i = 0
     while i < len(args):
         a = args[i]
-        if a in ("--judge", "--vault"):
+        if a in ("--judge", "--vault", "--since"):
             if i + 1 >= len(args):
                 print(f"cw note: {a} requires a value", file=sys.stderr)
                 return 2
             if a == "--judge":
                 judge = args[i + 1]
-            else:
+            elif a == "--vault":
                 vault_flag = args[i + 1]
+            else:
+                since = _parse_since(args[i + 1])
+                if since is None:
+                    print("cw note: --since takes a span like 30m, 12h, 7d or 2w",
+                          file=sys.stderr)
+                    return 2
+                since_text = args[i + 1]
             i += 2
+        elif a == "--all":
+            every = True; i += 1
+        elif a in ("-y", "--yes"):
+            yes = True; i += 1
         elif a in ("-h", "--help"):
             return _usage()
         elif a.startswith("-"):
@@ -270,7 +381,13 @@ def cmd_note(args):
         else:
             targets.append(a); i += 1
 
-    if not targets:
+    if since and not every:
+        every = True  # a time window only makes sense over many sessions
+    if every and targets:
+        print("cw note: --all picks the sessions itself -- drop the rows/ids, "
+              "or drop --all", file=sys.stderr)
+        return 2
+    if not targets and not every:
         return _usage()
     if judge is None:
         judge = search.DEFAULT_JUDGE
@@ -281,6 +398,9 @@ def cmd_note(args):
     vault = _vault_dir(vault_flag)
     if vault is None:
         return 1
+
+    if every:
+        return _note_all(since, since_text, vault, judge, yes)
 
     cache = sessions.read_list_cache()
     failed = 0
@@ -411,15 +531,16 @@ def cmd_context(args):
 HEAD_BYTES = 4096
 
 
-def noted_index():
+def noted_index(vault=None):
     """{session id: when its note was written (epoch seconds)} for every note
     `cw note` put in $CW_VAULT, or {} with no vault. Only the project
     folders are looked in -- that is the one place cw writes -- so a big
     vault of the user's own notes costs one directory listing, not a walk."""
-    raw = os.environ.get("CW_VAULT", "").strip()
-    if not raw:
-        return {}
-    vault = os.path.abspath(os.path.expanduser(raw))
+    if vault is None:
+        raw = os.environ.get("CW_VAULT", "").strip()
+        if not raw:
+            return {}
+        vault = os.path.abspath(os.path.expanduser(raw))
     index = {}
     for path in glob.glob(os.path.join(vault, "*", "*.md")):
         try:

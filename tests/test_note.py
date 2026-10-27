@@ -7,6 +7,7 @@ missing vault or an unusable judge writes nothing.
 """
 
 import os
+import re
 import subprocess
 import sys
 import time
@@ -234,3 +235,77 @@ def test_no_vault_no_marks(world, monkeypatch, capsys):
     assert note.cmd_note(["1"]) == 0
     monkeypatch.delenv("CW_VAULT")
     assert "✎" not in _listing(monkeypatch, world.records, capsys)
+
+
+# ---------- cw note --all ----------
+
+@pytest.fixture
+def many(world, monkeypatch):
+    """Four sessions: one long, one short, one live, one old."""
+    now = time.time()
+    world.records[:] = [
+        dict(_record("sess_long", "long work"), ts=now - 3600),
+        dict(_record("sess_short", "hi"), ts=now - 3600),
+        dict(_record("sess_live", "typing now"), ts=now - 30),
+        dict(_record("sess_old", "last month"), ts=now - 30 * 86400),
+    ]
+    turns = {"sess_long": 20, "sess_short": 1, "sess_live": 9, "sess_old": 12}
+    monkeypatch.setattr(sessions, "session_turns", lambda r: turns[r["id"]])
+    for name in ("claude", "codex", "kimi", "step", "codebuddy", "workbuddy"):
+        monkeypatch.setattr(sessions, f"{name}_light_records",
+                            lambda show_all=False: [])
+    return world
+
+
+def _noted_ids(vault):
+    return set(note.noted_index())
+
+
+def test_all_notes_long_settled_sessions_only(many, capsys):
+    assert note.cmd_note(["--all", "-y"]) == 0
+    assert _noted_ids(many.vault) == {"sess_long", "sess_old"}
+    err = capsys.readouterr().err
+    assert "2 sessions to note" in err
+    assert "1 live" in err and "1 under 3 turns" in err
+
+
+def test_all_checks_the_vault_it_writes_to(many, monkeypatch, tmp_path):
+    other = tmp_path / "other"
+    other.mkdir()
+    assert note.cmd_note(["--all", "-y"]) == 0
+    assert note.cmd_note(["--all", "-y", "--vault", str(other)]) == 0
+    assert set(note.noted_index(str(other))) == {"sess_long", "sess_old"}
+
+
+def test_all_skips_what_is_already_noted_until_it_moves_on(many, capsys):
+    assert note.cmd_note(["--all", "-y"]) == 0
+    assert _noted_ids(many.vault) == {"sess_long", "sess_old"}
+    calls = len(many.calls)
+
+    assert note.cmd_note(["--all", "-y"]) == 0
+    assert len(many.calls) == calls  # nothing new to say
+    assert "0 sessions to note" in capsys.readouterr().err
+
+    # the long session's note was written two hours ago; it has moved on since
+    path = next(p for p in many.vault.rglob("*.md") if "sess_long" in p.read_text())
+    two_hours_ago = time.strftime("%Y-%m-%dT%H:%M", time.localtime(time.time() - 7200))
+    path.write_text(re.sub(r"(?m)^noted: .*$", f"noted: {two_hours_ago}",
+                           path.read_text(encoding="utf-8")), encoding="utf-8")
+    assert note.cmd_note(["--all", "-y"]) == 0
+    assert len(many.calls) == calls + 1  # only the one that moved on
+
+
+def test_since_narrows_the_window(many):
+    assert note.cmd_note(["--since", "7d", "-y"]) == 0  # --all implied
+    assert _noted_ids(many.vault) == {"sess_long"}
+
+
+def test_all_without_a_yes_asks_and_a_pipe_means_no(many, capsys):
+    assert note.cmd_note(["--all"]) == 1  # stdin is not a terminal under pytest
+    assert many.calls == []
+    assert "-y" in capsys.readouterr().err
+
+
+def test_all_and_rows_do_not_mix(many):
+    assert note.cmd_note(["--all", "1"]) == 2
+    assert note.cmd_note(["--since", "soon"]) == 2
