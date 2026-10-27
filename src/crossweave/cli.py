@@ -9,7 +9,7 @@ import os
 import re
 import sys
 
-from . import __version__, alias, doctor, machines, rename, search, sessions, update
+from . import __version__, alias, delete, doctor, machines, rename, search, sessions, update
 
 TOOLS = ("claude", "codex", "kimi", "step", "zcode", "codebuddy", "workbuddy")
 
@@ -26,6 +26,8 @@ USAGE = f"""Usage: cw <{'|'.join(TOOLS)}> [common-options] [prompt] [-- extra na
        cw search <topic> [--tool {'|'.join(TOOLS)}] [--judge {'|'.join(search.JUDGE_CMD)}] [--why] [--all]
        cw resume <{'|'.join(TOOLS)}|N> [session-id-or-prefix] [--cwd <dir>]
        cw <N> <{'|'.join(TOOLS)}> [native-options]
+       cw <N> delete [-y]      # remove session files, keeping a backup
+       cw delete <N> [-y]
        cw <N> rename <title>    # row first, the shape `cw <N> <tool>` reads in
        cw <N> rename             # no title: the judge proposes one, and it is applied
        cw update [tools|all]
@@ -110,7 +112,7 @@ Examples:
 # this list, and the test asserts it matches what main() actually dispatches,
 # so adding a subcommand cannot leave the message stale the way it was when
 # `stats` and `step` were both missing from it.
-SUBCOMMANDS = ("sessions", "full", "search", "resume", "update", "stats", "doctor", "alias", "machines", "rename")
+SUBCOMMANDS = ("sessions", "full", "search", "resume", "update", "stats", "doctor", "alias", "machines", "rename", "delete")
 
 
 def usage(name="cw"):
@@ -324,6 +326,8 @@ def main():
         return
     if sessions.ROW_NUMBER_RE.match(tool):
         # `cw <N>` is shorthand for `cw resume <N>`.
+        if rest and rest[0] == "delete":
+            sys.exit(delete.cmd_delete([tool, *rest[1:]]))
         if rest and rest[0] == "rename":
             # `cw 3 rename "title"` -- the row first, the shape `cw 3 codex`
             # already reads in, so pointing at a listing row and saying what
@@ -356,6 +360,8 @@ def main():
         # The ssh endpoint of the pull mode: `ssh <host> cw machines` runs
         # this and ships the JSON back to the caller's `--machines`.
         sys.exit(machines.cmd_machines(rest))
+    if tool == "delete":
+        sys.exit(delete.cmd_delete(rest))
     if tool == "rename":
         sys.exit(rename.cmd_rename(rest))
 

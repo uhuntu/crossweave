@@ -285,3 +285,18 @@ Not a TUI, not a worktree manager, not a multi-agent orchestrator. If you want a
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+### Delete a session
+
+Run `cw 7 delete` (or `cw delete 7`) to remove row 7 from the session
+files scanned by cw. The number refers to your last displayed list. The
+command shows the tool and full session ID and asks for confirmation;
+`-y` skips that prompt. Refresh with `cw` to get new row numbers after deletion.
+
+Files are moved to `~/.cache/crossweave/deleted/`, with a `manifest.json`
+mapping backup files to their original paths for manual recovery. Codex
+removal includes every rollout for the selected session. Kimi removal
+includes its session directory. Claude, step, CodeBuddy and WorkBuddy
+removal moves the selected transcript. ZCode database sessions and remote
+rows are currently unsupported. Tool-owned database and index entries are
+not removed, so a tool's own history UI may still show the session.
