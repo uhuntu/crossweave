@@ -111,6 +111,7 @@ cw zcode                    # open the ZCode app on this directory
 cw sessions --limit 10      # list recent sessions, all tools
 cw sessions --limit all     # no cutoff -- same as `cw full`
 cw full                     # shorthand for `cw sessions --limit all`
+CW_LIMIT=30 cw              # bare `cw` lists 30 rows instead of 15 (export it in ~/.zshrc to keep)
 cw sessions --tool codex    # filter to one tool
 cw sessions --cwd           # only sessions started in the current directory
 cw sessions --all           # include archived sessions and ones a tool started for itself

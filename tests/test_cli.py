@@ -235,3 +235,19 @@ def test_an_id_that_matches_nothing_is_still_an_unknown_command(monkeypatch, cap
     assert _run_main(monkeypatch, ["deadbeef99"]) == 1
 
     assert "unknown tool 'deadbeef99'" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("env, expected", [
+    (None, "15"), ("", "15"), ("30", "30"), (" 40 ", "40"), ("ALL", "all"),
+    ("0", "15"), ("-5", "15"), ("lots", "15"),
+])
+def test_bare_cw_row_count_follows_cw_limit(monkeypatch, env, expected):
+    if env is None:
+        monkeypatch.delenv("CW_LIMIT", raising=False)
+    else:
+        monkeypatch.setenv("CW_LIMIT", env)
+    seen = []
+    monkeypatch.setattr(cli.sessions, "cmd_list", lambda args: seen.append(args))
+    monkeypatch.setattr(sys, "argv", ["cw"])
+    cli.main()
+    assert seen == [["--limit", expected]]

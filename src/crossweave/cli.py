@@ -53,7 +53,8 @@ is passed through unchanged to the underlying CLI.
 The listing (`cw`, `cw sessions`) marks the rows belonging to the current
 directory and shows each session's turn count. Color is used only when the
 output is a terminal: NO_COLOR, TERM=dumb and CROSSWEAVE_COLOR=never disable
-it, CROSSWEAVE_COLOR=always forces it.
+it, CROSSWEAVE_COLOR=always forces it. A bare `cw` lists 15 rows; set
+CW_LIMIT (a number or `all`) to change that.
 
 Per-tool --yolo mapping:
   claude    -> --dangerously-skip-permissions
@@ -77,6 +78,7 @@ Examples:
   cw sessions --limit 10
   cw sessions --limit all   # same as `cw full`
   cw full                   # everything, no default 15-row cutoff
+  CW_LIMIT=30 cw            # bare `cw` shows 30 rows (export it to keep)
   cw sessions --machines    # other machines' sessions too -- each remote
                             #   row names the machine it lives on; the
                             #   switch is the machines dir itself: sync
@@ -294,6 +296,21 @@ def build_command(tool, rest):
     return cmd
 
 
+DEFAULT_LIST_LIMIT = "15"
+
+
+def default_list_limit():
+    """How many rows a bare `cw` shows: CW_LIMIT (a number or `all`) when it
+    is set to something usable, else 15."""
+    raw = os.environ.get("CW_LIMIT", "").strip()
+    if not raw:
+        return DEFAULT_LIST_LIMIT
+    if raw.lower() == "all" or (raw.isdigit() and int(raw) > 0):
+        return raw.lower()
+    print(f"cw: ignoring CW_LIMIT={raw!r} (expected a positive number or 'all')", file=sys.stderr)
+    return DEFAULT_LIST_LIMIT
+
+
 def main():
     # Before anything prints: a title the console's code page cannot encode
     # must not abort the command (see harden_console_output).
@@ -309,7 +326,7 @@ def main():
         return
 
     if not argv:
-        sessions.cmd_list(["--limit", "15"])
+        sessions.cmd_list(["--limit", default_list_limit()])
         return
 
     tool, rest = argv[0], argv[1:]
