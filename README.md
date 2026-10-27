@@ -235,6 +235,8 @@ Every agent keeps its own sessions, and none reads the others'. `cw note` carrie
 
 The vault is `--vault DIR` or `CW_VAULT`, and must already exist. Noting a session again rewrites its note (found by its `session:` line) rather than adding a second one, so edits made to the note itself are replaced: keep your own writing in other notes.
 
+With `CW_VAULT` set, the listing marks every session that has a note: `✎` before its title, or `✎+` (in yellow) when the session has moved on since the note was written and `cw note` would say something new.
+
 `cw context [DIR]` reads them back: the newest three notes for that directory's project (the current one by default; `--limit N` for more), printed as one Markdown block a new session can start from — in whichever tool, since it is only text: `cw claude "$(cw context) 接着做"`. With no notes it prints nothing and exits 1, so the substitution stays empty.
 
 ## Renaming sessions

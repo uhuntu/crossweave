@@ -24,6 +24,8 @@ import sys
 BOLD = "1"
 DIM = "2"
 RESET = "0"
+# a note gone stale in the listing (✎+): the one thing on the row asking for action
+YELLOW = "33"
 
 # One hue per tool. 256-color values when the terminal has them, basic
 # colors otherwise -- close enough hues that the table still reads the same.

@@ -402,3 +402,55 @@ def cmd_context(args):
     notes.sort(key=lambda n: (str(n[0][0].get("updated") or ""), n[1]), reverse=True)
     sys.stdout.write(render_context(project, [n[0] for n in notes[:limit]]))
     return 0
+
+
+# ---------- which sessions have a note: the listing's ✎ ----------
+
+# A note's frontmatter fits well inside this; the rest of the file is never
+# read, so a listing pays for the vault's file count, not its size.
+HEAD_BYTES = 4096
+
+
+def noted_index():
+    """{session id: when its note was written (epoch seconds)} for every note
+    `cw note` put in $CW_VAULT, or {} with no vault. Only the project
+    folders are looked in -- that is the one place cw writes -- so a big
+    vault of the user's own notes costs one directory listing, not a walk."""
+    raw = os.environ.get("CW_VAULT", "").strip()
+    if not raw:
+        return {}
+    vault = os.path.abspath(os.path.expanduser(raw))
+    index = {}
+    for path in glob.glob(os.path.join(vault, "*", "*.md")):
+        try:
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                head = fh.read(HEAD_BYTES)
+        except OSError:
+            continue
+        if not head.startswith("---\n"):
+            continue
+        sid = noted = None
+        for line in head.split("\n---\n", 1)[0].splitlines():
+            if line.startswith("session: "):
+                try:
+                    sid = json.loads(line[9:])
+                except ValueError:
+                    sid = None
+            elif line.startswith("noted: "):
+                try:
+                    noted = datetime.datetime.strptime(line[7:].strip(), "%Y-%m-%dT%H:%M")
+                except ValueError:
+                    noted = None
+        if isinstance(sid, str):
+            when = noted.timestamp() if noted else os.path.getmtime(path)
+            index[sid] = max(index.get(sid, 0), when)
+    return index
+
+
+def is_stale(record, noted_at):
+    """The session moved on after its note was written. `noted:` keeps the
+    minute only, so a minute's grace keeps a just-noted session fresh."""
+    ts = (record or {}).get("ts") or 0
+    if ts > 1e12:
+        ts /= 1000
+    return ts > noted_at + 60

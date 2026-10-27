@@ -199,3 +199,38 @@ def test_a_session_in_the_home_directory_goes_to_home(world, monkeypatch, tmp_pa
     files = _notes(world.vault)
     assert files[0].startswith(note.HOME_PROJECT + "/"), files
     assert 'project: "_home"' in (world.vault / files[0]).read_text(encoding="utf-8")
+
+
+# ---------- the listing's ✎ ----------
+
+def _listing(monkeypatch, records, capsys):
+    rows = [("zcode", r["id"], "1h ago", r["id"][:8], r.get("cwd") or "?", r["title"])
+            for r in records]
+    monkeypatch.setattr(sessions, "session_turns", lambda r: 3)
+    monkeypatch.setattr(sessions, "session_last_message", lambda r: None)
+    capsys.readouterr()
+    sessions.render_rows(rows, write_cache=False, sources={r["id"]: r for r in records})
+    return capsys.readouterr().out
+
+
+def test_the_listing_marks_noted_sessions(world, monkeypatch, capsys):
+    world.records.append(_record("sess_other", "never noted"))
+    assert note.cmd_note(["1"]) == 0
+
+    out = _listing(monkeypatch, world.records, capsys)
+    assert "✎ USB 枚举握手排查" in out
+    assert "✎ never noted" not in out and "never noted" in out
+
+
+def test_a_session_that_moved_on_since_its_note_is_marked_stale(world, monkeypatch, capsys):
+    assert note.cmd_note(["1"]) == 0
+    world.records[0]["ts"] = time.time() + 3600  # new turns after the note
+
+    out = _listing(monkeypatch, world.records, capsys)
+    assert "✎+ USB 枚举握手排查" in out
+
+
+def test_no_vault_no_marks(world, monkeypatch, capsys):
+    assert note.cmd_note(["1"]) == 0
+    monkeypatch.delenv("CW_VAULT")
+    assert "✎" not in _listing(monkeypatch, world.records, capsys)
