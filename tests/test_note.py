@@ -53,7 +53,8 @@ def world(monkeypatch, tmp_path):
 
 
 def _notes(vault):
-    return sorted(str(p.relative_to(vault)) for p in vault.rglob("*.md")
+    # as_posix: the assertions spell folders with "/", Windows paths with "\\"
+    return sorted(p.relative_to(vault).as_posix() for p in vault.rglob("*.md")
                   if p.name != note.INDEX_NAME)
 
 
@@ -196,6 +197,7 @@ def test_context_ignores_markdown_cw_did_not_write(world, capsys):
 
 def test_a_session_in_the_home_directory_goes_to_home(world, monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path / "someone"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "someone"))  # what ~ is on Windows
     world.records[0]["cwd"] = str(tmp_path / "someone") + "/"
     assert note.cmd_note(["1"]) == 0
     files = _notes(world.vault)
@@ -295,7 +297,7 @@ def test_all_skips_what_is_already_noted_until_it_moves_on(many, capsys):
 
     # the long session's note was written two hours ago; it has moved on since
     path = next(p for p in many.vault.rglob("*.md")
-                if p.name != note.INDEX_NAME and "sess_long" in p.read_text())
+                if p.name != note.INDEX_NAME and "sess_long" in p.read_text(encoding="utf-8"))
     two_hours_ago = time.strftime("%Y-%m-%dT%H:%M", time.localtime(time.time() - 7200))
     path.write_text(re.sub(r"(?m)^noted: .*$", f"noted: {two_hours_ago}",
                            path.read_text(encoding="utf-8")), encoding="utf-8")

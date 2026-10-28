@@ -2994,7 +2994,7 @@ def test_renamed_handoff_session_keeps_the_users_name(monkeypatch, tmp_path):
     projects = tmp_path / "projects"
     _write_claude_session(projects, "src-1", "why does the OTA boot loop roll back?")
     path = _write_claude_session(projects, "hand-1", _handoff_seed("claude", "src-1"))
-    with open(path, "a") as fh:
+    with open(path, "a", encoding="utf-8") as fh:
         fh.write(json.dumps({"type": "ai-title", "aiTitle": "Crossweave session handoff continuation"}) + "\n")
         fh.write(json.dumps({"type": "custom-title", "customTitle": "OTA 回滚排查",
                              "sessionId": "hand-1"}, ensure_ascii=False) + "\n")

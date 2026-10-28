@@ -11,6 +11,7 @@ cache write, and a superscript "digit" reaching int().
 import json
 import os
 import subprocess
+import sys
 import time
 
 import pytest
@@ -236,7 +237,10 @@ def test_every_shipped_shim_reaches_the_cli():
         assert head == b"#!", (
             f"{shim} is not a program -- it starts with {head!r}, so the "
             "installer links a file that cannot be executed")
-        proc = subprocess.run([path, "--help"], capture_output=True, text=True,
+        # Windows cannot exec a #! file; the interpreter runs it there, which
+        # still proves the shim is a working program
+        argv = [sys.executable, path] if os.name == "nt" else [path]
+        proc = subprocess.run([*argv, "--help"], capture_output=True, text=True,
                               timeout=120)
         assert proc.returncode == 0, f"{shim} did not run: {proc.stderr.strip()}"
         assert "Usage:" in proc.stdout, f"{shim} printed no usage"
