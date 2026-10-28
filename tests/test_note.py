@@ -71,7 +71,7 @@ def test_a_note_lands_in_the_project_folder_with_frontmatter(world, capsys):
     assert "tags: [ai-session, zcode]" in text
     assert text.rstrip().endswith("- 回归测试")
     assert "# USB 枚举握手排查\n\n## 做了什么" in text
-    assert "noted: board/" in capsys.readouterr().out
+    assert f"noted: board{os.sep}" in capsys.readouterr().out  # a native path
 
 
 def test_noting_again_rewrites_the_same_note(world):
