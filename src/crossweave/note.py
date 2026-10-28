@@ -21,6 +21,13 @@ the vault's other notes are where the user's own writing goes.
 The summary comes from the same judge `cw search` and `cw rename` use,
 reading the same digest `cw rename` titles from (the user's requests and
 the assistant's replies, sampled across the whole conversation).
+
+Each project folder also gets an `_index.md`: the project's open items
+gathered from its newest notes, and every note in one table with the
+command that resumes its session. It is rebuilt from the notes alone -- no
+judge call -- whenever `cw note` writes into that folder, and for every
+folder by `cw note --index`. It carries no `session:` line, so nothing
+that reads notes back (`cw context`, the listing's ✎) mistakes it for one.
 """
 import datetime
 import glob
@@ -53,7 +60,8 @@ def _usage():
           "  Summarizes each session (done / why / open) with the judge and\n"
           "  writes it as a Markdown note into an Obsidian vault: --vault, or\n"
           "  CW_VAULT. Notes go in a folder per project; noting a session\n"
-          "  again rewrites its note rather than adding another.",
+          "  again rewrites its note rather than adding another.\n"
+          "       cw note --index   # rebuild every project's _index.md (no judge)",
           file=sys.stderr)
     return 2
 
@@ -332,13 +340,16 @@ def _note_all(since_seconds, since_text, vault, judge, yes):
             print("cw note: nothing noted (pass -y to skip this question)", file=sys.stderr)
             return 1
     done = failed = 0
+    written = []
     with ThreadPoolExecutor(max_workers=WORKERS) as pool:
         for r, path in zip(picked, pool.map(lambda r: _note_one(r, vault, judge), picked)):
             if path:
                 done += 1
+                written.append(path)
                 print(f"noted: {os.path.relpath(path, vault)}", flush=True)
             else:
                 failed += 1
+    _index_folders_of(written)
     print(f"cw note: {done} noted, {failed} failed", file=sys.stderr)
     return 1 if failed else 0
 
@@ -348,7 +359,7 @@ def cmd_note(args):
     from . import search, sessions
 
     judge = vault_flag = since = since_text = None
-    every = yes = False
+    every = yes = index_only = False
     targets = []
     i = 0
     while i < len(args):
@@ -371,6 +382,8 @@ def cmd_note(args):
             i += 2
         elif a == "--all":
             every = True; i += 1
+        elif a == "--index":
+            index_only = True; i += 1
         elif a in ("-y", "--yes"):
             yes = True; i += 1
         elif a in ("-h", "--help"):
@@ -381,6 +394,18 @@ def cmd_note(args):
         else:
             targets.append(a); i += 1
 
+    if index_only:
+        if targets or every:
+            print("cw note: --index rebuilds the indexes only -- drop the "
+                  "rows/ids and --all", file=sys.stderr)
+            return 2
+        vault = _vault_dir(vault_flag)
+        if vault is None:
+            return 1
+        built = rebuild_indexes(vault)
+        print(f"cw note: {built} project index{'es' if built != 1 else ''} rebuilt",
+              file=sys.stderr)
+        return 0
     if since and not every:
         every = True  # a time window only makes sense over many sessions
     if every and targets:
@@ -404,6 +429,7 @@ def cmd_note(args):
 
     cache = sessions.read_list_cache()
     failed = 0
+    written = []
     for target in targets:
         r, why = _resolve(target, cache)
         if r is None:
@@ -414,7 +440,9 @@ def cmd_note(args):
         if path is None:
             failed += 1
             continue
+        written.append(path)
         print(f"noted: {os.path.relpath(path, vault)}")
+    _index_folders_of(written)
     return 1 if failed else 0
 
 
@@ -575,3 +603,111 @@ def is_stale(record, noted_at):
     if ts > 1e12:
         ts /= 1000
     return ts > noted_at + 60
+
+
+# ---------- the project index: _index.md ----------
+
+INDEX_NAME = "_index.md"
+# Open items are gathered from this many of the newest notes: older ones
+# are usually done by now, or restated by a newer note.
+INDEX_OPEN_NOTES = 5
+# The headings _prompt asks for, in either language.
+OPEN_HEADINGS = ("open", "还剩什么")
+
+
+def _project_notes(folder):
+    """[(file stem, meta, body)] for the cw notes in one project folder,
+    newest conversation first -- the order `cw context` reads them in."""
+    notes = []
+    for path in glob.glob(os.path.join(folder, "*.md")):
+        if os.path.basename(path) == INDEX_NAME:
+            continue
+        got = _read_note(path)
+        if got:
+            stem = os.path.splitext(os.path.basename(path))[0]
+            notes.append((stem, got[0], got[1], os.path.getmtime(path)))
+    notes.sort(key=lambda n: (str(n[1].get("updated") or ""), n[3]), reverse=True)
+    return [n[:3] for n in notes]
+
+
+def open_items(body):
+    """The bullets under a note's Open / 还剩什么 section."""
+    items, inside = [], False
+    for line in body.splitlines():
+        if line.startswith("## "):
+            inside = line[3:].strip().casefold() in OPEN_HEADINGS
+            continue
+        if inside and line.lstrip().startswith(("- ", "* ")):
+            items.append(line.lstrip()[2:].strip())
+    return items
+
+
+def _cell(text):
+    """Text for one Markdown table cell: one line, no bare pipe."""
+    return " ".join(str(text).split()).replace("|", "\\|")
+
+
+def render_index(project, notes, now=None):
+    now = now or datetime.datetime.now()
+    q = json.dumps
+    out = ["---",
+           f"project: {q(project, ensure_ascii=False)}",
+           f"generated: {now:%Y-%m-%dT%H:%M}",
+           "tags: [ai-project]",
+           "---",
+           f"# {project}",
+           "",
+           f"Generated by `cw note` from {len(notes)} session note"
+           f"{'s' if len(notes) != 1 else ''}; rebuilt on every note, so edits "
+           "here are replaced.",
+           ""]
+    open_blocks = []
+    for stem, meta, body in notes[:INDEX_OPEN_NOTES]:
+        items = open_items(body)
+        if items:
+            open_blocks.append((stem, items))
+    if open_blocks:
+        out += ["## Open", ""]
+        for stem, items in open_blocks:
+            out.append(f"From [[{stem}]]:")
+            out += [f"- {item}" for item in items]
+            out.append("")
+    out += ["## Sessions", "",
+            "| When | Tool | Note | Resume |",
+            "| --- | --- | --- | --- |"]
+    for stem, meta, _body in notes:
+        when = str(meta.get("updated") or meta.get("noted") or "")[:10]
+        resume = meta.get("resume") or ""
+        out.append(f"| {_cell(when)} | {_cell(meta.get('tool', '?'))} | "
+                   f"[[{stem}]] | {'`' + _cell(resume) + '`' if resume else ''} |")
+    return "\n".join(out) + "\n"
+
+
+def write_index(folder):
+    """(Re)write one project folder's _index.md; False when the folder
+    holds no cw note to index (and nothing is written)."""
+    notes = _project_notes(folder)
+    if not notes:
+        return False
+    path = os.path.join(folder, INDEX_NAME)
+    tmp = f"{path}.{os.getpid()}.tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write(render_index(os.path.basename(folder), notes))
+    os.replace(tmp, path)
+    return True
+
+
+def rebuild_indexes(vault):
+    """Every project folder's index; returns how many were written."""
+    return sum(1 for folder in sorted(glob.glob(os.path.join(vault, "*", "")))
+               if write_index(os.path.normpath(folder)))
+
+
+def _index_folders_of(paths):
+    """Rebuild the index of each folder a note was just written to. An
+    index that fails to write never fails the note that triggered it."""
+    for folder in sorted({os.path.dirname(p) for p in paths}):
+        try:
+            write_index(folder)
+        except OSError as e:
+            print(f"cw note: could not update {folder}/{INDEX_NAME}: {e}", file=sys.stderr)

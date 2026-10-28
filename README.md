@@ -139,6 +139,7 @@ cw note 327e2ad9 --vault ~/Notes   # by id; CW_VAULT sets the vault once
 cw 3 note                   # the same, row first
 cw note --all               # every session with no note yet, or one that moved on since (asks first)
 cw note --since 2d -y       # only the last two days, no question -- the shape for cron
+cw note --index             # rebuild every project's _index.md (open items + all notes), no judge
 cw context                  # this project's newest notes, to hand a new session
 cw codex "$(cw context) 接着做"   # ...like this, in any of the tools
 
@@ -255,6 +256,8 @@ The vault is `--vault DIR` or `CW_VAULT`, and must already exist. Noting a sessi
 ```
 
 With `CW_VAULT` set, the listing marks every session that has a note: `✎` after its title, or `✎+` (in yellow) when the session has moved on since the note was written and `cw note` would say something new.
+
+Each project folder also gets an `_index.md`, the page to open in Obsidian for a project: the open items from its five newest notes at the top, each under a link to its note, then every note in one table with its date, tool and the `cw resume` command for its session. It is built from the notes alone, with no judge call, and rebuilt whenever `cw note` writes into that folder; `cw note --index` rebuilds every project's at once (after editing or deleting notes by hand, say). Like the notes it is generated, so edits to it are replaced. It has no `session:` line, so `cw context` and the `✎` marks never take it for a note.
 
 `cw context [DIR]` reads them back: the newest three notes for that directory's project (the current one by default; `--limit N` for more), printed as one Markdown block a new session can start from — in whichever tool, since it is only text: `cw claude "$(cw context) 接着做"`. With no notes it prints nothing and exits 1, so the substitution stays empty.
 

@@ -41,6 +41,7 @@ USAGE = f"""Usage: cw <{'|'.join(TOOLS)}> [common-options] [prompt] [-- extra na
        cw note <N|session-id>... [--vault DIR] [--judge T]
        cw <N> note              # summarize a session into an Obsidian vault (CW_VAULT)
        cw note --all [--since 7d] [-y]   # every session with no note, or a stale one
+       cw note --index          # rebuild each project's _index.md from its notes
        cw context [DIR] [--limit N]   # print that project's newest notes, for a new session
        cw ui                  # pick a session: type to filter, Enter resumes, h/n/r/d hand off/note/rename/delete
 

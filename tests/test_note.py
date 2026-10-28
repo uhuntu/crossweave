@@ -53,7 +53,8 @@ def world(monkeypatch, tmp_path):
 
 
 def _notes(vault):
-    return sorted(str(p.relative_to(vault)) for p in vault.rglob("*.md"))
+    return sorted(str(p.relative_to(vault)) for p in vault.rglob("*.md")
+                  if p.name != note.INDEX_NAME)
 
 
 def test_a_note_lands_in_the_project_folder_with_frontmatter(world, capsys):
@@ -293,7 +294,8 @@ def test_all_skips_what_is_already_noted_until_it_moves_on(many, capsys):
     assert "0 sessions to note" in capsys.readouterr().err
 
     # the long session's note was written two hours ago; it has moved on since
-    path = next(p for p in many.vault.rglob("*.md") if "sess_long" in p.read_text())
+    path = next(p for p in many.vault.rglob("*.md")
+                if p.name != note.INDEX_NAME and "sess_long" in p.read_text())
     two_hours_ago = time.strftime("%Y-%m-%dT%H:%M", time.localtime(time.time() - 7200))
     path.write_text(re.sub(r"(?m)^noted: .*$", f"noted: {two_hours_ago}",
                            path.read_text(encoding="utf-8")), encoding="utf-8")
@@ -315,3 +317,66 @@ def test_all_without_a_yes_asks_and_a_pipe_means_no(many, capsys):
 def test_all_and_rows_do_not_mix(many):
     assert note.cmd_note(["--all", "1"]) == 2
     assert note.cmd_note(["--since", "soon"]) == 2
+
+
+# ---------- the project index ----------
+
+def _index(vault, project="board"):
+    return (vault / project / note.INDEX_NAME).read_text(encoding="utf-8")
+
+
+def test_noting_a_session_writes_its_projects_index(world):
+    assert note.cmd_note(["1"]) == 0
+    text = _index(world.vault)
+    stem = os.path.splitext(os.path.basename(_notes(world.vault)[0]))[0]
+    assert text.startswith('---\nproject: "board"\n')
+    assert "## Open\n\nFrom [[" + stem + "]]:\n- 回归测试" in text
+    assert f"| zcode | [[{stem}]] | `cw resume zcode sess_abc` |" in text
+
+
+def test_the_index_is_not_a_note(world, capsys):
+    assert note.cmd_note(["1"]) == 0
+    assert set(note.noted_index()) == {"sess_abc"}
+    capsys.readouterr()
+    assert note.cmd_context(["/w/board"]) == 0
+    assert capsys.readouterr().out.count("## ") == 1 + 3  # one note, its 3 sections
+
+
+def test_open_items_come_from_the_newest_notes_only(world):
+    now = time.time()
+    world.records[:] = [dict(_record(f"s{i}", f"task {i}"), ts=now - 86400 * (i + 1))
+                        for i in range(note.INDEX_OPEN_NOTES + 2)]
+    sessions.write_list_cache([{"tool": "zcode", "id": r["id"]} for r in world.records])
+    for i in range(len(world.records)):
+        world.reply = f"## Done\n- did {i}\n\n## Open\n- left {i}"
+        assert note.cmd_note([str(i + 1)]) == 0
+    text = _index(world.vault)
+    assert text.index("left 0") < text.index("left 1")  # newest first
+    assert f"left {note.INDEX_OPEN_NOTES - 1}" in text
+    assert f"left {note.INDEX_OPEN_NOTES}" not in text
+    assert text.count("| zcode |") == len(world.records)  # the table has them all
+
+
+def test_index_rebuilds_every_project_without_the_judge(world, capsys):
+    assert note.cmd_note(["1"]) == 0
+    (world.vault / "board" / note.INDEX_NAME).unlink()
+    (world.vault / "mine").mkdir()  # the user's own folder, no cw notes
+    calls = len(world.calls)
+    assert note.cmd_note(["--index"]) == 0
+    assert len(world.calls) == calls
+    assert (world.vault / "board" / note.INDEX_NAME).exists()
+    assert not (world.vault / "mine" / note.INDEX_NAME).exists()
+    assert "1 project index rebuilt" in capsys.readouterr().err
+
+
+def test_index_and_rows_do_not_mix(world):
+    assert note.cmd_note(["--index", "1"]) == 2
+
+
+def test_a_pipe_in_a_title_stays_inside_its_cell():
+    assert note._cell("a | b\nc") == "a \\| b c"
+
+
+def test_open_items_read_either_language():
+    assert note.open_items("## 还剩什么\n- 甲\n* 乙\n## 为什么\n- 丙") == ["甲", "乙"]
+    assert note.open_items("## Done\n- x\n## Open\n- y") == ["y"]
