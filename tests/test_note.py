@@ -227,6 +227,8 @@ def test_the_listing_marks_noted_sessions(world, monkeypatch, capsys):
               else sessions._display_width(l[:l.index("never")]) for l in lines}
     marks = {l.index("✎") for l in lines if "✎" in l}
     assert len(lines) == 2 and len(starts) == 1, out
+    header = next(l for l in out.splitlines() if "TITLE" in l)
+    assert sessions._display_width(header[:header.index("TITLE")]) in starts  # the header too
     assert marks and min(marks) < min(l.index("never") for l in lines if "never" in l)
 
 

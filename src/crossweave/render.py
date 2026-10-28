@@ -241,7 +241,8 @@ def render_rows(rows, write_cache=True, start=1, notes=None, full_notes=False,
               f"{'ID':<{w_id}}  {'CWD':<{w_cwd}}  ")
     if show_turns:
         header += f"{'TURNS':>{TURNS_WIDTH}}  "
-    header += "TITLE"
+    # over the title text, not over the ✎ slot in front of it
+    header += " " * (noted_slot + 1 if noted_slot else 0) + "TITLE"
     if inline_why:
         # Left-align the label where the title column ends -- the same
         # w spaces `{'':<{w}}` would produce, without a nested field.
