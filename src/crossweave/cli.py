@@ -35,7 +35,7 @@ USAGE = f"""Usage: cw <{'|'.join(TOOLS)}> [common-options] [prompt] [-- extra na
        cw stats [--tool T]
        cw doctor [--tool T]
        cw alias add <name>... | list | remove <name>...
-       cw machines           # the ssh endpoint: prints this machine's index JSON
+       cw machines [ssh-destination...]   # overview of this and other machines (--json: the index)
        cw rename <N> <title> [--judge T]
        cw rename --auto [<N>... | --trivial] [-y] [--judge T]
        cw rename --trivial              # the sweep -- --auto implied

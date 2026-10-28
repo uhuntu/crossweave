@@ -30,6 +30,7 @@ import shlex
 import socket
 import subprocess
 import sys
+import time
 import uuid
 
 from . import __version__
@@ -252,9 +253,11 @@ def _coerce_index(data, source, now, mine):
         # files fall back to their filename; ssh targets to themselves
         machine = (os.path.basename(source)[:-len(".json")]
                    if source.endswith(".json") else source)
+    version = data.get("cw_version")
     return {
         "machine": machine,
         "machine_id": data.get("machine_id"),
+        "cw_version": version if isinstance(version, str) else "?",
         "path": source,
         "generated_at": generated,
         "sessions": sessions_out,
@@ -360,7 +363,7 @@ def _answer_detail(proc):
     return last
 
 
-def pull_remote_indexes(targets, timeout=15):
+def pull_remote_indexes(targets, timeout=15, prog="cw sessions"):
     """Fresh indexes pulled over ssh, one per live target.
 
     Each target is any ssh destination -- an alias from ~/.ssh/config
@@ -382,7 +385,7 @@ def pull_remote_indexes(targets, timeout=15):
                     "-o", "ClearAllForwardings=yes", target]
         is_cmd, detail = _probe_target(ssh_argv, timeout)
         if is_cmd is None:
-            print(f"cw sessions: {target}: {detail}", file=sys.stderr)
+            print(f"{prog}: {target}: {detail}", file=sys.stderr)
             continue
         index = None
         self_index = False
@@ -408,7 +411,7 @@ def pull_remote_indexes(targets, timeout=15):
             index["ssh"] = target  # the way back in, for a remote resume
             found.append(index)
         elif not self_index:
-            print(f"cw sessions: {target}: {detail}", file=sys.stderr)
+            print(f"{prog}: {target}: {detail}", file=sys.stderr)
     return found
 
 
@@ -498,18 +501,72 @@ def resume_remote(entry, extra, forced_cwd=None):
 
 
 def cmd_machines(args):
-    """The ssh endpoint of the pull mode: print this machine's index JSON.
+    """Two audiences, one command.
 
-    `cw sessions --machines <host>` runs `cw machines` on the named hosts
-    (through the fallback cascade above) and merges what comes back; this
-    command is that remote half. Not for human eyes -- pipe it through
-    `python -m json.tool` if you want to read it."""
-    if args:
-        print("cw machines: takes no arguments -- this prints the machine "
-              "index JSON that `cw sessions --machines <host>` pulls",
-              file=sys.stderr)
+    Piped -- which is how `cw sessions --machines <host>` meets it, over a
+    non-tty ssh -- or with --json, it prints this machine's index JSON:
+    the remote half of the pull mode, unchanged, so an older cw pulling
+    from this one still gets what it expects. In a terminal, a person
+    typed it, and a person gets an overview instead of a wall of JSON:
+    this machine, the sync directory, every other machine it knows of,
+    and any ssh targets named on the command line, pulled on the spot."""
+    as_json = "--json" in args
+    targets = [a for a in args if a != "--json"]
+    bad = next((a for a in targets if a.startswith("-")), None)
+    if bad:
+        print(f"cw machines: unknown option '{bad}'", file=sys.stderr)
         return 2
-    print(json.dumps(own_index()))
+    if as_json and targets:
+        print("cw machines: --json prints this machine's index; ssh targets are "
+              "for the overview", file=sys.stderr)
+        return 2
+    if as_json or (not targets and not sys.stdout.isatty()):
+        print(json.dumps(own_index()))
+        return 0
+    return _overview(targets)
+
+
+def _overview(targets):
+    from . import sessions
+    from .common import relative_time
+
+    light = sessions._all_light_records()
+    newest = max((r.get("ts") or 0 for r in light), default=0)
+    rows = [("this machine", machine_name(), __version__, len(light), newest, None, "")]
+    if os.path.isdir(MACHINES_DIR):
+        sync_line = f"sync dir  {MACHINES_DIR} -- this machine's index is published there"
+    else:
+        sync_line = (f"sync dir  {MACHINES_DIR} -- not set up (mkdir it and sync it "
+                     "to publish this machine's index)")
+    remotes = read_remote_indexes()
+    if targets:
+        remotes = remotes + pull_remote_indexes(targets, prog="cw machines")
+    now = datetime.datetime.now().astimezone()
+    for index in remotes:
+        ss = index["sessions"]
+        via = f"ssh {index['ssh']}" if index.get("ssh") else "sync dir"
+        age = (now - index["generated_at"]).total_seconds()
+        rows.append(("", index["machine"], index.get("cw_version", "?"), len(ss),
+                     max((x["ts"] for x in ss), default=0), age, via))
+
+    w_name = max(len(r[1]) for r in rows)
+    w_ver = max(len(r[2]) for r in rows)
+    for label, name, version, count, ts, age, via in rows:
+        line = (f"{label:<13} {name:<{w_name}}  cw {version:<{w_ver}}  "
+                f"{count:>5} session{"s" if count != 1 else " "}  newest {relative_time(ts) if ts else '-'}")
+        if via:
+            fresh = "just now" if age is not None and age < 60 else (
+                relative_time(time.time() - age) if age is not None else "?")
+            line += f"  (index {fresh}, {via})"
+        print(line)
+    print(sync_line)
+    if len(rows) == 1:
+        print("no other machines yet -- `cw machines <ssh-destination>...` checks "
+              "some, `cw sessions --machines <ssh-destination>...` lists their sessions")
+    else:
+        listing = " ".join(["cw sessions --machines", *targets])
+        print(f"`{listing}` lists their sessions; "
+              "`cw resume <N>` on one opens it there over ssh")
     return 0
 
 

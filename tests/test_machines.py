@@ -16,6 +16,7 @@ import os
 import socket
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -596,14 +597,43 @@ def test_pulling_oneself_is_silently_nothing(monkeypatch, capsys):
     assert capsys.readouterr().err == ""
 
 
-def test_the_machines_subcommand_prints_the_index(capsys):
+def test_the_machines_subcommand_prints_the_index_when_piped(capsys):
+    # pytest's stdout is not a terminal -- the shape an ssh pull sees
     assert machines.cmd_machines([]) == 0
     data = json.loads(capsys.readouterr().out)
     assert data["schema"] == machines.SCHEMA
     assert data["machine"] == machines.machine_name()
 
-    assert machines.cmd_machines(["wat"]) == 2
-    assert "takes no arguments" in capsys.readouterr().err
+    assert machines.cmd_machines(["--wat"]) == 2
+    assert machines.cmd_machines(["--json", "host"]) == 2
+
+
+def test_json_is_forced_with_the_flag(monkeypatch, capsys):
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True, raising=False)
+    assert machines.cmd_machines(["--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["schema"] == machines.SCHEMA
+
+
+def test_a_terminal_gets_an_overview(monkeypatch, capsys):
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True, raising=False)
+    _fake_scanners(monkeypatch, [light(sid="s1", ts=time.time() - 60)])
+    os.makedirs(machines.MACHINES_DIR)
+    write_foreign("kestrel.json", foreign_index(machine="kestrel", sessions_data=[
+        {"tool": "codex", "id": "r1", "title": "t", "cwd": "/w", "ts": time.time() - 3600}]))
+    pulled = {"machine": "swc-build", "machine_id": "e" * 32, "cw_version": "0.4.0",
+              "ssh": "149-tunnel", "generated_at": datetime.datetime.now().astimezone(),
+              "sessions": []}
+    monkeypatch.setattr(machines, "pull_remote_indexes", lambda targets, **kw: [pulled])
+
+    assert machines.cmd_machines(["149-tunnel"]) == 0
+    out = capsys.readouterr().out
+    assert "{" not in out  # no JSON for a person
+    lines = out.splitlines()
+    assert lines[0].startswith("this machine") and machines.machine_name() in lines[0]
+    assert "1 session " in lines[0]
+    assert any("kestrel" in line and "sync dir" in line for line in lines)
+    assert any("swc-build" in line and "ssh 149-tunnel" in line for line in lines)
+    assert "published there" in out
 
 
 def test_the_listing_pulls_named_ssh_targets(monkeypatch, tmp_path, capsys):
