@@ -754,8 +754,10 @@ def _overview(targets):
     w_name = max(len(r[1]) for r in rows)
     w_ver = max(len(r[2]) for r in rows)
     for label, name, version, count, ts, age, via in rows:
+        plural = "s" if count != 1 else " "
+        newest = relative_time(ts) if ts else "-"
         line = (f"{label:<13} {name:<{w_name}}  cw {version:<{w_ver}}  "
-                f"{count:>5} session{"s" if count != 1 else " "}  newest {relative_time(ts) if ts else '-'}")
+                f"{count:>5} session{plural}  newest {newest}")
         if via:
             fresh = "just now" if age is not None and age < 60 else (
                 relative_time(time.time() - age) if age is not None else "?")
@@ -765,6 +767,9 @@ def _overview(targets):
     if len(rows) == 1 and targets:
         print(f"none of {', '.join(targets)} answered -- remembered machines are "
               "left out when targets are named; plain `cw machines` shows them")
+    elif len(rows) == 1 and known_targets():
+        print("none of the remembered machines answered (see above); "
+              "`cw machines --forget <target>` drops one for good")
     elif len(rows) == 1:
         print("no other machines yet -- `cw machines <ssh-destination>...` checks "
               "some, and remembers the ones that answer")

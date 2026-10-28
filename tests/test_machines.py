@@ -862,3 +862,16 @@ def test_named_targets_that_all_fail_do_not_claim_there_are_no_machines(monkeypa
     assert machines.cmd_machines(["nohost"]) == 0
     out = capsys.readouterr().out
     assert "none of nohost answered" in out and "no other machines yet" not in out
+
+
+def test_remembered_machines_that_all_fail_are_not_called_no_machines(monkeypatch, capsys):
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True, raising=False)
+    _fake_scanners(monkeypatch, [])
+    answers = {"241-tunnel": "swc-build"}
+    _fake_pull_one(monkeypatch, answers)
+    machines.pull_remote_indexes(["241-tunnel"])
+    answers.clear()  # it broke since
+    assert machines.cmd_machines([]) == 0
+    out = capsys.readouterr().out
+    assert "none of the remembered machines answered" in out
+    assert "no other machines yet" not in out
