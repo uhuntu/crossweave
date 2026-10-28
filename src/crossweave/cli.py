@@ -42,7 +42,7 @@ USAGE = f"""Usage: cw <{'|'.join(TOOLS)}> [common-options] [prompt] [-- extra na
        cw <N> note              # summarize a session into an Obsidian vault (CW_VAULT)
        cw note --all [--since 7d] [-y]   # every session with no note, or a stale one
        cw context [DIR] [--limit N]   # print that project's newest notes, for a new session
-       cw ui                  # pick a session interactively: type to filter, Enter resumes
+       cw ui                  # pick a session: type to filter, Enter resumes, h/n/r/d hand off/note/rename/delete
 
 Common options (translated per-tool, all optional):
   -p, --print              Non-interactive: print response and exit

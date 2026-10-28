@@ -97,3 +97,54 @@ def test_wrap_fits_wide_text_and_marks_a_cut():
 def test_refuses_without_a_terminal(capsys):
     assert ui.cmd_ui([]) == 1
     assert "interactive terminal" in capsys.readouterr().err
+
+
+def test_action_keys_name_the_command_for_the_highlighted_row(monkeypatch):
+    p = picker(monkeypatch)
+    assert p.key("n", 10) == "note"
+    assert p.key("d", 10) == "delete"
+    assert p.key("r", 10) == "rename"
+
+
+def test_action_keys_are_letters_while_typing_a_filter(monkeypatch):
+    p = picker(monkeypatch)
+    p.key("/", 10)
+    for ch in "hndr":
+        assert p.key(ch, 10) is None
+    assert p.query == "hndr"
+
+
+def test_handoff_asks_for_a_target_other_than_the_source(monkeypatch):
+    p = picker(monkeypatch)  # the top row is a claude session
+    assert p.key("h", 10) is None
+    assert "claude" not in p.handoff_to and "workbuddy" not in p.handoff_to
+    target = p.handoff_to[0]
+    assert p.key("1", 10) == ("handoff", target)
+    assert p.handoff_to is None
+
+
+def test_any_other_key_cancels_the_handoff_question(monkeypatch):
+    p = picker(monkeypatch)
+    p.key("h", 10)
+    assert p.key("x", 10) is None
+    assert p.handoff_to is None
+    assert p.key("9", 10) is None  # no longer asking: a digit is just a key
+
+
+def test_reload_keeps_the_filters_and_the_highlighted_session(monkeypatch):
+    p = picker(monkeypatch)
+    p.key("/", 10)
+    p.key("w", 10)  # every row's cwd holds a "w"
+    p.key("KEY_DOWN", 10)
+    p.key("KEY_DOWN", 10)  # on ccc-3, the third row
+    p.reload([ITEMS[1], ITEMS[2]])  # aaa-1 was deleted
+    assert p.query == "w"
+    assert [it[0][1] for it in p.shown] == ["bbb-2", "ccc-3"]
+    assert p.selected()[0][1] == "ccc-3"
+
+
+def test_reload_drops_a_tool_filter_whose_tool_is_gone(monkeypatch):
+    p = picker(monkeypatch)
+    p.key("\t", 10)  # claude
+    p.reload([ITEMS[1], ITEMS[2]])
+    assert p.tool is None and len(p.shown) == 2

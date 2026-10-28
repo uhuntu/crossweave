@@ -116,7 +116,8 @@ cw sessions --tool codex    # filter to one tool
 cw sessions --cwd           # only sessions started in the current directory
 cw sessions --all           # include archived sessions and ones a tool started for itself
 
-cw ui                       # pick a session interactively: type to filter, Enter resumes
+cw ui                       # pick a session interactively: type to filter, Enter resumes,
+                            #   h hands off, n notes, r renames, d deletes
 
 cw resume kimi 97946bc7     # resume by short id / prefix (resolved against real session ids)
 cw resume claude            # no id -> tool's own interactive picker
@@ -157,6 +158,8 @@ An id works wherever a row number does, and is the steadier of the two: `cw <id-
 ### `cw ui`: the interactive picker
 
 `cw ui` puts the same sessions in one scrollable list in the terminal — every tool's, newest first, with the same rows left out that `cw sessions` leaves out. `/` starts a filter (every word has to appear in the title, directory, tool or id; Chinese works), Enter resumes the highlighted session through the same path as `cw resume`, Esc clears the filter and then quits. Tab steps through the tools, `.` keeps only the sessions of the directory you are standing in, and the pane at the bottom shows the selected session's full id, turn count, whether it has a note (`✎`), and where it left off.
+
+The highlighted row can be acted on without leaving: `h` hands it off to another tool (a digit picks which, any other key cancels), `n` writes its note, `r` renames it (type a title, or leave it empty for the judge to propose one), `d` deletes it after the usual y/N. These run the same commands as `cw <N> codex`, `cw note`, `cw rename` and `cw delete`, in the plain terminal; note, rename and delete then come back to the list, refreshed, on the same session. Because those commands take a row of the last listing, the picker writes what it shows as that listing first — after `cw ui`, `cw resume 3` means the third row the picker had on screen.
 
 It uses Python's own `curses`, so it adds nothing to install. Stock Python on Windows has no `curses`: there `pip install windows-curses` adds it, or `cw sessions` is the same information as a table.
 

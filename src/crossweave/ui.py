@@ -6,17 +6,29 @@ standard library's curses, so it adds no dependency; where curses is missing
 (stock Python on Windows) it says so and points at the plain listing.
 
 The picker only chooses. Everything it does after a choice goes through the
-commands that already exist -- resume is cmd_resume -- and it runs after
-curses has handed the terminal back, so the tool that starts gets a normal
-terminal rather than one curses is still holding.
+commands that already exist -- resume, handoff, note, delete, rename -- and
+runs after curses has handed the terminal back, so a tool that starts (or a
+y/N question) gets a normal terminal rather than one curses is still holding.
+Those commands take a row of the last listing, so the picker writes what it
+shows as that listing first: afterwards `cw resume 3` means the third row the
+picker had on screen. Note, delete and rename come back to the list; resume
+and handoff leave it for the tool.
 """
 import os
 import sys
 
-from . import common, note, sessions
+from . import common, delete, note, rename, sessions
 from .render import _clip, _display_width
 
-KEYS_HELP = ("↑↓ move  / filter  Tab tool  . this dir  Enter resume  q quit")
+KEYS_HELP = ("↑↓ move  / filter  Tab tool  . dir  Enter resume  "
+             "h handoff  n note  r rename  d delete  q quit")
+
+# The tools a session can be handed to: every one with a CLI to start.
+# workbuddy has none (perform_handoff refuses it), so it is never offered.
+HANDOFF_TARGETS = tuple(t for t in sessions.TOOLS if t != "workbuddy")
+
+# Keys that leave the list to run a command on the highlighted row.
+ACTION_KEYS = {"n": "note", "d": "delete", "r": "rename"}
 
 # Colors per tool, as curses pair numbers; the ANSI palette in color.py is
 # escape codes, which curses cannot take.
@@ -61,6 +73,7 @@ class Picker:
         self.cwd = cwd
         self.query = ""
         self.typing = False
+        self.handoff_to = None  # the target list while asking "hand off to?"
         self.tool = None
         self.here_only = False
         self.cursor = 0
@@ -69,6 +82,23 @@ class Picker:
         self.noted = note.noted_index()
         self.tools = [t for t in sessions.TOOLS if any(r[0] == t for r, _ in items)]
         self.refilter()
+
+    def reload(self, items):
+        """New items after a rename or delete; the filters stay, and the
+        cursor stays on the same session when it is still there."""
+        keep = self.selected()
+        keep_id = keep[0][1] if keep else None
+        self.items = items
+        self.details = {}
+        self.noted = note.noted_index()
+        self.tools = [t for t in sessions.TOOLS if any(r[0] == t for r, _ in items)]
+        if self.tool not in self.tools:
+            self.tool = None
+        self.refilter()
+        for n, (row, _rec) in enumerate(self.shown):
+            if row[1] == keep_id:
+                self.cursor = n
+                break
 
     def refilter(self):
         words = self.query.casefold().split()
@@ -96,7 +126,13 @@ class Picker:
     # -- keys ---------------------------------------------------------------
 
     def key(self, ch, page):
-        """Apply one key. Returns "resume", "quit" or None."""
+        """Apply one key. Returns None, "quit", "resume", "note", "delete",
+        "rename", or ("handoff", target tool)."""
+        if self.handoff_to is not None:
+            targets, self.handoff_to = self.handoff_to, None
+            if len(ch) == 1 and ch.isdigit() and 1 <= int(ch) <= len(targets):
+                return ("handoff", targets[int(ch) - 1])
+            return None  # any other key cancels
         if self.typing:
             if ch in ("\n", "\r", "KEY_ENTER"):
                 # type, then Enter: resume the highlighted row, fzf-style
@@ -125,6 +161,12 @@ class Picker:
             return "quit"
         if ch in ("\n", "\r", "KEY_ENTER"):
             return "resume" if self.shown else None
+        if ch in ACTION_KEYS:
+            return ACTION_KEYS[ch] if self.shown else None
+        if ch == "h" and self.shown:
+            source = self.selected()[0][0]
+            self.handoff_to = [t for t in HANDOFF_TARGETS if t != source]
+            return None
         if ch == "/":
             self.typing = True
         elif ch in ("KEY_UP", "k"):
@@ -217,7 +259,12 @@ class Picker:
                 for k, text in enumerate(lines):
                     put(scr, y0 + 3 + k, 1, text)
 
-        put(scr, h - 1, 0, _clip(" " + KEYS_HELP, w - 1), curses.A_DIM)
+        if self.handoff_to is not None:
+            ask = " hand off to:  " + "  ".join(
+                f"{n} {t}" for n, t in enumerate(self.handoff_to, start=1)) + "   (other key: cancel)"
+            put(scr, h - 1, 0, _clip(ask, w - 1), curses.A_BOLD)
+        else:
+            put(scr, h - 1, 0, _clip(" " + KEYS_HELP, w - 1), curses.A_DIM)
         scr.refresh()
 
 
@@ -306,8 +353,8 @@ def run(scr, curses, picker):
         action = picker.key(ch, page)
         if action == "quit":
             return None
-        if action == "resume":
-            return picker.selected()
+        if action:
+            return action
 
 
 def cmd_ui(args):
@@ -342,9 +389,52 @@ def cmd_ui(args):
         return 0
 
     picker = Picker(items, os.getcwd())
-    chosen = curses.wrapper(run, curses, picker)
-    if not chosen:
-        return 0
-    (tool, sid, *_), _rec = chosen
-    sessions.cmd_resume([tool, sid])
-    return 0
+    while True:
+        action = curses.wrapper(run, curses, picker)
+        if not action:
+            return 0
+        (tool, sid, *_), _rec = picker.selected()
+        if action == "resume":
+            sessions.cmd_resume([tool, sid])
+            return 0
+        # The commands below take a row of the last listing: make the
+        # picker's view that listing, and the highlighted row its number.
+        sessions.write_list_cache([{"tool": r[0], "id": r[1]} for r, _ in picker.shown])
+        row = str(picker.cursor + 1)
+        if isinstance(action, tuple):  # ("handoff", target)
+            sessions.handoff_by_number(int(row), action[1], [])
+            return 0
+        run_action(action, row, tool, sid)
+        if not pause():
+            return 0
+        if action == "note":
+            picker.noted = note.noted_index()
+        else:
+            print("cw ui: reading session stores…", file=sys.stderr, end="", flush=True)
+            picker.reload(gather())
+
+
+def run_action(action, row, tool, sid):
+    """Run note/delete/rename on one row, in the plain terminal."""
+    print(f"\n[{tool}] {sid}")
+    if action == "note":
+        note.cmd_note([row])
+    elif action == "delete":
+        delete.cmd_delete([row])
+    elif action == "rename":
+        try:
+            title = input("New title (empty: let the judge propose one): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nNot renamed.")
+            return
+        rename.cmd_rename([row, title] if title else [row])
+
+
+def pause():
+    """Wait for Enter before going back to the list; False on q or Ctrl-C."""
+    try:
+        answer = input("\nEnter: back to the list   q: quit ")
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return False
+    return answer.strip().lower() != "q"
