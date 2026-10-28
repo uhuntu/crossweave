@@ -756,6 +756,10 @@ def cmd_list(args):
             # ssh targets add to whatever the sync directory holds -- the
             # two transports feed the same merge
             indexes = indexes + machines.pull_remote_indexes(machine_targets)
+        else:
+            # no targets named: the ones that answered before
+            indexes = indexes + machines.remembered_indexes(
+                "cw sessions", skip_machines={i["machine"] for i in indexes})
         if indexes:
             local_keys = {(r["tool"], r["id"]) for r in light}
             remotes = machines.remote_sessions(indexes, local_keys)

@@ -49,6 +49,12 @@ MACHINES_DIR = os.environ.get("CROSSWEAVE_MACHINES_DIR") or os.path.join(
 # survive that (see read_remote_indexes).
 MACHINE_ID_FILE = os.path.join(HOME, ".cache", "crossweave", "machine_id")
 
+# The ssh destinations that have answered a pull: bare `cw machines` and
+# `cw sessions --machines` pull them again without being told. A cache,
+# not a config file -- written only by a pull that worked, emptied by
+# `cw machines --forget`, and harmless to delete.
+KNOWN_TARGETS_FILE = os.path.join(HOME, ".cache", "crossweave", "ssh_targets.json")
+
 SCHEMA = 1
 
 # A machine's whole history is not what the merged listing is for --
@@ -363,8 +369,37 @@ def _answer_detail(proc):
     return last
 
 
-def pull_remote_indexes(targets, timeout=15, prog="cw sessions"):
-    """Fresh indexes pulled over ssh, one per live target.
+def _pull_one(target, timeout, now, mine):
+    """(index or None, the stderr line a failure earns or None) for one
+    ssh target. Pulling this very machine is no index and no complaint."""
+    ssh_argv = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8",
+                "-o", "ClearAllForwardings=yes", target]
+    is_cmd, detail = _probe_target(ssh_argv, timeout)
+    if is_cmd is None:
+        return None, detail
+    for command in (WINDOWS_ATTEMPTS if is_cmd else POSIX_ATTEMPTS):
+        try:
+            proc = subprocess.run(ssh_argv + [command],
+                                  capture_output=True, text=True, timeout=timeout)
+        except (subprocess.TimeoutExpired, OSError):
+            detail = "timed out"
+            continue
+        if proc.returncode != 0:
+            detail = _answer_detail(proc)
+            continue
+        data = _parse_json(proc.stdout)
+        if isinstance(data, dict) and data.get("machine_id") == mine:
+            return None, None  # pulled ourselves: nothing to add
+        index = _coerce_index(data, f"ssh {target}", now, mine)
+        if index:
+            index["ssh"] = target  # the way back in, for a remote resume
+            return index, None
+        detail = "did not return an index"
+    return None, detail
+
+
+def pull_remote_indexes(targets, timeout=15, prog="cw sessions", remembered=()):
+    """Fresh indexes pulled over ssh, one per live target, in target order.
 
     Each target is any ssh destination -- an alias from ~/.ssh/config
     works as-is, jump hosts included. Failures are per-host, one stderr
@@ -376,43 +411,95 @@ def pull_remote_indexes(targets, timeout=15, prog="cw sessions"):
     alias that also carries a tunnel's RemoteForwards (with
     ExitOnForwardFailure, while the tunnel itself is up) otherwise dies
     on "remote port forwarding failed" before it runs anything -- seen
-    live 2026-10-28 -- and a one-shot command needs no forward anyway."""
+    live 2026-10-28 -- and a one-shot command needs no forward anyway.
+
+    Several targets are pulled at once: one host that is off would
+    otherwise hold every other one up for its whole connect timeout.
+    A target that answers is remembered (see KNOWN_TARGETS_FILE); one in
+    `remembered` that does not says how to forget it."""
     now = datetime.datetime.now().astimezone()
     mine = machine_id()
+    if len(targets) > 1:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=min(8, len(targets))) as pool:
+            results = list(pool.map(lambda t: _pull_one(t, timeout, now, mine), targets))
+    else:
+        results = [_pull_one(t, timeout, now, mine) for t in targets]
     found = []
-    for target in targets:
-        ssh_argv = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8",
-                    "-o", "ClearAllForwardings=yes", target]
-        is_cmd, detail = _probe_target(ssh_argv, timeout)
-        if is_cmd is None:
-            print(f"{prog}: {target}: {detail}", file=sys.stderr)
-            continue
-        index = None
-        self_index = False
-        for command in (WINDOWS_ATTEMPTS if is_cmd else POSIX_ATTEMPTS):
-            try:
-                proc = subprocess.run(ssh_argv + [command],
-                                      capture_output=True, text=True, timeout=timeout)
-            except (subprocess.TimeoutExpired, OSError):
-                detail = "timed out"
-                continue
-            if proc.returncode != 0:
-                detail = _answer_detail(proc)
-                continue
-            data = _parse_json(proc.stdout)
-            if isinstance(data, dict) and data.get("machine_id") == mine:
-                self_index = True  # pulled ourselves: nothing to add, no complaint
-                break
-            index = _coerce_index(data, f"ssh {target}", now, mine)
-            if index:
-                break
-            detail = "did not return an index"
+    for target, (index, detail) in zip(targets, results):
         if index:
-            index["ssh"] = target  # the way back in, for a remote resume
             found.append(index)
-        elif not self_index:
-            print(f"{prog}: {target}: {detail}", file=sys.stderr)
+        elif detail:
+            hint = (f" (remembered -- `cw machines --forget {target}` drops it)"
+                    if target in remembered else "")
+            print(f"{prog}: {target}: {detail}{hint}", file=sys.stderr)
+    if found:
+        remember_targets(found)
     return found
+
+
+def known_targets():
+    """Remembered ssh targets, newest success first -- one per machine,
+    since two aliases for one host would only pull it twice."""
+    data = read_json(KNOWN_TARGETS_FILE)
+    entries = [e for e in (data if isinstance(data, list) else [])
+               if isinstance(e, dict) and isinstance(e.get("target"), str) and e["target"]]
+    entries.sort(key=lambda e: e.get("ok") if isinstance(e.get("ok"), (int, float)) else 0,
+                 reverse=True)
+    seen, out = set(), []
+    for e in entries:
+        machine = e.get("machine") or e["target"]
+        if machine in seen:
+            continue
+        seen.add(machine)
+        out.append(e["target"])
+    return out
+
+
+def _write_known(entries):
+    try:
+        os.makedirs(os.path.dirname(KNOWN_TARGETS_FILE), exist_ok=True)
+        tmp = f"{KNOWN_TARGETS_FILE}.{os.getpid()}.tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(entries, fh, indent=1)
+        os.replace(tmp, KNOWN_TARGETS_FILE)
+    except OSError:
+        pass  # best-effort, like the listing cache
+
+
+def _known_entries():
+    data = read_json(KNOWN_TARGETS_FILE)
+    return [e for e in (data if isinstance(data, list) else [])
+            if isinstance(e, dict) and isinstance(e.get("target"), str)]
+
+
+def remember_targets(indexes):
+    """Record each pulled index's ssh target and the machine it reached."""
+    entries = {e["target"]: e for e in _known_entries()}
+    now = time.time()
+    for index in indexes:
+        if index.get("ssh"):
+            entries[index["ssh"]] = {"target": index["ssh"],
+                                     "machine": index.get("machine"), "ok": now}
+    _write_known(list(entries.values()))
+
+
+def forget_targets(targets):
+    """Drop remembered targets; returns the ones that were not there."""
+    entries = _known_entries()
+    known = {e["target"] for e in entries}
+    _write_known([e for e in entries if e["target"] not in targets])
+    return [t for t in targets if t not in known]
+
+
+def remembered_indexes(prog, skip_machines=()):
+    """Pull every remembered target whose machine is not already in hand
+    (from the sync directory, say)."""
+    entries = {e["target"]: e.get("machine") for e in _known_entries()}
+    targets = [t for t in known_targets() if entries.get(t) not in skip_machines]
+    if not targets:
+        return []
+    return pull_remote_indexes(targets, prog=prog, remembered=set(targets))
 
 
 # ---------- resuming a session where it lives ----------
@@ -510,6 +597,16 @@ def cmd_machines(args):
     typed it, and a person gets an overview instead of a wall of JSON:
     this machine, the sync directory, every other machine it knows of,
     and any ssh targets named on the command line, pulled on the spot."""
+    if args and args[0] == "--forget":
+        names = args[1:]
+        if not names:
+            print("cw machines: --forget takes the ssh targets to drop "
+                  f"(remembered: {', '.join(known_targets()) or 'none'})", file=sys.stderr)
+            return 2
+        missing = forget_targets(names)
+        for name in missing:
+            print(f"cw machines: {name} was not remembered", file=sys.stderr)
+        return 1 if missing else 0
     as_json = "--json" in args
     targets = [a for a in args if a != "--json"]
     bad = next((a for a in targets if a.startswith("-")), None)
@@ -541,6 +638,9 @@ def _overview(targets):
     remotes = read_remote_indexes()
     if targets:
         remotes = remotes + pull_remote_indexes(targets, prog="cw machines")
+    else:
+        remotes = remotes + remembered_indexes(
+            "cw machines", skip_machines={i["machine"] for i in remotes})
     now = datetime.datetime.now().astimezone()
     for index in remotes:
         ss = index["sessions"]
@@ -562,11 +662,14 @@ def _overview(targets):
     print(sync_line)
     if len(rows) == 1:
         print("no other machines yet -- `cw machines <ssh-destination>...` checks "
-              "some, `cw sessions --machines <ssh-destination>...` lists their sessions")
+              "some, and remembers the ones that answer")
     else:
         listing = " ".join(["cw sessions --machines", *targets])
         print(f"`{listing}` lists their sessions; "
               "`cw resume <N>` on one opens it there over ssh")
+        if targets:
+            print("these targets are remembered: plain `cw machines` and "
+                  "`cw sessions --machines` include them from now on")
     return 0
 
 

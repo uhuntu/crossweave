@@ -27,6 +27,7 @@ from crossweave import machines, sessions
 def _machines_env(monkeypatch, tmp_path):
     monkeypatch.setattr(machines, "MACHINES_DIR", str(tmp_path / "machines"))
     monkeypatch.setattr(machines, "MACHINE_ID_FILE", str(tmp_path / "cache" / "machine_id"))
+    monkeypatch.setattr(machines, "KNOWN_TARGETS_FILE", str(tmp_path / "cache" / "ssh_targets.json"))
 
 
 @pytest.fixture(autouse=True)
@@ -711,3 +712,94 @@ def test_machine_targets_stop_at_the_next_flag(monkeypatch):
     sessions.cmd_list(["--machines", "kestrel", "ghost", "--tool", "codex"])
 
     assert seen["targets"] == ["kestrel", "ghost"]
+
+
+# ---------- remembered ssh targets ----------
+
+def _fake_pull_one(monkeypatch, answers):
+    """answers: {target: machine name, or None for a host that is down}."""
+    pulled = []
+
+    def fake(target, timeout, now, mine):
+        pulled.append(target)
+        machine = answers.get(target)
+        if machine is None:
+            return None, "No route to host"
+        return ({"machine": machine, "machine_id": machine * 4, "cw_version": "0.4.0",
+                 "path": f"ssh {target}", "ssh": target, "generated_at": now,
+                 "sessions": [{"tool": "codex", "id": f"{machine}-1", "title": "t",
+                               "cwd": "/w", "ts": 80}]}, None)
+
+    monkeypatch.setattr(machines, "_pull_one", fake)
+    return pulled
+
+
+def test_a_target_that_answers_is_remembered(monkeypatch):
+    _fake_pull_one(monkeypatch, {"241-tunnel": "swc-build"})
+    machines.pull_remote_indexes(["241-tunnel", "ghost"])
+    assert machines.known_targets() == ["241-tunnel"]  # the dead one is not
+
+
+def test_pulls_come_back_in_target_order(monkeypatch):
+    _fake_pull_one(monkeypatch, {"a": "ma", "b": "mb", "c": "mc"})
+    found = machines.pull_remote_indexes(["c", "a", "b"])
+    assert [i["machine"] for i in found] == ["mc", "ma", "mb"]
+
+
+def test_two_aliases_for_one_machine_pull_it_once(monkeypatch):
+    _fake_pull_one(monkeypatch, {"241-tunnel": "swc-build", "10.11.108.241": "swc-build"})
+    machines.pull_remote_indexes(["241-tunnel"])
+    time.sleep(0.01)
+    machines.pull_remote_indexes(["10.11.108.241"])
+    assert machines.known_targets() == ["10.11.108.241"]  # the newest success
+
+
+def test_bare_machines_listing_pulls_the_remembered_targets(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(sessions, "LIST_CACHE_FILE", str(tmp_path / "last_list.json"))
+    _fake_scanners(monkeypatch, [])
+    pulled = _fake_pull_one(monkeypatch, {"149-tunnel": "swc-SMTX-OS"})
+    machines.pull_remote_indexes(["149-tunnel"])
+    pulled.clear()
+
+    sessions.cmd_list(["--machines"])
+
+    assert pulled == ["149-tunnel"]
+    assert sessions.read_list_cache()[-1]["ssh"] == "149-tunnel"
+
+
+def test_a_remembered_target_that_is_down_says_how_to_forget_it(monkeypatch, capsys):
+    answers = {"desk": "DESKTOP"}
+    _fake_pull_one(monkeypatch, answers)
+    machines.pull_remote_indexes(["desk"])
+    answers["desk"] = None  # switched off since
+    assert machines.remembered_indexes("cw machines") == []
+    assert "--forget desk" in capsys.readouterr().err
+    assert machines.known_targets() == ["desk"]  # down is not gone
+
+
+def test_forget_drops_a_target(monkeypatch, capsys):
+    _fake_pull_one(monkeypatch, {"a": "ma", "b": "mb"})
+    machines.pull_remote_indexes(["a", "b"])
+    assert machines.cmd_machines(["--forget", "a"]) == 0
+    assert machines.known_targets() == ["b"]
+    assert machines.cmd_machines(["--forget", "zzz"]) == 1
+    assert "not remembered" in capsys.readouterr().err
+    assert machines.cmd_machines(["--forget"]) == 2
+
+
+def test_the_overview_includes_remembered_machines(monkeypatch, capsys):
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True, raising=False)
+    _fake_scanners(monkeypatch, [])
+    _fake_pull_one(monkeypatch, {"241-tunnel": "swc-build"})
+    machines.pull_remote_indexes(["241-tunnel"])
+    assert machines.cmd_machines([]) == 0
+    out = capsys.readouterr().out
+    assert "swc-build" in out and "ssh 241-tunnel" in out
+
+
+def test_a_sync_dir_machine_is_not_pulled_again(monkeypatch):
+    pulled = _fake_pull_one(monkeypatch, {"241-tunnel": "swc-build"})
+    machines.pull_remote_indexes(["241-tunnel"])
+    pulled.clear()
+    assert machines.remembered_indexes("cw sessions", skip_machines={"swc-build"}) == []
+    assert pulled == []
