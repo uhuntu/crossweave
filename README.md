@@ -116,6 +116,8 @@ cw sessions --tool codex    # filter to one tool
 cw sessions --cwd           # only sessions started in the current directory
 cw sessions --all           # include archived sessions and ones a tool started for itself
 
+cw ui                       # pick a session interactively: type to filter, Enter resumes
+
 cw resume kimi 97946bc7     # resume by short id / prefix (resolved against real session ids)
 cw resume claude            # no id -> tool's own interactive picker
 cw resume 3                 # resume row 3 from the last `cw`/`cw sessions` listing
@@ -151,6 +153,12 @@ Sessions a tool started for itself are left out of `cw sessions` and `cw search`
 Every `cw`/`cw sessions` listing is numbered and cached, so `cw resume <N>` is usually the fastest way in: run `cw`, glance at the row you want, `cw resume 3`. The cache is just the last listing you saw — it's overwritten by the next `cw sessions` call and doesn't try to detect if the underlying sessions changed since.
 
 An id works wherever a row number does, and is the steadier of the two: `cw <id-prefix>` resolves the prefix against every store live, so it does not care what the last listing happened to be, and it survives sessions arriving or moving in the meantime. It is what `cw search` hands you — the ids in its output are the argument to the next command. One match resumes it (with anything after it meaning what it means after a row number: another tool hands the context off, words continue the session); several matches are listed rather than guessed at, because a bare prefix has no tool to narrow it — name one with `cw resume <tool> <prefix>`. A word with no digit, dash or underscore in it is not offered to the stores at all: `cw session` is a typo of `cw sessions` and gets that message, not a list of every kimi session on the box.
+
+### `cw ui`: the interactive picker
+
+`cw ui` puts the same sessions in one scrollable list in the terminal — every tool's, newest first, with the same rows left out that `cw sessions` leaves out. `/` starts a filter (every word has to appear in the title, directory, tool or id; Chinese works), Enter resumes the highlighted session through the same path as `cw resume`, Esc clears the filter and then quits. Tab steps through the tools, `.` keeps only the sessions of the directory you are standing in, and the pane at the bottom shows the selected session's full id, turn count, whether it has a note (`✎`), and where it left off.
+
+It uses Python's own `curses`, so it adds nothing to install. Stock Python on Windows has no `curses`: there `pip install windows-curses` adds it, or `cw sessions` is the same information as a table.
 
 ### What the listing shows
 

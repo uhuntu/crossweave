@@ -9,7 +9,7 @@ import os
 import re
 import sys
 
-from . import __version__, alias, delete, doctor, machines, note, rename, search, sessions, update
+from . import __version__, alias, delete, doctor, machines, note, rename, search, sessions, ui, update
 
 TOOLS = ("claude", "codex", "kimi", "step", "zcode", "codebuddy", "workbuddy")
 
@@ -42,6 +42,7 @@ USAGE = f"""Usage: cw <{'|'.join(TOOLS)}> [common-options] [prompt] [-- extra na
        cw <N> note              # summarize a session into an Obsidian vault (CW_VAULT)
        cw note --all [--since 7d] [-y]   # every session with no note, or a stale one
        cw context [DIR] [--limit N]   # print that project's newest notes, for a new session
+       cw ui                  # pick a session interactively: type to filter, Enter resumes
 
 Common options (translated per-tool, all optional):
   -p, --print              Non-interactive: print response and exit
@@ -121,7 +122,7 @@ Examples:
 # this list, and the test asserts it matches what main() actually dispatches,
 # so adding a subcommand cannot leave the message stale the way it was when
 # `stats` and `step` were both missing from it.
-SUBCOMMANDS = ("sessions", "full", "search", "resume", "update", "stats", "doctor", "alias", "machines", "rename", "delete", "note", "context")
+SUBCOMMANDS = ("sessions", "full", "search", "resume", "update", "stats", "doctor", "alias", "machines", "rename", "delete", "note", "context", "ui")
 
 
 def usage(name="cw"):
@@ -395,6 +396,8 @@ def main():
         sys.exit(note.cmd_note(rest))
     if tool == "context":
         sys.exit(note.cmd_context(rest))
+    if tool == "ui":
+        sys.exit(ui.cmd_ui(rest))
 
     # A session id, not a tool. `cw search` prints ids, and the command after
     # finding a session is pointing cw straight at it -- which used to fall
