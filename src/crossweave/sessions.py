@@ -778,7 +778,8 @@ def cmd_list(args):
     # when they refuse.
     write_list_cache(
         [{"tool": t, "id": i} for t, i, *_ in rows]
-        + [{"tool": s["tool"], "id": s["id"], "machine": s["machine"]}
+        + [{"tool": s["tool"], "id": s["id"], "machine": s["machine"],
+            **({"ssh": s["ssh"]} if s.get("ssh") else {})}
            for s in remotes])
     if rows:
         render_rows(rows, sources=sources, write_cache=False)
@@ -1378,12 +1379,9 @@ def resume_by_number(n, extra, forced_cwd=None):
     entry = cache[n - 1]
     if entry.get("machine"):
         # A row from another machine's index: its transcript never left
-        # that machine, so there is nothing here to resume. Name the
-        # machine and the way forward, cleanly.
-        print(f"cw resume: row {n} lives on {entry['machine']} -- resume it "
-              "there, or mirror that machine's session store to resume it "
-              "here", file=sys.stderr)
-        sys.exit(1)
+        # that machine, so it is resumed there, over ssh, in this terminal.
+        machines.resume_remote(entry, extra, forced_cwd)
+        return
     if extra and extra[0] in TOOLS:
         target_tool = extra[0]
         if target_tool != entry["tool"]:

@@ -100,6 +100,8 @@ Examples:
   cw sessions --machines 241 149   # or pull fresh over ssh -- targets are
                             #   ssh destinations (config aliases work); the
                             #   remote needs this version's cw first
+  cw resume 7               # a row on another machine: ssh's there and
+                            #   resumes it in this terminal
   cw resume kimi 97946bc7
   cw resume 3         # resume row 3 from the last `cw`/`cw sessions` listing
   cw resume 2 --cwd /path/to/other-project   # can't relocate row 2 in place -- hands off to a fresh session there

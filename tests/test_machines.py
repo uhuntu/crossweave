@@ -15,6 +15,7 @@ import json
 import os
 import socket
 import subprocess
+import sys
 
 import pytest
 
@@ -346,15 +347,117 @@ def test_the_machines_flag_merges_and_the_cache_covers_the_union(monkeypatch, tm
     ]
 
 
-def test_a_remote_row_resumes_as_a_clean_refusal(monkeypatch, tmp_path, capsys):
+def _remote_cache(tmp_path, monkeypatch, **extra):
     monkeypatch.setattr(sessions, "LIST_CACHE_FILE", str(tmp_path / "last_list.json"))
     with open(sessions.LIST_CACHE_FILE, "w", encoding="utf-8") as fh:
-        json.dump([{"tool": "codex", "id": "r1", "machine": "kestrel"}], fh)
+        json.dump([dict({"tool": "codex", "id": "r1", "machine": "kestrel"}, **extra)], fh)
 
-    with pytest.raises(SystemExit):
+
+def _remote_ssh(monkeypatch, probe_stdout="pre%OS%post", rc=0):
+    """Fake the probe (subprocess.run) and the interactive ssh
+    (subprocess.call); returns the interactive argv list."""
+    monkeypatch.setattr(machines.subprocess, "run",
+                        lambda argv, **kw: _Proc(0, stdout=probe_stdout))
+    calls = []
+
+    def fake_call(argv):
+        calls.append(argv)
+        return rc
+
+    monkeypatch.setattr(machines.subprocess, "call", fake_call)
+    return calls
+
+
+def test_a_remote_row_resumes_there_over_ssh(monkeypatch, tmp_path, capsys):
+    _remote_cache(tmp_path, monkeypatch)
+    calls = _remote_ssh(monkeypatch)
+
+    with pytest.raises(SystemExit) as exc:
         sessions.resume_by_number(1, [])
 
+    assert exc.value.code == 0
+    argv = calls[0]
+    # interactive: a tty, no BatchMode (the real login may ask), and the
+    # machine's own name as the destination for a sync-dir row
+    assert argv[:6] == ["ssh", "-o", "ConnectTimeout=8", "-o", "ExitOnForwardFailure=no", "-t"]
+    assert "BatchMode=yes" not in argv
+    assert argv[6] == "kestrel"
+    assert argv[7].startswith("sh -c ") and "resume codex r1" in argv[7]
+    assert "opening it there" in capsys.readouterr().err
+
+
+def test_a_pulled_row_goes_back_through_the_target_it_came_from(monkeypatch, tmp_path):
+    _remote_cache(tmp_path, monkeypatch, ssh="241-tunnel")
+    calls = _remote_ssh(monkeypatch)
+    with pytest.raises(SystemExit):
+        sessions.resume_by_number(1, [])
+    assert calls[0][6] == "241-tunnel"
+
+
+def test_words_after_the_row_ride_along(monkeypatch, tmp_path):
+    _remote_cache(tmp_path, monkeypatch)
+    calls = _remote_ssh(monkeypatch)
+    with pytest.raises(SystemExit):
+        sessions.resume_by_number(1, ["keep going; don't stop"])
+    assert "keep going" in calls[0][7]
+
+
+def test_a_windows_host_gets_the_cmd_launcher(monkeypatch, tmp_path):
+    _remote_cache(tmp_path, monkeypatch)
+    calls = _remote_ssh(monkeypatch, probe_stdout="preWindows_NTpost")
+    with pytest.raises(SystemExit):
+        sessions.resume_by_number(1, [])
+    assert calls[0][7] == '"%USERPROFILE%\\.local\\bin\\cw.cmd" resume codex r1'
+
+
+def test_cmd_refuses_words_it_cannot_quote(monkeypatch, tmp_path, capsys):
+    _remote_cache(tmp_path, monkeypatch)
+    calls = _remote_ssh(monkeypatch, probe_stdout="preWindows_NTpost")
+    with pytest.raises(SystemExit) as exc:
+        sessions.resume_by_number(1, ["a & b"])
+    assert exc.value.code == 1 and calls == []
+    assert "cmd.exe" in capsys.readouterr().err
+
+
+def test_a_local_cwd_does_not_travel(monkeypatch, tmp_path, capsys):
+    _remote_cache(tmp_path, monkeypatch)
+    calls = _remote_ssh(monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        sessions.resume_by_number(1, [], forced_cwd=str(tmp_path))
+    assert exc.value.code == 1 and calls == []
     assert "lives on kestrel" in capsys.readouterr().err
+
+
+def test_an_unreachable_machine_name_earns_the_ssh_config_hint(monkeypatch, tmp_path, capsys):
+    _remote_cache(tmp_path, monkeypatch)
+    _remote_ssh(monkeypatch, rc=255)
+    with pytest.raises(SystemExit) as exc:
+        sessions.resume_by_number(1, [])
+    assert exc.value.code == 255
+    assert "Host kestrel" in capsys.readouterr().err
+
+
+def test_the_session_exit_code_is_not_mistaken_for_ssh_failing(monkeypatch, tmp_path, capsys):
+    _remote_ssh(monkeypatch, rc=3)
+    _remote_cache(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        sessions.resume_by_number(1, [])
+    assert exc.value.code == 3
+    assert "Host" not in capsys.readouterr().err
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="runs the POSIX command in sh")
+def test_the_posix_command_finds_cw_off_path_and_keeps_words_whole(tmp_path):
+    home = tmp_path / "home"
+    (home / ".local" / "bin").mkdir(parents=True)
+    out = tmp_path / "args.txt"
+    fake = home / ".local" / "bin" / "cw"
+    fake.write_text(f'#!/bin/sh\nprintf "%s\\n" "$@" > {out}\n')
+    fake.chmod(0o755)
+    command = machines.remote_resume_command("codex", "r1", ["it's a $test"], False)
+    env = {"HOME": str(home), "PATH": "/usr/bin:/bin", "SHELL": "/bin/sh"}
+    subprocess.run(["sh", "-c", command], env=env, check=True, timeout=20)
+    assert out.read_text().splitlines() == ["resume", "codex", "r1", "it's a $test"]
 
 
 def test_a_remote_row_handsoff_as_a_clean_refusal(monkeypatch, tmp_path, capsys):
@@ -415,12 +518,13 @@ def test_pull_probes_the_shell_then_uses_the_first_attempt_that_answers(monkeypa
 
     assert [s["title"] for s in found[0]["sessions"]] == ["pulled row"]
     assert len(calls) == 2
-    assert calls[0][6] == machines._WIN_PROBE
+    assert calls[0][8] == machines._WIN_PROBE
     # the ssh shape: BatchMode (never hang at a prompt), connect timeout,
     # the target verbatim -- a config alias works as-is
-    assert calls[0][:5] == ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8"]
-    assert calls[0][5] == "kestrel"
-    assert calls[1][6] == "cw machines"
+    assert calls[0][:7] == ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8",
+                            "-o", "ClearAllForwardings=yes"]
+    assert calls[0][7] == "kestrel"
+    assert calls[1][8] == "cw machines"
     assert capsys.readouterr().err == ""
 
 
@@ -432,8 +536,8 @@ def test_a_windows_host_gets_the_cmd_form(monkeypatch, capsys):
 
     found = machines.pull_remote_indexes(["desktop"])
 
-    assert found and "cw.cmd" in calls[1][6]
-    assert "%USERPROFILE%" in calls[1][6]  # only cmd.exe expands it
+    assert found and "cw.cmd" in calls[1][8]
+    assert "%USERPROFILE%" in calls[1][8]  # only cmd.exe expands it
     assert capsys.readouterr().err == ""
 
 
@@ -447,7 +551,7 @@ def test_pull_falls_through_a_host_that_lacks_the_command(monkeypatch, capsys):
     found = machines.pull_remote_indexes(["kestrel"])
 
     assert len(calls) == 3 and found  # the login-shell attempt answered
-    assert "sh -lc" in calls[2][6]
+    assert "sh -lc" in calls[2][8]
 
 
 def test_an_old_remote_cw_earns_an_actionable_hint(monkeypatch, capsys):
@@ -525,6 +629,17 @@ def test_the_listing_pulls_named_ssh_targets(monkeypatch, tmp_path, capsys):
     out = capsys.readouterr().out
     assert "pulled row" in out and "kestrel" in out
     assert sessions.read_list_cache()[-1] == {"tool": "codex", "id": "r1", "machine": "kestrel"}
+
+
+def test_a_pulled_row_remembers_its_ssh_target_in_the_cache(monkeypatch, tmp_path):
+    monkeypatch.setattr(sessions, "LIST_CACHE_FILE", str(tmp_path / "last_list.json"))
+    _fake_scanners(monkeypatch, [])
+    index = {"machine": "kestrel", "machine_id": "f" * 32, "path": "ssh 241-tunnel",
+             "ssh": "241-tunnel", "generated_at": datetime.datetime.now().astimezone(),
+             "sessions": [{"tool": "codex", "id": "r1", "title": "t", "cwd": "/w", "ts": 80}]}
+    monkeypatch.setattr(machines, "pull_remote_indexes", lambda targets, **kw: [index])
+    sessions.cmd_list(["--machines", "241-tunnel"])
+    assert sessions.read_list_cache()[-1]["ssh"] == "241-tunnel"
 
 
 def test_the_remote_section_gets_the_same_slice_as_the_local_one(monkeypatch, tmp_path, capsys):

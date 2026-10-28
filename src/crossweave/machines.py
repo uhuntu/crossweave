@@ -26,6 +26,7 @@ import datetime
 import json
 import os
 import re
+import shlex
 import socket
 import subprocess
 import sys
@@ -300,6 +301,8 @@ def remote_sessions(indexes, local_keys):
             if key in local_keys:
                 continue
             candidate = dict(s, machine=machine)
+            if index.get("ssh"):
+                candidate["ssh"] = index["ssh"]
             old = by_key.get(key)
             if old is None or (-candidate["ts"], candidate["machine"]) < (-old["ts"], old["machine"]):
                 by_key[key] = candidate
@@ -366,12 +369,17 @@ def pull_remote_indexes(targets, timeout=15):
     running a cw older than this feature must not take the merged listing
     down. BatchMode keeps a password-only host from hanging the listing
     at a prompt -- key auth, or a mux master already holding it, is the
-    price of a non-interactive pull."""
+    price of a non-interactive pull. ClearAllForwardings because a host
+    alias that also carries a tunnel's RemoteForwards (with
+    ExitOnForwardFailure, while the tunnel itself is up) otherwise dies
+    on "remote port forwarding failed" before it runs anything -- seen
+    live 2026-10-28 -- and a one-shot command needs no forward anyway."""
     now = datetime.datetime.now().astimezone()
     mine = machine_id()
     found = []
     for target in targets:
-        ssh_argv = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", target]
+        ssh_argv = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8",
+                    "-o", "ClearAllForwardings=yes", target]
         is_cmd, detail = _probe_target(ssh_argv, timeout)
         if is_cmd is None:
             print(f"cw sessions: {target}: {detail}", file=sys.stderr)
@@ -397,10 +405,96 @@ def pull_remote_indexes(targets, timeout=15):
                 break
             detail = "did not return an index"
         if index:
+            index["ssh"] = target  # the way back in, for a remote resume
             found.append(index)
         elif not self_index:
             print(f"cw sessions: {target}: {detail}", file=sys.stderr)
     return found
+
+
+# ---------- resuming a session where it lives ----------
+
+# What a word must look like to ride a cmd.exe command line unquoted: ids
+# are hex, dashes and a sess_/session_ prefix, tool names are lowercase.
+# cmd has no quoting a POSIX shlex.quote could stand in for, so anything
+# else is refused there rather than escaped wrongly.
+_CMD_SAFE_RE = re.compile(r"[A-Za-z0-9_.:@+=,/-]+\Z")
+
+
+def remote_resume_command(tool, sid, extra, is_cmd):
+    """The command line the remote shell runs to resume one session, or
+    None when it cannot be said safely in that shell.
+
+    POSIX: the user's own shell, interactive and login (`$SHELL -ilc`),
+    so the remote has the PATH and environment of a normal ssh login --
+    the tool cw resumes needs them as much as cw does. `sh -lc` read
+    ~/.profile with dash instead, which trips on the bash-isms profiles
+    tend to hold. The outer `sh -c` is there because the remote's login
+    shell parses the line first, and fish has no ${VAR:-default}.
+    Inside: whichever cw is found -- on PATH, else the installer's
+    ~/.local/bin/cw -- decided in one line, since an interactive ssh
+    cannot try a cascade the way the index pull does. exec throughout,
+    so the remote tool owns the terminal and its exit is the session's."""
+    words = ["resume", tool, sid, *extra]
+    if is_cmd:
+        if not all(_CMD_SAFE_RE.match(w) for w in words):
+            return None
+        return '"%USERPROFILE%\\.local\\bin\\cw.cmd" ' + " ".join(words)
+    args = " ".join(shlex.quote(w) for w in words)
+    script = (f"if command -v cw >/dev/null 2>&1; then exec cw {args}; "
+              f'else exec "$HOME/.local/bin/cw" {args}; fi')
+    return ("sh -c " + shlex.quote('exec "${SHELL:-/bin/sh}" -ilc "$0"')
+            + " " + shlex.quote(script))
+
+
+def resume_remote(entry, extra, forced_cwd=None):
+    """Resume a row that lives on another machine, over ssh, in this
+    terminal. Exits with ssh's code.
+
+    The ssh destination is the one the index was pulled through, or --
+    for a row from the sync directory -- the machine's own name, which
+    an ssh config `Host` entry makes reachable as-is. The shell is probed
+    first (BatchMode, so a password host just skips the probe and is
+    taken for POSIX); the real connection is interactive and may ask.
+
+    A forward that cannot bind is a warning, not the end of the
+    connection (ExitOnForwardFailure=no): the usual reason is that a
+    long-lived tunnel to the same alias already holds it -- and so the
+    remote already has what the forward was for, a proxy port say."""
+    machine = entry["machine"]
+    target = entry.get("ssh") or machine
+    tool, sid = entry["tool"], entry["id"]
+    if forced_cwd:
+        print(f"cw resume: --cwd names a directory here, and this session lives "
+              f"on {machine} -- drop --cwd to resume it there", file=sys.stderr)
+        sys.exit(1)
+    ssh_base = ["ssh", "-o", "ConnectTimeout=8", "-o", "ExitOnForwardFailure=no"]
+    is_cmd, _detail = _probe_target(
+        ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8",
+         "-o", "ClearAllForwardings=yes", target], 15)
+    command = remote_resume_command(tool, sid, extra, bool(is_cmd))
+    if command is None:
+        print(f"cw resume: {machine} runs cmd.exe, which cannot take these "
+              "arguments safely -- resume it there, or without extra words",
+              file=sys.stderr)
+        sys.exit(1)
+    print(f"cw resume: {tool} session on {machine} -- opening it there (ssh {target})",
+          file=sys.stderr, flush=True)
+    try:
+        rc = subprocess.call(ssh_base + ["-t", target, command])
+    except FileNotFoundError:
+        print("cw resume: 'ssh' not found on PATH", file=sys.stderr)
+        sys.exit(127)
+    except KeyboardInterrupt:
+        rc = 130
+    if rc == 255 and not entry.get("ssh"):
+        # ssh itself failed (not the session): most often the machine's
+        # name is not something ssh can reach
+        print(f"cw resume: could not reach {machine} over ssh -- add a "
+              f"`Host {machine}` entry to ~/.ssh/config, or list it with "
+              f"`cw sessions --machines <ssh-destination>` and resume from there",
+              file=sys.stderr)
+    sys.exit(rc)
 
 
 def cmd_machines(args):
