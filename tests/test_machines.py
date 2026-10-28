@@ -803,3 +803,62 @@ def test_a_sync_dir_machine_is_not_pulled_again(monkeypatch):
     pulled.clear()
     assert machines.remembered_indexes("cw sessions", skip_machines={"swc-build"}) == []
     assert pulled == []
+
+
+# ---------- cw machines update ----------
+
+def test_update_runs_here_and_on_every_known_machine(monkeypatch, capsys):
+    _fake_pull_one(monkeypatch, {"241-tunnel": "swc-build", "149-tunnel": "swc-SMTX-OS"})
+    machines.pull_remote_indexes(["241-tunnel", "149-tunnel"])
+    ran = []
+    monkeypatch.setattr(machines, "_run_local", lambda words: (ran.append(("here", words)) or (0, "Already up to date.")))
+    monkeypatch.setattr(machines, "_run_remote",
+                        lambda target, words: (ran.append((target, words)) or
+                                               ((0, "updated") if target == "241-tunnel"
+                                                else (255, "unreachable: No route to host"))))
+
+    assert machines.cmd_machines(["update", "all"]) == 1
+
+    assert sorted(ran) == sorted([("here", ["update", "all"]),
+                                  ("241-tunnel", ["update", "all"]),
+                                  ("149-tunnel", ["update", "all"])])
+    out = capsys.readouterr().out
+    assert "on 3 machines" in out
+    assert "── swc-build (ssh 241-tunnel): ok\n   updated" in out
+    assert "swc-SMTX-OS (ssh 149-tunnel): failed (exit 255)" in out
+    assert "2 of 3 updated; failed: swc-SMTX-OS (ssh 149-tunnel)" in out
+
+
+def test_update_takes_what_cw_update_takes(capsys):
+    assert machines.cmd_machines(["update", "everything"]) == 2
+    assert "expected 'tools' or 'all'" in capsys.readouterr().err
+
+
+def test_update_with_no_other_machines_still_updates_this_one(monkeypatch, capsys):
+    monkeypatch.setattr(machines, "_run_local", lambda words: (0, "ok"))
+    assert machines.cmd_machines(["update"]) == 0
+    out = capsys.readouterr().out
+    assert "on 1 machine:" in out and "no other machines known yet" in out
+
+
+def test_update_reaches_sync_dir_machines_by_name(monkeypatch):
+    os.makedirs(machines.MACHINES_DIR)
+    write_foreign("kestrel.json", foreign_index(machine="kestrel"))
+    assert machines.update_targets() == [("kestrel", "kestrel")]
+
+
+def test_the_remote_update_output_drops_bash_no_tty_noise(monkeypatch):
+    monkeypatch.setattr(machines.subprocess, "run", lambda argv, **kw: _Proc(
+        0, stdout="Already up to date.\n",
+        stderr="bash: cannot set terminal process group (-1): Inappropriate ioctl\n"
+               "bash: no job control in this shell\n"))
+    assert machines._capture(["x"]) == (0, "Already up to date.")
+
+
+def test_named_targets_that_all_fail_do_not_claim_there_are_no_machines(monkeypatch, capsys):
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True, raising=False)
+    _fake_scanners(monkeypatch, [])
+    _fake_pull_one(monkeypatch, {})
+    assert machines.cmd_machines(["nohost"]) == 0
+    out = capsys.readouterr().out
+    assert "none of nohost answered" in out and "no other machines yet" not in out

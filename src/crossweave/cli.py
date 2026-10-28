@@ -37,6 +37,7 @@ USAGE = f"""Usage: cw <{'|'.join(TOOLS)}> [common-options] [prompt] [-- extra na
        cw alias add <name>... | list | remove <name>...
        cw machines [ssh-destination...]   # overview of this and other machines (--json: the index)
        cw machines --forget <ssh-destination>...   # stop pulling a remembered target
+       cw machines update [tools|all]   # cw update here and on every known machine, at once
        cw rename <N> <title> [--judge T]
        cw rename --auto [<N>... | --trivial] [-y] [--judge T]
        cw rename --trivial              # the sweep -- --auto implied

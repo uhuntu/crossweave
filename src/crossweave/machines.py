@@ -512,6 +512,11 @@ _CMD_SAFE_RE = re.compile(r"[A-Za-z0-9_.:@+=,/-]+\Z")
 
 
 def remote_resume_command(tool, sid, extra, is_cmd):
+    """The remote command line for `cw resume <tool> <sid> <extra...>`."""
+    return remote_cw_command(["resume", tool, sid, *extra], is_cmd)
+
+
+def remote_cw_command(words, is_cmd):
     """The command line the remote shell runs to resume one session, or
     None when it cannot be said safely in that shell.
 
@@ -525,7 +530,6 @@ def remote_resume_command(tool, sid, extra, is_cmd):
     ~/.local/bin/cw -- decided in one line, since an interactive ssh
     cannot try a cascade the way the index pull does. exec throughout,
     so the remote tool owns the terminal and its exit is the session's."""
-    words = ["resume", tool, sid, *extra]
     if is_cmd:
         if not all(_CMD_SAFE_RE.match(w) for w in words):
             return None
@@ -587,6 +591,102 @@ def resume_remote(entry, extra, forced_cwd=None):
     sys.exit(rc)
 
 
+# ---------- running cw on every machine: `cw machines update` ----------
+
+# What bash -i says when there is no terminal to control -- true, and
+# nothing anyone needs to read under every machine's update output.
+_NO_TTY_NOISE = ("cannot set terminal process group", "no job control in this shell")
+
+
+def _capture(argv):
+    """(exit code, combined output without the no-tty noise)."""
+    try:
+        proc = subprocess.run(argv, capture_output=True, text=True,
+                              stdin=subprocess.DEVNULL)
+    except OSError as e:
+        return 127, str(e)
+    out = (proc.stdout or "") + (proc.stderr or "")
+    lines = [line for line in out.splitlines()
+             if not any(noise in line for noise in _NO_TTY_NOISE)]
+    return proc.returncode, "\n".join(lines).strip()
+
+
+def _run_local(words):
+    """This machine's own `cw <words>`, in a child process so its output
+    can be held and printed as one block like every other machine's."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    code = ("import sys; sys.path.insert(0, sys.argv[1]); "
+            "from crossweave.cli import main; sys.argv = ['cw', *sys.argv[2:]]; main()")
+    return _capture([sys.executable, "-c", code, root, *words])
+
+
+def _run_remote(target, words):
+    """`cw <words>` on one ssh target, non-interactively; the shell is
+    probed first so a Windows host gets cw.cmd."""
+    ssh = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8",
+           "-o", "ClearAllForwardings=yes", target]
+    is_cmd, detail = _probe_target(ssh, 15)
+    if is_cmd is None:
+        return 255, f"unreachable: {detail}"
+    command = remote_cw_command(words, bool(is_cmd))
+    if command is None:
+        return 1, "cmd.exe cannot take these arguments safely"
+    return _capture(ssh + [command])
+
+
+def update_targets():
+    """[(machine, ssh target)] that `cw machines update` reaches: every
+    remembered target, then every sync-dir machine not already among
+    them (by its own name, as a resume would)."""
+    names = {e["target"]: e.get("machine") for e in _known_entries()}
+    out = [(names.get(t) or t, t) for t in known_targets()]
+    covered = {m for m, _t in out}
+    for index in read_remote_indexes():
+        if index["machine"] not in covered:
+            out.append((index["machine"], index["machine"]))
+            covered.add(index["machine"])
+    return out
+
+
+def cmd_machines_update(args):
+    """`cw update [tools|all]` on this machine and every other one cw
+    knows, all at once; each machine's output is printed as one block when
+    it finishes, then one line per machine says how it went."""
+    if args not in ([], ["tools"], ["all"]):
+        print(f"cw machines update: unexpected argument '{args[0]}' "
+              "(expected 'tools' or 'all', as for `cw update`)", file=sys.stderr)
+        return 2
+    words = ["update", *args]
+    jobs = [(f"{machine_name()} (this machine)", None)]
+    jobs += [(f"{machine} (ssh {target})", target) for machine, target in update_targets()]
+    print(f"cw machines: running `cw {' '.join(words)}` on {len(jobs)} machine"
+          f"{'s' if len(jobs) != 1 else ''}: " + ", ".join(label for label, _t in jobs),
+          flush=True)
+    if len(jobs) == 1:
+        print("  (no other machines known yet -- `cw machines <ssh-destination>...` "
+              "adds them)", flush=True)
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    results = {}
+    with ThreadPoolExecutor(max_workers=min(8, len(jobs))) as pool:
+        def run(target):
+            return _run_local(words) if target is None else _run_remote(target, words)
+
+        futures = {pool.submit(run, target): label for label, target in jobs}
+        for future in as_completed(futures):
+            label = futures[future]
+            rc, output = future.result()
+            results[label] = rc
+            print(f"\n── {label}: {'ok' if rc == 0 else f'failed (exit {rc})'}", flush=True)
+            for line in output.splitlines():
+                print(f"   {line}")
+            sys.stdout.flush()
+    failed = [label for label, _t in jobs if results.get(label)]
+    print(f"\ncw machines: {len(jobs) - len(failed)} of {len(jobs)} updated"
+          + (f"; failed: {', '.join(failed)}" if failed else ""))
+    return 1 if failed else 0
+
+
 def cmd_machines(args):
     """Two audiences, one command.
 
@@ -597,6 +697,8 @@ def cmd_machines(args):
     typed it, and a person gets an overview instead of a wall of JSON:
     this machine, the sync directory, every other machine it knows of,
     and any ssh targets named on the command line, pulled on the spot."""
+    if args and args[0] == "update":
+        return cmd_machines_update(args[1:])
     if args and args[0] == "--forget":
         names = args[1:]
         if not names:
@@ -660,7 +762,10 @@ def _overview(targets):
             line += f"  (index {fresh}, {via})"
         print(line)
     print(sync_line)
-    if len(rows) == 1:
+    if len(rows) == 1 and targets:
+        print(f"none of {', '.join(targets)} answered -- remembered machines are "
+              "left out when targets are named; plain `cw machines` shows them")
+    elif len(rows) == 1:
         print("no other machines yet -- `cw machines <ssh-destination>...` checks "
               "some, and remembers the ones that answer")
     else:
