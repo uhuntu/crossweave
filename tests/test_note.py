@@ -219,17 +219,14 @@ def test_the_listing_marks_noted_sessions(world, monkeypatch, capsys):
     assert note.cmd_note(["1"]) == 0
 
     out = _listing(monkeypatch, world.records, capsys)
-    assert "✎  USB 枚举握手排查" in out
-    assert "✎  never noted" not in out and "never noted" in out
-    # marked or not, every title starts in the same column
+    assert "USB 枚举握手排查 ✎" in out
+    assert "never noted ✎" not in out and "never noted" in out
+    # the mark trails the title, so every title still starts in one column
     lines = [l for l in out.splitlines() if "USB" in l or "never noted" in l]
-    starts = {sessions._display_width(l[:l.index("USB")]) if "USB" in l
-              else sessions._display_width(l[:l.index("never")]) for l in lines}
-    marks = {l.index("✎") for l in lines if "✎" in l}
-    assert len(lines) == 2 and len(starts) == 1, out
     header = next(l for l in out.splitlines() if "TITLE" in l)
-    assert sessions._display_width(header[:header.index("TITLE")]) in starts  # the header too
-    assert marks and min(marks) < min(l.index("never") for l in lines if "never" in l)
+    starts = {sessions._display_width(l[:l.index("USB" if "USB" in l else "never")])
+              for l in lines}
+    assert starts == {sessions._display_width(header[:header.index("TITLE")])}, out
 
 
 def test_a_session_that_moved_on_since_its_note_is_marked_stale(world, monkeypatch, capsys):
@@ -237,7 +234,7 @@ def test_a_session_that_moved_on_since_its_note_is_marked_stale(world, monkeypat
     world.records[0]["ts"] = time.time() + 3600  # new turns after the note
 
     out = _listing(monkeypatch, world.records, capsys)
-    assert "✎+ USB 枚举握手排查" in out  # the + takes the slot's blank
+    assert "USB 枚举握手排查 ✎+" in out
 
 
 def test_no_vault_no_marks(world, monkeypatch, capsys):

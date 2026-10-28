@@ -44,7 +44,7 @@ MARKER_CHOICES = ("▸", "»", ">")
 ELLIPSIS_CHOICES = ("…", "..")
 # What the "where it left off" line hangs from its row with.
 LAST_PREFIX_CHOICES = ("└", "`")
-# Before the title of a session `cw note` has written up; with a "+" when
+# After the title of a session `cw note` has written up; with a "+" when
 # the session has moved on since. ASCII stand-in for legacy code pages.
 NOTED_CHOICES = ("✎", "[n]")
 # A last message is a preview, not a transcript: one line, same budget as a
@@ -201,11 +201,6 @@ def render_rows(rows, write_cache=True, start=1, notes=None, full_notes=False,
         from . import note
         noted = note.noted_index()
     noted_mark = _encodable(NOTED_CHOICES)
-    # Every title starts in the same column: once any row on screen carries
-    # the mark, the rest get its width in blanks. Without that a marked
-    # title sat two columns right of its unmarked neighbours.
-    noted_slot = (_display_width(noted_mark) + 1
-                  if any(r[1] in noted for r in rows) else 0)
     if show_turns:
         # Fit the plumbing before the title: the cwd is the most compressible
         # (a path's tail still names the project), and if even a floor-width
@@ -241,8 +236,7 @@ def render_rows(rows, write_cache=True, start=1, notes=None, full_notes=False,
               f"{'ID':<{w_id}}  {'CWD':<{w_cwd}}  ")
     if show_turns:
         header += f"{'TURNS':>{TURNS_WIDTH}}  "
-    # over the title text, not over the ✎ slot in front of it
-    header += " " * (noted_slot + 1 if noted_slot else 0) + "TITLE"
+    header += "TITLE"
     if inline_why:
         # Left-align the label where the title column ends -- the same
         # w spaces `{'':<{w}}` would produce, without a nested field.
@@ -271,13 +265,13 @@ def render_rows(rows, write_cache=True, start=1, notes=None, full_notes=False,
             turns = sessions.session_turns(sources[full_id]) if full_id in sources else None
             shown = "?" if turns is None else str(turns)
             line += color.paint(f"{shown:>{TURNS_WIDTH}}", color.DIM) + "  "
+        # After the title, not before: in front it needed a blank slot on
+        # every unmarked row to keep the titles in one column, and that
+        # slot read as a gap with nothing in it.
         if full_id in noted:
             stale = note.is_stale(sources.get(full_id), noted[full_id])
-            mark = noted_mark + ("+" if stale else "")
-            title = (color.paint(mark, color.YELLOW if stale else color.DIM)
-                     + " " * (noted_slot - _display_width(mark) + 1) + title)
-        elif noted_slot:
-            title = " " * (noted_slot + 1) + title
+            title += " " + color.paint(noted_mark + ("+" if stale else ""),
+                                       color.YELLOW if stale else color.DIM)
         if inline_why:
             line += f"{_clip(title, w_title):<{w_title}}  {_clip(notes.get((tool, full_id), ''), w_why)}"
         else:
