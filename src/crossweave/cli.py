@@ -5,6 +5,7 @@ straight through; zcode has no terminal interface, so `cw zcode` only opens
 the app, and workbuddy has no interface at all -- its sessions are listed,
 searched and resumed, with nothing to wrap.
 """
+import json
 import os
 import re
 import sys
@@ -52,6 +53,7 @@ Common options (translated per-tool, all optional):
   --add-dir <dir>          Additional workspace directory (repeatable)
   -y, --yolo               Auto-approve tool calls (per-tool semantics differ,
                             see notes below)
+  --no-context             Don't attach this project's vault notes (see below)
 
 Anything after a literal `--`, or any flag this wrapper doesn't recognize,
 is passed through unchanged to the underlying CLI.
@@ -61,6 +63,12 @@ directory and shows each session's turn count. Color is used only when the
 output is a terminal: NO_COLOR, TERM=dumb and CROSSWEAVE_COLOR=never disable
 it, CROSSWEAVE_COLOR=always forces it. A bare `cw` lists 15 rows; set
 CW_LIMIT (a number or `all`) to change that.
+
+With CW_VAULT set, a fresh interactive `cw claude|codex|step|codebuddy`
+starts with this project's newest notes (what `cw context` prints) appended
+to the tool's system prompt -- background, no message sent. Not with -p or
+-c, nor before a subcommand; --no-context skips it once, CW_CONTEXT=off
+for good. kimi has no way to take it.
 
 Per-tool --yolo mapping:
   claude    -> --dangerously-skip-permissions
@@ -305,6 +313,73 @@ def build_command(tool, rest):
     return cmd
 
 
+# How each tool takes background it should know without being asked
+# anything: appended to its system prompt, so starting a session sends no
+# message and costs no turn. kimi has only --agent-file, which replaces the
+# whole agent, and zcode/workbuddy take no flags -- none of them get it.
+CONTEXT_FLAGS = {
+    "claude": lambda text: ["--append-system-prompt", text],
+    "codebuddy": lambda text: ["--append-system-prompt", text],
+    "step": lambda text: ["--append-system-prompt", text],
+    # -c values are TOML; a JSON string is a valid TOML basic string
+    "codex": lambda text: ["-c", "developer_instructions=" + json.dumps(text, ensure_ascii=False)],
+}
+# Flags after which a launch is not a fresh interactive session: a script's
+# one-shot run should not change with the vault, and a continued session
+# already holds what it knew.
+_NO_CONTEXT_FLAGS = ("-p", "--print", "-c", "--continue")
+# The user's own system-prompt flags: theirs win, ours stay out.
+_OWN_PROMPT_FLAGS = ("--system-prompt", "--append-system-prompt", "developer_instructions")
+_SUBCOMMAND_RE = re.compile(r"^[a-z][a-z-]*$")
+
+
+def strip_no_context(rest):
+    """(rest without --no-context, whether it was there). Only the wrapper's
+    own part counts: after `--` everything belongs to the tool."""
+    out, off = [], False
+    for i, a in enumerate(rest):
+        if a == "--":
+            out += rest[i:]
+            break
+        if a == "--no-context":
+            off = True
+        else:
+            out.append(a)
+    return out, off
+
+
+def wants_context(tool, rest):
+    """Whether `cw <tool> <rest>` is a fresh interactive session that the
+    project's notes should be attached to."""
+    if tool not in CONTEXT_FLAGS:
+        return False
+    if os.environ.get("CW_CONTEXT", "").strip().lower() in ("0", "off", "no", "false"):
+        return False
+    own = rest[:rest.index("--")] if "--" in rest else rest
+    if any(a in _NO_CONTEXT_FLAGS for a in own):
+        return False
+    if any(flag in a for a in rest for flag in _OWN_PROMPT_FLAGS):
+        return False
+    # a bare lowercase word first is a subcommand (`cw claude doctor`,
+    # `cw codex login`), not a prompt -- the flags would only get in its way
+    positional = [a for a in own if not a.startswith("-")]
+    if positional and positional[0] == own[0] and _SUBCOMMAND_RE.match(own[0]):
+        return False
+    return True
+
+
+def attach_context(tool, cmd):
+    """cmd with the project's notes as background, plus one stderr line
+    saying so; cmd unchanged when there are none."""
+    got = note.project_context(os.getcwd())
+    if got is None:
+        return cmd
+    project, count, text = got
+    print(f"cw: {count} note{'s' if count != 1 else ''} from {project} attached as "
+          "background (--no-context skips, CW_CONTEXT=off for good)", file=sys.stderr)
+    return [cmd[0], *CONTEXT_FLAGS[tool](text), *cmd[1:]]
+
+
 DEFAULT_LIST_LIMIT = "15"
 
 
@@ -431,12 +506,15 @@ def main():
                       f"`cw resume <tool> {tool}`", file=sys.stderr)
             sys.exit(1)
 
+    rest, no_context = strip_no_context(rest)
     try:
         cmd = build_command(tool, rest)
     except UsageError as e:
         print(f"cw: {e}", file=sys.stderr)
         sys.exit(1)
 
+    if not no_context and wants_context(tool, rest):
+        cmd = attach_context(tool, cmd)
     sessions.exec_or_die(cmd)
 
 

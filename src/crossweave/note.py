@@ -537,19 +537,30 @@ def cmd_context(args):
         return 1
     cwd = os.path.abspath(os.path.expanduser(where or os.getcwd()))
     project = _project(cwd)
-    notes = []
-    for path in glob.glob(os.path.join(vault, project, "*.md")):
-        got = _read_note(path)
-        if got:
-            notes.append((got, os.path.getmtime(path)))
+    notes = _project_notes(os.path.join(vault, project))
     if not notes:
         print(f"cw context: no notes for {project} in {vault} yet -- "
               "`cw note <N>` writes one", file=sys.stderr)
         return 1
-    # newest conversation first; mtime breaks ties and covers notes with no date
-    notes.sort(key=lambda n: (str(n[0][0].get("updated") or ""), n[1]), reverse=True)
-    sys.stdout.write(render_context(project, [n[0] for n in notes[:limit]]))
+    sys.stdout.write(render_context(project, [(m, b) for _s, m, b in notes[:limit]]))
     return 0
+
+
+def project_context(cwd, limit=CONTEXT_LIMIT):
+    """(project, how many notes, `cw context` text) for cwd's project, or
+    None with no CW_VAULT, no such vault, or no notes -- quietly, because
+    the caller is a tool launch that goes ahead either way."""
+    raw = os.environ.get("CW_VAULT", "").strip()
+    if not raw:
+        return None
+    vault = os.path.abspath(os.path.expanduser(raw))
+    if not os.path.isdir(vault):
+        return None
+    project = _project(os.path.abspath(cwd))
+    notes = _project_notes(os.path.join(vault, project))[:limit]
+    if not notes:
+        return None
+    return project, len(notes), render_context(project, [(m, b) for _s, m, b in notes])
 
 
 # ---------- which sessions have a note: the listing's ✎ ----------

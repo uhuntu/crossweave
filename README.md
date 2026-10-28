@@ -261,6 +261,8 @@ Each project folder also gets an `_index.md`, the page to open in Obsidian for a
 
 `cw context [DIR]` reads them back: the newest three notes for that directory's project (the current one by default; `--limit N` for more), printed as one Markdown block a new session can start from — in whichever tool, since it is only text: `cw claude "$(cw context) 接着做"`. With no notes it prints nothing and exits 1, so the substitution stays empty.
 
+You rarely need to type it: with `CW_VAULT` set, a fresh interactive `cw claude`, `cw codex`, `cw step` or `cw codebuddy` starts with those same notes already in hand — appended to the tool's system prompt (`--append-system-prompt`; codex's `developer_instructions`), so the session knows where the project stands without a message being sent or a turn spent. One stderr line says how many notes went in. It stays out of a `-p` run (a script's output should not change with the vault), a `-c` continuation (that session already knows), a subcommand (`cw claude doctor`), and a launch that passes its own system prompt; `--no-context` skips it once and `CW_CONTEXT=off` for good. kimi is left out: its only option, `--agent-file`, replaces the whole agent rather than adding to it.
+
 ## Renaming sessions
 
 A listing is scanned, not read, and the tools themselves name sessions well only when the first message cooperates — a conversation that opened with "hi" or "中文" is indistinguishable from every other one that did. `cw rename` writes a better title through to the store itself, using each tool's own rename surface, so the name is native to the tool and every listing shows it:
