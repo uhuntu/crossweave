@@ -65,6 +65,43 @@ VS_TODOS = os.path.join(VS_ROOT, "todos")
 VS_CHANGES = os.path.join(VS_ROOT, "file-changes")
 DESKTOP_DB = os.path.join(APP_SUPPORT, "CodeBuddy", "codebuddy-sessions.vscdb")
 
+# A remote (SSH) VS Code does not keep its profile under APP_SUPPORT at all:
+# the server unpacks into ~/.vscode-server and writes the profile to
+# <server>/data/User, so on a headless box that is the *only* place the
+# extension's globalStorage exists. VS_ROOT alone made every extension
+# session invisible there -- the listing showed cli rows and nothing else.
+_EXTRA_USER_DATA = (
+    os.path.join(APP_SUPPORT, "Code - Insiders"),
+    os.path.join(HOME, ".vscode-server", "data", "User"),
+    os.path.join(HOME, ".vscode-server-insiders", "data", "User"),
+)
+
+
+def _gs_roots():
+    """Every profile's tencent-cloud.coding-copilot globalStorage dir."""
+    roots = []
+    for cand in (VS_ROOT,) + tuple(
+            os.path.join(ud, "globalStorage", "tencent-cloud.coding-copilot")
+            for ud in _EXTRA_USER_DATA):
+        if os.path.isdir(cand) and cand not in roots:
+            roots.append(cand)
+    return roots
+
+
+def _same_named(primary):
+    """`primary` plus the same subdir under every other profile root.
+
+    The primary stays first and authoritative: tests repoint VS_GENIE & co.
+    at a fixture, and a fixture must not be diluted by the real machine.
+    The extras only add what else happens to exist here."""
+    out = [primary] if os.path.isdir(primary) else []
+    for root in _gs_roots():
+        p = os.path.join(root, os.path.basename(primary))
+        if os.path.isdir(p) and p not in out:
+            out.append(p)
+    return out
+
+
 # Its own cache: `cw` and `cb` number different rows, and a listing from one
 # must never become the other's `resume <N>`.
 LIST_CACHE_FILE = os.path.join(HOME, ".cache", "crossweave", "cb_last_list.json")
@@ -252,7 +289,16 @@ def collect_cli():
 def _todo_hint(cid):
     """No title is persisted for extension sessions; the todo list is the
     closest thing to 'what this conversation was about'."""
-    obj = read_json(os.path.join(VS_TODOS, cid + ".json"))
+    for td in _same_named(VS_TODOS):
+        hint, n = _todo_hint_in(td, cid)
+        if hint or n:
+            return hint, n
+    return "", 0
+
+
+def _todo_hint_in(todos_dir, cid):
+    """One profile's todos/<cid>.json, or ("", 0) when it has none."""
+    obj = read_json(os.path.join(todos_dir, cid + ".json"))
     if not isinstance(obj, dict):
         return "", 0
     todos = obj.get("todos")
@@ -267,38 +313,43 @@ def _todo_hint(cid):
 
 
 def _changed_files(cid):
-    d = os.path.join(VS_CHANGES, cid)
-    if not os.path.isdir(d):
-        return 0
     n = 0
-    for _root, _dirs, files in os.walk(d):
-        n += len(files)
+    for changes in _same_named(VS_CHANGES):
+        d = os.path.join(changes, cid)
+        if not os.path.isdir(d):
+            continue
+        for _root, _dirs, files in os.walk(d):
+            n += len(files)
     return n
 
 
 def collect_vscode():
-    if not os.path.isdir(VS_GENIE):
+    genies = _same_named(VS_GENIE)
+    if not genies:
         return []
     # cwd per conversation comes from which workspace dir lists it
     owners = {}
     created_hint = {}
-    for ws in sorted(os.listdir(VS_GENIE)):
-        cd = os.path.join(VS_GENIE, ws, "conversations")
-        if not os.path.isdir(cd):
-            continue
-        cwd = decode_workspace(ws)
-        for cid in os.listdir(cd):
-            owners[cid] = cwd
-            p = os.path.join(cd, cid)
-            if os.path.isdir(p):
-                created_hint[cid] = int(os.path.getmtime(p) * 1000)
+    for genie in genies:
+        for ws in sorted(os.listdir(genie)):
+            cd = os.path.join(genie, ws, "conversations")
+            if not os.path.isdir(cd):
+                continue
+            cwd = decode_workspace(ws)
+            for cid in os.listdir(cd):
+                owners.setdefault(cid, cwd)
+                p = os.path.join(cd, cid)
+                if os.path.isdir(p):
+                    stamp = int(os.path.getmtime(p) * 1000)
+                    if stamp > created_hint.get(cid, 0):
+                        created_hint[cid] = stamp
 
     # timestamps come from the message-queue snapshots
     stamps = {}
     nitems = {}
-    if os.path.isdir(VS_QUEUE):
-        for fn in sorted(os.listdir(VS_QUEUE)):
-            p = os.path.join(VS_QUEUE, fn)
+    for queue in _same_named(VS_QUEUE):
+        for fn in sorted(os.listdir(queue)):
+            p = os.path.join(queue, fn)
             if not fn.endswith(".json") or not os.path.isfile(p):
                 continue
             obj = read_json(p)

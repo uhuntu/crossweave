@@ -236,6 +236,54 @@ def test_vscode_missing_store_is_just_empty():
     assert cb.collect_vscode() == []
 
 
+def test_vscode_store_under_another_profile_root_is_listed(tmp_path, monkeypatch):
+    """A remote (VS Code Server) profile keeps its globalStorage under
+    ~/.vscode-server/data/User instead of APP_SUPPORT, so a store that only
+    exists there has to be picked up as well -- before the extra roots were
+    scanned, an extension session on such a machine never appeared."""
+    ext = "globalStorage/tencent-cloud.coding-copilot"
+    primary = tmp_path / "primary" / ext
+    remote = tmp_path / "remote" / ext
+    cb.VS_ROOT = str(primary)
+    cb.VS_GENIE = str(primary / "genie-history")
+    cb.VS_QUEUE = str(primary / "message-queue")
+    cb.VS_TODOS = str(primary / "todos")
+    cb.VS_CHANGES = str(primary / "file-changes")
+    monkeypatch.setattr(cb, "_EXTRA_USER_DATA", (str(tmp_path / "remote"),))
+
+    (remote / "genie-history" / enc_ws("/w/remote") / "conversations" / CID).mkdir(
+        parents=True)
+    q = remote / "message-queue"
+    q.mkdir(parents=True)
+    (q / "snap.json").write_text(json.dumps({
+        "lastUpdated": T0 + MIN,
+        "conversations": {CID: {"updatedAt": T0 + MIN, "items": [{}]}}}))
+
+    [row] = cb.collect_vscode()
+    assert row["client"] == "vscode" and row["id"] == CID
+    assert row["cwd"] == "/w/remote" and row["turns"] == 1
+
+
+def test_vscode_stores_from_both_roots_are_merged(tmp_path, monkeypatch):
+    """Two profiles on the same machine (a local install and a remote one)
+    show as one table, not as whichever root happens to be first."""
+    ext = "globalStorage/tencent-cloud.coding-copilot"
+    local = tmp_path / "local" / ext
+    remote = tmp_path / "remote" / ext
+    cid2 = CID[:-1] + "b"
+    for root, cid in ((local, CID), (remote, cid2)):
+        (root / "genie-history" / enc_ws("/w/proj") / "conversations" / cid).mkdir(
+            parents=True)
+    cb.VS_ROOT = str(local)
+    cb.VS_GENIE = str(local / "genie-history")
+    cb.VS_QUEUE = str(local / "message-queue")
+    cb.VS_TODOS = str(local / "todos")
+    cb.VS_CHANGES = str(local / "file-changes")
+    monkeypatch.setattr(cb, "_EXTRA_USER_DATA", (str(tmp_path / "remote"),))
+
+    assert sorted(r["id"] for r in cb.collect_vscode()) == sorted([CID, cid2])
+
+
 # ---------- desktop ----------
 
 def test_desktop_rows_come_from_session_keys_only(tmp_path):
