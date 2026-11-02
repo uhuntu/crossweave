@@ -774,6 +774,10 @@ def cmd_list(args):
 
     if not rows and not remotes:
         render_rows(rows, sources=sources)
+        if cwd_filter:
+            # An empty scoped table reads as "nothing anywhere" without this:
+            # name the escape hatch, `cw sessions`.
+            print("no sessions in this directory yet -- `cw sessions` lists every directory")
         return
 
     # One cache write for the union in printed order, so `cw resume <N>`
