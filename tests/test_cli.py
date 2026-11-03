@@ -250,4 +250,4 @@ def test_bare_cw_row_count_follows_cw_limit(monkeypatch, env, expected):
     monkeypatch.setattr(cli.sessions, "cmd_list", lambda args: seen.append(args))
     monkeypatch.setattr(sys, "argv", ["cw"])
     cli.main()
-    assert seen == [["--limit", expected, "--cwd"]]
+    assert seen == [["--limit", expected]]

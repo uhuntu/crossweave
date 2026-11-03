@@ -64,9 +64,9 @@ The listing (`cw`, `cw sessions`) marks the rows belonging to the current
 directory and shows each session's turn count. Color is used only when the
 output is a terminal: NO_COLOR, TERM=dumb and CROSSWEAVE_COLOR=never disable
 it, CROSSWEAVE_COLOR=always forces it. A bare `cw` lists the 15 newest
-sessions for the current directory; `cw sessions` widens to every directory
-(or pass `--cwd` there for the same per-directory view). Set CW_LIMIT
-(a number or `all`) to change the row count.
+sessions across every directory; `cw sessions` is the same view with the
+full option set (pass `--cwd` there to scope the listing to the current
+directory). Set CW_LIMIT (a number or `all`) to change the row count.
 
 With CW_VAULT set, a fresh interactive `cw claude|codex|step|codebuddy`
 starts with this project's newest notes (what `cw context` prints) appended
@@ -416,9 +416,10 @@ def main():
         return
 
     if not argv:
-        # A bare `cw` is a "what was I doing here" question: scoped to the
-        # directory it is asked in. `cw sessions` stays the whole-history view.
-        sessions.cmd_list(["--limit", default_list_limit(), "--cwd"])
+        # A bare `cw` is the whole-history view these days -- the current-
+        # directory scoping was dropped at its owner's request; `cw sessions
+        # --cwd` is still there for the per-directory question.
+        sessions.cmd_list(["--limit", default_list_limit()])
         return
 
     tool, rest = argv[0], argv[1:]
