@@ -253,7 +253,13 @@ class Picker:
             x = put(scr, y, x, f"{pad(clip_tail(cwd or '', w_cwd), w_cwd)} ", line_attr)
             rest = w - 1 - x
             if rest > 2:
-                x = put(scr, y, x, _clip(f"{noted}{title or ''}", rest), line_attr)
+                # The ✎ follows the title (as in the plain listing), not
+                # before it -- it marks the row, it is not part of the title.
+                if sid in self.noted:
+                    x = put(scr, y, x, _clip(title or "", rest - 2), line_attr)
+                    x = put(scr, y, x, " " + noted, line_attr)
+                else:
+                    x = put(scr, y, x, _clip(title or "", rest), line_attr)
             if line_attr and x < w - 1:
                 put(scr, y, x, " " * (w - 1 - x), line_attr)
 
