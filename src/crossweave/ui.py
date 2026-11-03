@@ -16,6 +16,7 @@ note, delete and rename right away; resume and handoff when the tool they
 started is quit, so quitting a session lands on the list, not the shell.
 """
 import os
+import subprocess
 import sys
 
 from . import common, delete, note, rename, sessions
@@ -372,6 +373,27 @@ def run(scr, curses, picker):
             return action
 
 
+def run_cw_command(args):
+    """Run one of cw's own exec-ending commands (resume, handoff) in a child.
+
+    Those commands end in exec_or_die: the process *becomes* the tool, by
+    design -- a plain `cw resume 3` is expected to hand the terminal over
+    for good. cw ui wants the terminal back when the tool quits, so the
+    command runs as a child: the child execs into the tool, this process
+    stays alive to take the list back. PYTHONPATH keeps the child on this
+    checkout's sources, the same path the cw shim inserts."""
+    src = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    seen = os.environ.get("PYTHONPATH", "")
+    env = dict(os.environ,
+               PYTHONPATH=f"{src}{os.pathsep}{seen}" if seen else src)
+    try:
+        return subprocess.call(args, env=env)
+    except KeyboardInterrupt:
+        # Ctrl+C reaches both the tool and this waiter; the tool handles
+        # its own exit, and a traceback here would only scroll past its UI.
+        return 130
+
+
 def cmd_ui(args):
     if args and args[0] in ("-h", "--help"):
         print("Usage: cw ui\n\nPick a session from every tool's store and resume it.\n"
@@ -414,13 +436,15 @@ def cmd_ui(args):
         # the terminal back when it is done. The picker is the home screen:
         # quitting a tool comes back here, it does not end cw.
         if action == "resume":
-            sessions.cmd_resume([tool, sid])
+            run_cw_command([sys.executable, "-m", "crossweave.cli",
+                            "resume", tool, sid])
         elif isinstance(action, tuple):  # ("handoff", target)
             # The commands below take a row of the last listing: make the
             # picker's view that listing, and the highlighted row its number.
             sessions.write_list_cache([{"tool": r[0], "id": r[1]} for r, _ in picker.shown])
             row = str(picker.cursor + 1)
-            sessions.handoff_by_number(int(row), action[1], [])
+            run_cw_command([sys.executable, "-m", "crossweave.cli",
+                            row, action[1]])
         else:
             sessions.write_list_cache([{"tool": r[0], "id": r[1]} for r, _ in picker.shown])
             row = str(picker.cursor + 1)
