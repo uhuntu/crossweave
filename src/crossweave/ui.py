@@ -249,9 +249,15 @@ class Picker:
             x = put(scr, y, x, f"{mark}", line_attr)
             x = put(scr, y, x, f"{tool:<{w_tool}} ", line_attr | tool_attr(curses, tool))
             x = put(scr, y, x, f"{pad(when, w_when)} ", line_attr | curses.A_DIM)
-            x = put(scr, y, x, f"{shown:>{TURNS_WIDTH}} ", line_attr | curses.A_DIM)
             x = put(scr, y, x, f"{pad(clip_tail(cwd or '', w_cwd), w_cwd)} ", line_attr)
+            # The TURNS column sits just before the title (as in the plain
+            # listing): CWD, then TURNS, then the title -- not between WHEN
+            # and CWD. The title is clipped to what the turns column leaves.
             rest = w - 1 - x
+            turns_w = TURNS_WIDTH + 1  # the column plus its trailing space
+            if rest > turns_w:
+                x = put(scr, y, x, f"{shown:>{TURNS_WIDTH}} ", line_attr | curses.A_DIM)
+                rest = w - 1 - x
             if rest > 2:
                 # The ✎ follows the title (as in the plain listing), not
                 # before it -- it marks the row, it is not part of the title.
