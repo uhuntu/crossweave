@@ -28,6 +28,11 @@ the missed candidate's snippet, which contained the term just as clearly
 as the one that *was* found). Smaller batches, judged independently and
 unioned, trade more LLM calls for reliable recall. Chunks run in parallel
 so wall-clock time stays close to a single call's latency.
+
+A session with an up-to-date `cw note` in $CW_VAULT is judged by that note
+instead of a sampled snippet, in its own bigger batches (NOTE_CHUNK_SIZE)
+with an instruction not to go checking files. The more of the history is
+noted (`cw note --all`), the fewer and quicker the batches.
 """
 import concurrent.futures
 import platform
@@ -37,7 +42,7 @@ import subprocess
 import sys
 import time
 
-from . import sessions
+from . import note, sessions
 
 # On Linux, ask the kernel to signal a judge subprocess if *this* process
 # dies for any reason -- including a hard SIGKILL or OOM-kill, which no
@@ -115,6 +120,19 @@ JUDGE_USES_STDIN = {"claude", "codex", "step", "codebuddy"}
 # same judge's.  Batches fan out 4 at a time, so the extra calls cost wall
 # clock only in waves, and per the docstring smaller batches judge better.
 CHUNK_SIZE = 50
+
+# Sessions with a fresh `cw note` are judged by a one-line digest of the
+# note. Those batches can be twice as big: the text is a summary already,
+# and the judge is told to decide from it alone instead of opening files,
+# which is what makes a raw batch slow (and what hung one for the full
+# timeout on a real 422-session search).
+NOTE_CHUNK_SIZE = 100
+NOTE_SNIPPET_CHARS = 600
+NOTES_PROMPT_NOTE = (
+    "Each entry below is a written summary of the conversation (what was "
+    "done, why, what is left). Decide from the text given -- do not run "
+    "tools, open files, or check anything elsewhere.\n\n"
+)
 
 # A judge CLI can occasionally stop responding (for example while waiting on
 # a network request).  Without a timeout, one stuck chunk keeps the whole
@@ -207,9 +225,10 @@ def snippet_for(r):
     return sessions.kimi_snippet(r["dir"])
 
 
-def build_prompt(topic, entries):
+def build_prompt(topic, entries, from_notes=False):
     """entries: list of (tool, cwd, title, snippet), 1 per candidate,
-    in the same order they'll be numbered."""
+    in the same order they'll be numbered. from_notes: every snippet is a
+    `cw note` summary rather than a sample of the conversation."""
     lines = [
         f"{n}. [{tool}] {cwd} — {title} :: {snippet}"
         for n, (tool, cwd, title, snippet) in enumerate(entries, start=1)
@@ -247,6 +266,7 @@ def build_prompt(topic, entries):
         "7: upgrades the IDC_Series firmware from A13\n"
         "List the most relevant match first and the weakest last.\n\n"
         "No other text. If none are relevant, reply with the single word: none\n\n"
+        + (NOTES_PROMPT_NOTE if from_notes else "")
         + "\n".join(lines)
     )
 
@@ -558,12 +578,37 @@ def cmd_search(argv):
     if not candidates:
         print("No sessions found.")
         return
-    snippets = [snippet_for(r) for r in candidates]
+    # A session with an up-to-date `cw note` is judged by its note instead
+    # of a sampled snippet: the note already says what was done and why,
+    # it is denser than any sample, and needs no reading of the transcript.
+    notes = note.session_notes()
+    fresh_notes = {}
+    for idx, r in enumerate(candidates):
+        got = notes.get(r["id"])
+        if got and not note.is_stale(r, got[0]):
+            fresh_notes[idx] = got[1]
     # row: (tool, full_id, when, short_id, cwd, title)
-    entries = [(row[0], row[4], row[5], snippet) for row, snippet in zip(rows, snippets)]
+    entries = []
+    for idx, (r, row) in enumerate(zip(candidates, rows)):
+        if idx in fresh_notes:
+            snippet = note.search_digest(fresh_notes[idx], NOTE_SNIPPET_CHARS)
+        else:
+            snippet = snippet_for(r)
+        entries.append((row[0], row[4], row[5], snippet))
 
-    chunks = [entries[i:i + CHUNK_SIZE] for i in range(0, len(entries), CHUNK_SIZE)]
+    # Each chunk is a list of candidate indices (0-based), judged as one
+    # prompt. Noted sessions go first and in bigger chunks: a summary needs
+    # no checking against the repo, so a batch of them is quick to judge.
+    noted_idx = [i for i in range(len(entries)) if i in fresh_notes]
+    raw_idx = [i for i in range(len(entries)) if i not in fresh_notes]
+    chunks = [noted_idx[i:i + NOTE_CHUNK_SIZE] for i in range(0, len(noted_idx), NOTE_CHUNK_SIZE)]
+    note_chunks = len(chunks)
+    chunks += [raw_idx[i:i + CHUNK_SIZE] for i in range(0, len(raw_idx), CHUNK_SIZE)]
     n_chunks = len(chunks)
+    if fresh_notes:
+        print(f"Using notes for {len(fresh_notes)} of {len(candidates)} sessions "
+              f"({note_chunks} note batch{'es' if note_chunks != 1 else ''})",
+              file=sys.stderr, flush=True)
 
     print(f"Scanning {len(candidates)} sessions for exact matches: {topic!r} ...", file=sys.stderr, flush=True)
     exact_records = sessions.literal_matches(candidates, topic)
@@ -571,9 +616,9 @@ def cmd_search(argv):
     exact_rows = [row for r, row in zip(candidates, rows) if (r["tool"], r["id"]) in exact_ids]
 
     def process_chunk(chunk_idx, selected_judge=judge):
-        chunk = chunks[chunk_idx]
-        offset = chunk_idx * CHUNK_SIZE
-        prompt = build_prompt(topic, chunk)
+        indices = chunks[chunk_idx]
+        chunk = [entries[i] for i in indices]
+        prompt = build_prompt(topic, chunk, from_notes=chunk_idx < note_chunks)
         label = f"{len(chunk)} sessions against: {topic!r}" if n_chunks == 1 else (
             f"batch {chunk_idx + 1}/{n_chunks} ({len(chunk)} sessions) against: {topic!r}"
         )
@@ -588,7 +633,7 @@ def cmd_search(argv):
                 file=sys.stderr,
                 flush=True,
             )
-        return {offset + n: why for n, why in reasons_local.items()}, used_judge
+        return {indices[n - 1] + 1: why for n, why in reasons_local.items()}, used_judge
 
     # Per chunk, so the judge's own ordering can be read back afterwards:
     # each batch ranks only the candidates it saw, and batches complete out of

@@ -612,6 +612,49 @@ def noted_index(vault=None):
     return index
 
 
+def session_notes(vault=None):
+    """{session id: (when noted, note body)} for every note in $CW_VAULT,
+    or {} with no vault. What `cw search` judges a noted session by."""
+    if vault is None:
+        raw = os.environ.get("CW_VAULT", "").strip()
+        if not raw:
+            return {}
+        vault = os.path.abspath(os.path.expanduser(raw))
+    notes = {}
+    for path in glob.glob(os.path.join(vault, "*", "*.md")):
+        if os.path.basename(path) == INDEX_NAME:
+            continue
+        got = _read_note(path)
+        if not got or not isinstance(got[0].get("session"), str):
+            continue
+        meta, body = got
+        try:
+            noted = datetime.datetime.strptime(
+                str(meta.get("noted", "")).strip(), "%Y-%m-%dT%H:%M").timestamp()
+        except ValueError:
+            noted = os.path.getmtime(path)
+        sid = meta["session"]
+        if sid not in notes or noted > notes[sid][0]:
+            notes[sid] = (noted, body)
+    return notes
+
+
+def search_digest(body, limit=600):
+    """A note body squeezed onto one line: the section names kept as short
+    labels, bullets joined, cut at `limit` characters."""
+    parts = []
+    for line in body.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("## "):
+            parts.append(f"[{line[3:].strip()}]")
+        else:
+            parts.append(line[2:].strip() if line.startswith(("- ", "* ")) else line)
+    text = " ".join(parts)
+    return text if len(text) <= limit else text[:limit - 1].rstrip() + "…"
+
+
 def is_stale(record, noted_at):
     """The session moved on after its note was written. `noted:` keeps the
     minute only, so a minute's grace keeps a just-noted session fresh."""

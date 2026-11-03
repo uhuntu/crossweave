@@ -1292,3 +1292,82 @@ def test_the_last_judge_in_the_chain_timing_out_says_so(monkeypatch, capsys):
 
     err = capsys.readouterr().err
     assert "timed out; that was the last judge in the chain" in err
+
+
+def _write_note(vault, sid, body, noted="2099-01-01T00:00", project="proj"):
+    folder = vault / project
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / f"{sid}.md").write_text(
+        f'---\ntitle: "t"\ntool: "codex"\nsession: "{sid}"\nnoted: {noted}\n---\n'
+        f"# t\n\n{body}\n", encoding="utf-8")
+
+
+def test_noted_sessions_are_judged_by_their_note_in_bigger_batches(monkeypatch, tmp_path, capsys):
+    """A session with a fresh `cw note` is judged by the note, not a sampled
+    snippet, in NOTE_CHUNK_SIZE batches whose prompt tells the judge not to
+    go checking files; the rest keep the raw path."""
+    n_noted = search.NOTE_CHUNK_SIZE + 10
+    n = n_noted + 5
+    monkeypatch.setattr(search, "gather_candidates", lambda tool_filter, show_all=False: _fake_candidates(n))
+    monkeypatch.setattr(search, "snippet_for", lambda r: f"raw snippet of {r['id']}")
+    rendered = _stub_resolve_and_render(monkeypatch)
+    for i in range(n_noted):
+        _write_note(tmp_path, f"id-{i}", f"## 做了什么\n- fixed widget {i}")
+    monkeypatch.setenv("CW_VAULT", str(tmp_path))
+
+    prompts = []
+
+    class FakeResult:
+        returncode = 0
+        stderr = ""
+
+        def __init__(self, stdout):
+            self.stdout = stdout
+
+    def fake_run(argv, input=None, **kw):
+        prompts.append(input)
+        # pick local #2 of the second note batch, and local #1 of the raw batch
+        if "fixed widget 100" in input:
+            return FakeResult("2: widget")
+        if "raw snippet of" in input:
+            return FakeResult("1: raw")
+        return FakeResult("none")
+
+    monkeypatch.setattr(search.subprocess, "run", fake_run)
+    search.cmd_search(["widget"])
+
+    note_prompts = [p for p in prompts if search.NOTES_PROMPT_NOTE in p]
+    raw_prompts = [p for p in prompts if search.NOTES_PROMPT_NOTE not in p]
+    assert len(note_prompts) == 2 and len(raw_prompts) == 1
+    assert all("raw snippet" not in p for p in note_prompts)
+    assert "[做了什么] fixed widget 0" in note_prompts[0]
+    ids = {row[1] for rows in rendered for row in rows}
+    assert ids == {"id-101", f"id-{n_noted}"}
+    assert "Using notes for 110 of 115 sessions" in capsys.readouterr().err
+
+
+def test_a_stale_note_falls_back_to_the_raw_snippet(monkeypatch, tmp_path):
+    cands = [{"tool": "codex", "id": "id-0", "ts": 2_000_000_000, "title": "s"}]
+    monkeypatch.setattr(search, "gather_candidates", lambda tool_filter, show_all=False: cands)
+    monkeypatch.setattr(search, "snippet_for", lambda r: "raw snippet")
+    _stub_resolve_and_render(monkeypatch)
+    _write_note(tmp_path, "id-0", "- old summary", noted="2020-01-01T00:00")
+    monkeypatch.setenv("CW_VAULT", str(tmp_path))
+    prompts = []
+
+    class FakeResult:
+        returncode = 0
+        stdout = "none"
+        stderr = ""
+
+    monkeypatch.setattr(search.subprocess, "run", lambda argv, input=None, **kw: prompts.append(input) or FakeResult())
+    search.cmd_search(["x"])
+    assert len(prompts) == 1
+    assert "raw snippet" in prompts[0] and "old summary" not in prompts[0]
+
+
+def test_search_digest_flattens_and_caps():
+    from crossweave import note
+    body = "## 做了什么\n- a\n- b\n\n## 还剩什么\n- c"
+    assert note.search_digest(body) == "[做了什么] a b [还剩什么] c"
+    assert len(note.search_digest("- " + "x" * 1000, limit=50)) == 50
