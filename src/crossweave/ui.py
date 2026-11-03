@@ -18,7 +18,7 @@ import os
 import sys
 
 from . import common, delete, note, rename, sessions
-from .render import _clip, _display_width
+from .render import _clip, _display_width, TURNS_WIDTH
 
 KEYS_HELP = ("↑↓ move  / filter  Tab tool  . dir  Enter resume  "
              "h handoff  n note  r rename  d delete  q quit")
@@ -79,6 +79,7 @@ class Picker:
         self.cursor = 0
         self.top = 0
         self.details = {}  # full id -> (turns, last message), filled on view
+        self.turns = {}  # full id -> turn count, filled as rows render
         self.noted = note.noted_index()
         self.tools = [t for t in sessions.TOOLS if any(r[0] == t for r, _ in items)]
         self.refilter()
@@ -90,6 +91,7 @@ class Picker:
         keep_id = keep[0][1] if keep else None
         self.items = items
         self.details = {}
+        self.turns = {}
         self.noted = note.noted_index()
         self.tools = [t for t in sessions.TOOLS if any(r[0] == t for r, _ in items)]
         if self.tool not in self.tools:
@@ -109,18 +111,27 @@ class Picker:
     def selected(self):
         return self.shown[self.cursor] if self.shown else None
 
+    def turns_of(self, record):
+        """The row's turn count, computed on first render and cached -- the
+        same walk the plain listing pays for every row, spent here only on
+        rows a screen actually showed."""
+        sid = record["id"]
+        if sid not in self.turns:
+            try:
+                self.turns[sid] = sessions.session_turns(record)
+            except Exception:
+                self.turns[sid] = None
+        return self.turns[sid]
+
     def detail(self, record):
         sid = record["id"]
         if sid not in self.details:
-            try:
-                turns = sessions.session_turns(record)
-            except Exception:
-                turns = None
+            last = None
             try:
                 last = sessions.session_last_message(record)
             except Exception:
-                last = None
-            self.details[sid] = (turns, last)
+                pass
+            self.details[sid] = (self.turns_of(record), last)
         return self.details[sid]
 
     # -- keys ---------------------------------------------------------------
@@ -225,7 +236,9 @@ class Picker:
             n = self.top + i
             if n >= len(self.shown):
                 break
-            (tool, sid, when, _short, cwd, title), _rec = self.shown[n]
+            (tool, sid, when, _short, cwd, title), rec = self.shown[n]
+            turns = self.turns_of(rec)
+            shown = "?" if turns is None else str(turns)
             mark = "▸" if common._same_path(cwd, self.cwd) else " "
             noted = "✎" if sid in self.noted else " "
             line_attr = curses.A_REVERSE if n == self.cursor else 0
@@ -234,6 +247,7 @@ class Picker:
             x = put(scr, y, x, f"{mark}", line_attr)
             x = put(scr, y, x, f"{tool:<{w_tool}} ", line_attr | tool_attr(curses, tool))
             x = put(scr, y, x, f"{pad(when, w_when)} ", line_attr | curses.A_DIM)
+            x = put(scr, y, x, f"{shown:>{TURNS_WIDTH}} ", line_attr | curses.A_DIM)
             x = put(scr, y, x, f"{pad(clip_tail(cwd or '', w_cwd), w_cwd)} ", line_attr)
             rest = w - 1 - x
             if rest > 2:
