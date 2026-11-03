@@ -11,8 +11,9 @@ runs after curses has handed the terminal back, so a tool that starts (or a
 y/N question) gets a normal terminal rather than one curses is still holding.
 Those commands take a row of the last listing, so the picker writes what it
 shows as that listing first: afterwards `cw resume 3` means the third row the
-picker had on screen. Note, delete and rename come back to the list; resume
-and handoff leave it for the tool.
+picker had on screen. Every action comes back to the list when it is done --
+note, delete and rename right away; resume and handoff when the tool they
+started is quit, so quitting a session lands on the list, not the shell.
 """
 import os
 import sys
@@ -408,17 +409,22 @@ def cmd_ui(args):
         if not action:
             return 0
         (tool, sid, *_), _rec = picker.selected()
+        # Every action leaves curses first (run() has already returned), so
+        # the tool or command gets a normal terminal -- and the list takes
+        # the terminal back when it is done. The picker is the home screen:
+        # quitting a tool comes back here, it does not end cw.
         if action == "resume":
             sessions.cmd_resume([tool, sid])
-            return 0
-        # The commands below take a row of the last listing: make the
-        # picker's view that listing, and the highlighted row its number.
-        sessions.write_list_cache([{"tool": r[0], "id": r[1]} for r, _ in picker.shown])
-        row = str(picker.cursor + 1)
-        if isinstance(action, tuple):  # ("handoff", target)
+        elif isinstance(action, tuple):  # ("handoff", target)
+            # The commands below take a row of the last listing: make the
+            # picker's view that listing, and the highlighted row its number.
+            sessions.write_list_cache([{"tool": r[0], "id": r[1]} for r, _ in picker.shown])
+            row = str(picker.cursor + 1)
             sessions.handoff_by_number(int(row), action[1], [])
-            return 0
-        run_action(action, row, tool, sid)
+        else:
+            sessions.write_list_cache([{"tool": r[0], "id": r[1]} for r, _ in picker.shown])
+            row = str(picker.cursor + 1)
+            run_action(action, row, tool, sid)
         if not pause():
             return 0
         if action == "note":
