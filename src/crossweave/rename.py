@@ -401,7 +401,7 @@ def _digest_for(r):
     return " || ".join(parts)
 
 
-def _propose_titles(rows, snippets, judge):
+def _propose_titles(rows, snippets, judge, judge_explicit=False):
     """({position: title}, positions shown to the judge) from one batched
     judge call, or raise search.JudgeError.
 
@@ -445,11 +445,13 @@ def _propose_titles(rows, snippets, judge):
     # A judge that answers in prose once usually answers properly the next
     # time: a `cw 1 rename` failed with "no numbered titles" and the same
     # prompt then came back numbered five times running. So a reply with no
-    # numbered title is asked again once before it is reported.
+    # numbered title is asked again once before it is reported. The call
+    # itself rides search's fallback chain: a judge that is out of credit,
+    # rate limited, or missing is stepped past unless --judge pinned one.
+    used = judge
     for attempt in range(2):
-        proc = search._call_judge(judge, prompt)
-        if proc is None or proc.returncode != 0:
-            raise search.JudgeError(proc.returncode if proc else 127)
+        proc, used = search.call_judge_with_fallback(
+            prompt, used, judge_explicit, "title proposals")
         output = proc.stdout or ""
         titles = _parse_titles(output, len(asked))
         if titles:
@@ -463,7 +465,7 @@ def _propose_titles(rows, snippets, judge):
             head = " ".join(output.split())
             head = head if len(head) <= 120 else head[:119] + "…"
             why = f"returned no numbered titles (it said: {head})"
-        print(f"cw rename: judge ({judge}) {why}; expected `1. title`. "
+        print(f"cw rename: judge ({used}) {why}; expected `1. title`. "
               "Retry with --judge <tool> or supply an explicit title.", file=sys.stderr)
     return ({asked[pos - 1]: title for pos, title in titles.items()}, set(asked))
 
@@ -506,6 +508,7 @@ def _usage():
 def cmd_rename(args):
     yes = auto = trivial = False
     judge = None
+    judge_explicit = False
     positional = []
     i = 0
     while i < len(args):
@@ -520,7 +523,7 @@ def cmd_rename(args):
             if i + 1 >= len(args):
                 print("cw rename: --judge requires a tool", file=sys.stderr)
                 return 2
-            judge = args[i + 1]; i += 2
+            judge = args[i + 1]; judge_explicit = True; i += 2
         elif a.startswith("-"):
             print(f"cw rename: unknown option '{a}'", file=sys.stderr)
             return 2
@@ -547,12 +550,12 @@ def cmd_rename(args):
         return 2
 
     if not auto:
-        return _rename_manual(positional, judge)
+        return _rename_manual(positional, judge, judge_explicit)
 
-    return _rename_auto(positional, trivial, judge, yes)
+    return _rename_auto(positional, trivial, judge, yes, judge_explicit)
 
 
-def _rename_manual(positional, judge):
+def _rename_manual(positional, judge, judge_explicit=False):
     from . import sessions
 
     if not positional or not sessions.ROW_NUMBER_RE.match(positional[0]):
@@ -574,7 +577,7 @@ def _rename_manual(positional, judge):
         # makes that possible -- the old ordering counted the arguments before
         # it looked at the listing, so a mistyped row number got the same
         # usage wall as a valid one.
-        return _rename_suggested(r, judge)
+        return _rename_suggested(r, judge, judge_explicit)
     title = " ".join(positional[1:]).strip()
     if r["tool"] not in _RENAMABLE:
         _not_renamable(r)
@@ -588,7 +591,7 @@ def _rename_manual(positional, judge):
     return 0
 
 
-def _rename_suggested(r, judge):
+def _rename_suggested(r, judge, judge_explicit=False):
     """Ask the judge for a title for one row and apply what it says.
 
     It applies without asking first, the way `cw <N> rename <title>` does: a
@@ -611,7 +614,7 @@ def _rename_suggested(r, judge):
               f"content to name -- keeping \"{_short(old)}\"", file=sys.stderr)
         return 1
     try:
-        got, _ = _propose_titles([r], [snippet], judge)
+        got, _ = _propose_titles([r], [snippet], judge, judge_explicit)
     except search.JudgeError as e:
         print(f"cw rename: judge ({judge}) unavailable -- nothing renamed "
               f"(exit {e.code})", file=sys.stderr)
@@ -665,7 +668,7 @@ def _same_title(a, b):
     return a.strip().casefold() == (b or "").strip().casefold()
 
 
-def _rename_auto(positional, trivial, judge, yes):
+def _rename_auto(positional, trivial, judge, yes, judge_explicit=False):
     from . import search, sessions
 
     cache = sessions.read_list_cache()
@@ -748,7 +751,8 @@ def _rename_auto(positional, trivial, judge, yes):
         # numbering); keep that keying so chunk offsets line up
         for start in range(0, len(rows), BATCH):
             chunk = rows[start:start + BATCH]
-            got, asked = _propose_titles(chunk, snips[start:start + BATCH], judge)
+            got, asked = _propose_titles(chunk, snips[start:start + BATCH],
+                                         judge, judge_explicit)
             for pos, title in got.items():
                 proposals[start + pos] = title
             nameable.update(start + pos for pos in asked)

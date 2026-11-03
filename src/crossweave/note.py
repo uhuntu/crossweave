@@ -135,18 +135,19 @@ def _clean(output):
     return "\n".join(body).strip()
 
 
-def _summarize(r, title, cwd, digest, judge):
+def _summarize(r, title, cwd, digest, judge, judge_explicit=False, label="the note"):
     """The note body from the judge, or raise search.JudgeError / return ""."""
     from . import search
 
     prompt = _prompt(r, title, cwd, digest)
     # As with `cw rename`: a judge that answers in prose once usually
-    # answers in shape the next time, so one retry before giving up.
+    # answers in shape the next time, so one retry before giving up. The
+    # call rides search's fallback chain: a judge that is out of credit,
+    # rate limited, or missing is stepped past unless --judge pinned one.
     body = ""
+    used = judge
     for _ in range(2):
-        proc = search._call_judge(judge, prompt)
-        if proc is None or proc.returncode != 0:
-            raise search.JudgeError(proc.returncode if proc else 127)
+        proc, used = search.call_judge_with_fallback(prompt, used, judge_explicit, label)
         body = _clean(proc.stdout)
         if body:
             break
@@ -218,7 +219,7 @@ def render(r, title, cwd, body, now=None):
     return f"---\n{head}\n---\n# {title}\n\n{body}\n"
 
 
-def _note_one(r, vault, judge):
+def _note_one(r, vault, judge, judge_explicit=False):
     """Write one session's note; return its path, or None after saying why."""
     from . import rename, search, sessions
 
@@ -229,9 +230,10 @@ def _note_one(r, vault, judge):
     if not digest:
         print(f"cw note: {short} holds nothing to note -- skipped", file=sys.stderr)
         return None
-    print(f"Asking {judge} to summarize {short} ...", file=sys.stderr, flush=True)
+    # which judge is being asked is the fallback chain's own line to print
     try:
-        body = _summarize(r, title, cwd, digest, judge)
+        body = _summarize(r, title, cwd, digest, judge, judge_explicit,
+                          label=f"the note for {short}")
     except search.JudgeError as e:
         print(f"cw note: judge ({judge}) unavailable -- {short} not noted "
               f"(exit {e.code}); try --judge <tool>", file=sys.stderr)
@@ -323,7 +325,7 @@ def _confirm(question):
         return False
 
 
-def _note_all(since_seconds, since_text, vault, judge, yes):
+def _note_all(since_seconds, since_text, vault, judge, yes, judge_explicit=False):
     from concurrent.futures import ThreadPoolExecutor
 
     picked, skipped = _pick_all(since_seconds, vault)
@@ -342,7 +344,8 @@ def _note_all(since_seconds, since_text, vault, judge, yes):
     done = failed = 0
     written = []
     with ThreadPoolExecutor(max_workers=WORKERS) as pool:
-        for r, path in zip(picked, pool.map(lambda r: _note_one(r, vault, judge), picked)):
+        for r, path in zip(picked, pool.map(
+                lambda r: _note_one(r, vault, judge, judge_explicit), picked)):
             if path:
                 done += 1
                 written.append(path)
@@ -359,6 +362,7 @@ def cmd_note(args):
     from . import search, sessions
 
     judge = vault_flag = since = since_text = None
+    judge_explicit = False
     every = yes = index_only = False
     targets = []
     i = 0
@@ -370,6 +374,7 @@ def cmd_note(args):
                 return 2
             if a == "--judge":
                 judge = args[i + 1]
+                judge_explicit = True
             elif a == "--vault":
                 vault_flag = args[i + 1]
             else:
@@ -425,7 +430,7 @@ def cmd_note(args):
         return 1
 
     if every:
-        return _note_all(since, since_text, vault, judge, yes)
+        return _note_all(since, since_text, vault, judge, yes, judge_explicit)
 
     cache = sessions.read_list_cache()
     failed = 0
@@ -436,7 +441,7 @@ def cmd_note(args):
             print(f"cw note: {why}", file=sys.stderr)
             failed += 1
             continue
-        path = _note_one(r, vault, judge)
+        path = _note_one(r, vault, judge, judge_explicit)
         if path is None:
             failed += 1
             continue

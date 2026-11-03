@@ -403,13 +403,13 @@ def fallback_order():
     return list(dict.fromkeys([DEFAULT_JUDGE, *JUDGE_CMD]))
 
 
-def run_judge_with_fallback(prompt, n, judge, judge_explicit, label):
+def call_judge_with_fallback(prompt, judge, judge_explicit, label):
     """Run the judge (falling back off one that is unusable for the whole
     run -- its own session limit, or an expired login -- unless the user
-    pinned one explicitly) against one prompt -- a full batch, or one chunk
-    of one. A transient rate limit is retried on the same judge first.
-    Returns the picked local indices and the judge that succeeded.
-    Raises JudgeError if every judge in the fallback sequence fails."""
+    pinned one explicitly) against one prompt. A transient rate limit is
+    retried on the same judge first. Returns (proc, used_judge) for a call
+    that exited 0; any nonzero exit either moves down the chain or raises
+    JudgeError, so a returned proc always carries a usable run's raw output."""
     order = fallback_order()
     if judge_explicit:
         judges = [judge]
@@ -451,10 +451,8 @@ def run_judge_with_fallback(prompt, n, judge, judge_explicit, label):
                           file=sys.stderr)
             raise
         if result.returncode == 0:
-            # stdout can legitimately be None (a judge that died mid-write,
-            # or an unreadable pipe); parse_numbered_reasons needs a string.
-            return parse_numbered_reasons(result.stdout or "", n), j
-        print(f"cw search: {j} exited with an error ({label})", file=sys.stderr)
+            return result, j
+        print(f"cw: {j} exited with an error ({label})", file=sys.stderr)
         if result.stdout:
             print(result.stdout, file=sys.stderr)
         if result.stderr:
@@ -469,8 +467,8 @@ def run_judge_with_fallback(prompt, n, judge, judge_explicit, label):
                 time.sleep(delay)
                 result = _call_judge(j, prompt)
                 if result.returncode == 0:
-                    return parse_numbered_reasons(result.stdout or "", n), j
-                print(f"cw search: {j} exited with an error again ({label})", file=sys.stderr)
+                    return result, j
+                print(f"cw: {j} exited with an error again ({label})", file=sys.stderr)
         if _is_session_limit(result) or _is_auth_failure(result) or _is_rate_limited(result):
             # Every judge has its own session limit and its own way of saying
             # a login expired, and either makes it unusable for the rest of
@@ -486,6 +484,15 @@ def run_judge_with_fallback(prompt, n, judge, judge_explicit, label):
                 print(f"  hint: {j} is at its session limit. Retry after the reset time, or use one of: {others}.", file=sys.stderr)
         raise JudgeError(result.returncode)
     raise JudgeError(result.returncode if result else 1)
+
+
+def run_judge_with_fallback(prompt, n, judge, judge_explicit, label):
+    """Run the judge with the fallback chain (see
+    call_judge_with_fallback) and parse its answer into picked local
+    indices. Returns (picked indices, the judge that succeeded).
+    Raises JudgeError if every judge in the fallback sequence fails."""
+    result, used = call_judge_with_fallback(prompt, judge, judge_explicit, label)
+    return parse_numbered_reasons(result.stdout or "", n), used
 
 
 def cmd_search(argv):
