@@ -284,6 +284,20 @@ It finds the sessions the way `cw search` does, reads each one by its note when 
 
 Pages go in `$CW_VAULT/_wiki/`, one per topic. Running the same topic again rebuilds the page from the sessions as they are now; whatever you write under the marker at the end of the page is kept.
 
+Around the pages, the machinery stays light and deterministic — no judge calls:
+
+```bash
+cw wiki --stale          # the pages a source session has moved on since
+cw wiki --rebuild [-y]   # rebuild those, one judge call each
+cw wiki --discover [-y]  # propose topics from the vault's notes
+```
+
+A page records its build time and its sources in its frontmatter, so staleness is a file read, not a search: when any source session's newest write is later than the page's build — a conversation went on after the page was written from it — the bare `cw wiki` listing marks the page `stale`, `cw wiki --stale` names just those, and `cw wiki --rebuild` rebuilds them and nothing else. `--discover` is the one place the judge is asked for topics rather than pages: it reads the vault's notes (the newest 200), proposes up to 12 topics that have no page yet — strongest first, each with a one-line why, named in the notes' own language — and, after a yes, builds the pages. A vault with no notes says so and points at `cw note --all` first.
+
+Every build also rewrites `_wiki/_index.md`, the page to open in Obsidian: one line per page with its topic, source count and build time, stale ones marked — the same generated `_index.md` convention the project folders follow, and like them it has no `session:` line, so nothing that reads notes mistakes it for one. Two kinds of links between pages are cw's own doing, not the judge's: a page that names another page links to it (outside the citations' own `[[...]]` spans), and pages built from a shared session point at each other under a `## 相关 / Related pages` heading, with the count of sessions shared.
+
+The listing marks the sessions a page was built from: `⌗` after the title, next to the `✎` a note would put there; `cw ui`'s preview names the pages. Where `✎` says *this session was written up*, `⌗` says *this session is part of a page* — the difference between what one conversation did and what is known about the topic now.
+
 ## Renaming sessions
 
 A listing is scanned, not read, and the tools themselves name sessions well only when the first message cooperates — a conversation that opened with "hi" or "中文" is indistinguishable from every other one that did. `cw rename` writes a better title through to the store itself, using each tool's own rename surface, so the name is native to the tool and every listing shows it:

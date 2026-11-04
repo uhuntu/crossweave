@@ -19,7 +19,7 @@ import os
 import subprocess
 import sys
 
-from . import common, delete, note, rename, sessions
+from . import common, delete, note, rename, sessions, wiki
 from .render import _clip, _display_width, TURNS_WIDTH
 
 KEYS_HELP = ("↑↓ move  / filter  Tab tool  . dir  Enter resume  "
@@ -83,6 +83,7 @@ class Picker:
         self.details = {}  # full id -> (turns, last message), filled on view
         self.turns = {}  # full id -> turn count, filled as rows render
         self.noted = note.noted_index()
+        self.wiked = wiki.wiki_index()
         self.tools = [t for t in sessions.TOOLS if any(r[0] == t for r, _ in items)]
         self.refilter()
 
@@ -95,6 +96,7 @@ class Picker:
         self.details = {}
         self.turns = {}
         self.noted = note.noted_index()
+        self.wiked = wiki.wiki_index()
         self.tools = [t for t in sessions.TOOLS if any(r[0] == t for r, _ in items)]
         if self.tool not in self.tools:
             self.tool = None
@@ -242,7 +244,6 @@ class Picker:
             turns = self.turns_of(rec)
             shown = "?" if turns is None else str(turns)
             mark = "▸" if common._same_path(cwd, self.cwd) else " "
-            noted = "✎" if sid in self.noted else " "
             line_attr = curses.A_REVERSE if n == self.cursor else 0
             y = 1 + i
             x = 0
@@ -261,9 +262,13 @@ class Picker:
             if rest > 2:
                 # The ✎ follows the title (as in the plain listing), not
                 # before it -- it marks the row, it is not part of the title.
-                if sid in self.noted:
-                    x = put(scr, y, x, _clip(title or "", rest - 2), line_attr)
-                    x = put(scr, y, x, " " + noted, line_attr)
+                # The ⌗ rides after it: a wiki page was built from this
+                # session.
+                marks = ("✎" if sid in self.noted else "") + \
+                        ("⌗" if sid in self.wiked else "")
+                if marks:
+                    x = put(scr, y, x, _clip(title or "", rest - 1 - len(marks)), line_attr)
+                    x = put(scr, y, x, " " + marks, line_attr)
                 else:
                     x = put(scr, y, x, _clip(title or "", rest), line_attr)
             if line_attr and x < w - 1:
@@ -281,6 +286,8 @@ class Picker:
                     facts += f"  {turns} turns"
                 if sid in self.noted:
                     facts += "  ✎ noted"
+                if sid in self.wiked:
+                    facts += "  ⌗ wiki: " + ", ".join(self.wiked[sid])
                 put(scr, y0 + 1, 0, _clip(facts, w - 1), curses.A_BOLD)
                 put(scr, y0 + 2, 0, _clip(f" {cwd}", w - 1), curses.A_DIM)
                 lines = wrap(f"↳ {last}" if last else "↳ (no message text)", w - 2, preview_h - 3)

@@ -47,6 +47,9 @@ LAST_PREFIX_CHOICES = ("└", "`")
 # After the title of a session `cw note` has written up; with a "+" when
 # the session has moved on since. ASCII stand-in for legacy code pages.
 NOTED_CHOICES = ("✎", "[n]")
+# After the title of a session a `cw wiki` page cites: the page was built
+# from it. ASCII stand-in for legacy code pages.
+WIKI_CHOICES = ("⌗", "[w]")
 # A last message is a preview, not a transcript: one line, same budget as a
 # title.
 LAST_MESSAGE_MAX = 70
@@ -201,6 +204,16 @@ def render_rows(rows, write_cache=True, start=1, notes=None, full_notes=False,
         from . import note
         noted = note.noted_index()
     noted_mark = _encodable(NOTED_CHOICES)
+    # The wiki mark rides the same gate as the ✎: a search hit's title
+    # column is clipped to share the line with a reason, so neither fits.
+    wiked = {}
+    if sources:
+        from . import wiki
+        try:
+            wiked = wiki.wiki_index()
+        except Exception:
+            wiked = {}
+    wiki_mark = _encodable(WIKI_CHOICES)
     if show_turns:
         # Fit the plumbing before the title: the cwd is the most compressible
         # (a path's tail still names the project), and if even a floor-width
@@ -272,6 +285,8 @@ def render_rows(rows, write_cache=True, start=1, notes=None, full_notes=False,
             stale = note.is_stale(sources.get(full_id), noted[full_id])
             title += " " + color.paint(noted_mark + ("+" if stale else ""),
                                        color.YELLOW if stale else color.DIM)
+        if full_id in wiked:
+            title += " " + color.paint(wiki_mark, color.DIM)
         if inline_why:
             line += f"{_clip(title, w_title):<{w_title}}  {_clip(notes.get((tool, full_id), ''), w_why)}"
         else:
