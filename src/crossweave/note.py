@@ -613,8 +613,9 @@ def noted_index(vault=None):
 
 
 def session_notes(vault=None):
-    """{session id: (when noted, note body)} for every note in $CW_VAULT,
-    or {} with no vault. What `cw search` judges a noted session by."""
+    """{session id: (when noted, note body, note path)} for every note in
+    $CW_VAULT, or {} with no vault. What `cw search` judges a noted session
+    by, and what `cw wiki` builds its pages from."""
     if vault is None:
         raw = os.environ.get("CW_VAULT", "").strip()
         if not raw:
@@ -635,7 +636,7 @@ def session_notes(vault=None):
             noted = os.path.getmtime(path)
         sid = meta["session"]
         if sid not in notes or noted > notes[sid][0]:
-            notes[sid] = (noted, body)
+            notes[sid] = (noted, body, path)
     return notes
 
 

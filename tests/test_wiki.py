@@ -1,0 +1,122 @@
+from crossweave import note, search, wiki
+
+
+def _row(i):
+    return ("codex", f"id-{i}", "2d ago", f"id-{i}"[:8], "/w", f"session {i}")
+
+
+def _found(judged=(), exact=(), reasons=None):
+    ids = {*judged, *exact}
+    return search.Found(
+        records={("codex", f"id-{i}"): {"tool": "codex", "id": f"id-{i}", "ts": 1} for i in ids},
+        judged=[_row(i) for i in judged],
+        exact_rows=[_row(i) for i in exact],
+        semantic=[], reasons=reasons or {}, used_judge="step",
+    )
+
+
+class _Proc:
+    returncode = 0
+    stderr = ""
+
+    def __init__(self, stdout):
+        self.stdout = stdout
+
+
+def _setup(monkeypatch, tmp_path, found, reply="## 概要\n- 用 Dependency-Track 做 SCA [S1][S2]"):
+    folder = tmp_path / "proj"
+    folder.mkdir()
+    (folder / "2026-10-27 SBOM.md").write_text(
+        '---\ntitle: "SBOM"\ntool: "codex"\nsession: "id-1"\nnoted: 2099-01-01T00:00\n---\n'
+        "# SBOM\n\n## 做了什么\n- 画了 SBOM 流程图\n", encoding="utf-8")
+    monkeypatch.setattr(search, "find", lambda *a, **kw: found)
+    from crossweave import rename
+    monkeypatch.setattr(rename, "_digest_for", lambda r: f"digest of {r['id']}")
+    prompts = []
+    monkeypatch.setattr(search, "call_judge_with_fallback",
+                        lambda prompt, j, e, label: prompts.append(prompt) or (_Proc(reply), j))
+    return prompts
+
+
+def test_sources_put_the_judges_picks_first_then_literal_hits():
+    got = wiki._sources(_found(judged=[3, 1], exact=[1, 2]), limit=10)
+    assert [row[1] for row, _, _ in got] == ["id-3", "id-1", "id-2"]
+    assert len(wiki._sources(_found(judged=[3, 1], exact=[2]), limit=2)) == 2
+
+
+def test_build_reads_notes_and_digests_and_links_citations(monkeypatch, tmp_path):
+    prompts = _setup(monkeypatch, tmp_path, _found(judged=[1, 2], reasons={("codex", "id-1"): "SBOM 流程"}))
+    path = wiki.build("SBOM", str(tmp_path), "step")
+    assert path == str(tmp_path / "_wiki" / "SBOM.md")
+    # source 1 is read by its note, source 2 (no note) by its digest
+    assert "画了 SBOM 流程图" in prompts[0] and "digest of id-2" in prompts[0]
+    text = open(path, encoding="utf-8").read()
+    assert "kind: cw-wiki" in text and 'sources: ["id-1", "id-2"]' in text
+    # a citation of a noted source links to the note; the other stays plain
+    assert "[[2026-10-27 SBOM|S1]][S2]" in text
+    assert "- **S1** [[2026-10-27 SBOM]] · codex · 2d ago · `cw resume codex id-1` — SBOM 流程" in text
+    assert "- **S2** session 2 · codex" in text
+    assert wiki.OWN_MARKER in text
+
+
+def test_a_rebuild_keeps_what_the_user_wrote_under_the_marker(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path, _found(judged=[1]))
+    path = wiki.build("SBOM", str(tmp_path), "step")
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write("- 我自己加的一条\n")
+    wiki.build("SBOM", str(tmp_path), "step")
+    text = open(path, encoding="utf-8").read()
+    assert text.count(wiki.OWN_MARKER) == 1
+    assert "- 我自己加的一条" in text
+
+
+def test_wiki_pages_are_not_mistaken_for_session_notes(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path, _found(judged=[1]))
+    wiki.build("SBOM", str(tmp_path), "step")
+    assert set(note.noted_index(str(tmp_path))) == {"id-1"}
+    assert set(note.session_notes(str(tmp_path))) == {"id-1"}
+    assert not (tmp_path / "_wiki" / note.INDEX_NAME).exists()
+    note.rebuild_indexes(str(tmp_path))
+    assert not (tmp_path / "_wiki" / note.INDEX_NAME).exists()
+
+
+def test_nothing_found_writes_nothing(monkeypatch, tmp_path, capsys):
+    _setup(monkeypatch, tmp_path, _found())
+    assert wiki.build("SBOM", str(tmp_path), "step") is None
+    assert not (tmp_path / "_wiki").exists()
+    assert "nothing to write" in capsys.readouterr().err
+
+
+def test_a_reply_without_sections_writes_no_page(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path, _found(judged=[1]), reply="Sorry, I can't.")
+    assert wiki.build("SBOM", str(tmp_path), "step") is None
+    assert not (tmp_path / "_wiki" / "SBOM.md").exists()
+
+
+def test_cmd_wiki_lists_pages_without_a_topic(monkeypatch, tmp_path, capsys):
+    _setup(monkeypatch, tmp_path, _found(judged=[1, 2]))
+    monkeypatch.setenv("CW_VAULT", str(tmp_path))
+    assert wiki.cmd_wiki(["SBOM"]) == 0
+    assert "wiki: _wiki/SBOM.md" in capsys.readouterr().out
+    assert wiki.cmd_wiki([]) == 0
+    assert "SBOM  (2 sessions, built" in capsys.readouterr().out
+
+
+def test_cmd_wiki_rejects_bad_flags(monkeypatch, tmp_path):
+    monkeypatch.setenv("CW_VAULT", str(tmp_path))
+    assert wiki.cmd_wiki(["x", "--judge", "nope"]) == 2
+    assert wiki.cmd_wiki(["x", "--tool", "nope"]) == 2
+    assert wiki.cmd_wiki(["x", "--max", "0"]) == 2
+
+
+def test_sources_the_page_never_cites_are_left_off_the_list(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path, _found(judged=[1, 2, 3]), reply="## 概要\n- x [S3]")
+    path = wiki.build("SBOM", str(tmp_path), "step")
+    text = open(path, encoding="utf-8").read()
+    assert "**S3**" in text and "**S1**" not in text and "**S2**" not in text
+    assert 'sources: ["id-3"]' in text
+
+
+def test_a_page_citing_nothing_is_not_written(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path, _found(judged=[1]), reply="## 概要\n- no citations")
+    assert wiki.build("SBOM", str(tmp_path), "step") is None

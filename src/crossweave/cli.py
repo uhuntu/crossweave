@@ -10,7 +10,7 @@ import os
 import re
 import sys
 
-from . import __version__, alias, delete, doctor, machines, note, rename, search, sessions, ui, update
+from . import __version__, alias, delete, doctor, machines, note, rename, search, sessions, ui, update, wiki
 
 TOOLS = ("claude", "codex", "kimi", "step", "zcode", "codebuddy", "workbuddy")
 
@@ -46,6 +46,7 @@ USAGE = f"""Usage: cw <{'|'.join(TOOLS)}> [common-options] [prompt] [-- extra na
        cw note --all [--since 7d] [-y]   # every session with no note, or a stale one
        cw note --index          # rebuild each project's _index.md from its notes
        cw context [DIR] [--limit N]   # print that project's newest notes, for a new session
+       cw wiki <topic>          # one page per topic in the vault's _wiki/, from every session about it
        cw ui                  # pick a session: type to filter, Enter resumes, h/n/r/d hand off/note/rename/delete
 
 Common options (translated per-tool, all optional):
@@ -137,7 +138,7 @@ Examples:
 # this list, and the test asserts it matches what main() actually dispatches,
 # so adding a subcommand cannot leave the message stale the way it was when
 # `stats` and `step` were both missing from it.
-SUBCOMMANDS = ("sessions", "full", "search", "resume", "update", "stats", "doctor", "alias", "machines", "rename", "delete", "note", "context", "ui")
+SUBCOMMANDS = ("sessions", "full", "search", "resume", "update", "stats", "doctor", "alias", "machines", "rename", "delete", "note", "context", "wiki", "ui")
 
 
 def usage(name="cw"):
@@ -481,6 +482,8 @@ def main():
         sys.exit(note.cmd_note(rest))
     if tool == "context":
         sys.exit(note.cmd_context(rest))
+    if tool == "wiki":
+        sys.exit(wiki.cmd_wiki(rest))
     if tool == "ui":
         sys.exit(ui.cmd_ui(rest))
 

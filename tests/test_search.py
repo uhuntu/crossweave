@@ -1371,3 +1371,35 @@ def test_search_digest_flattens_and_caps():
     body = "## 做了什么\n- a\n- b\n\n## 还剩什么\n- c"
     assert note.search_digest(body) == "[做了什么] a b [还剩什么] c"
     assert len(note.search_digest("- " + "x" * 1000, limit=50)) == 50
+
+
+def test_a_batch_with_every_session_picked_is_asked_again(monkeypatch, capsys):
+    n = search.ALL_PICKED_MIN
+    calls = []
+
+    class Proc:
+        returncode = 0
+        stderr = ""
+
+        def __init__(self, stdout):
+            self.stdout = stdout
+
+    replies = iter(["\n".join(f"{i}: x" for i in range(1, n + 1)), "2: the real one"])
+    monkeypatch.setattr(search, "call_judge_with_fallback",
+                        lambda p, j, e, label: calls.append(j) or (Proc(next(replies)), j))
+    reasons, _ = search.run_judge_with_fallback("p", n, "step", False, "batch 1/1")
+    assert reasons == {2: "the real one"} and len(calls) == 2
+    assert f"picked all {n} sessions" in capsys.readouterr().err
+
+
+def test_a_small_batch_may_be_all_relevant(monkeypatch):
+    class Proc:
+        returncode = 0
+        stderr = ""
+        stdout = "1: a\n2: b"
+
+    calls = []
+    monkeypatch.setattr(search, "call_judge_with_fallback",
+                        lambda p, j, e, label: calls.append(j) or (Proc(), j))
+    reasons, _ = search.run_judge_with_fallback("p", 2, "step", False, "x")
+    assert set(reasons) == {1, 2} and len(calls) == 1

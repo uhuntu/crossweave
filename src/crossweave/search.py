@@ -41,6 +41,7 @@ import signal
 import subprocess
 import sys
 import time
+from typing import NamedTuple
 
 from . import note, sessions
 
@@ -127,6 +128,9 @@ CHUNK_SIZE = 50
 # which is what makes a raw batch slow (and what hung one for the full
 # timeout on a real 422-session search).
 NOTE_CHUNK_SIZE = 100
+# A batch this big coming back with every session picked is asked again
+# (see run_judge_with_fallback); below it, all-relevant can be genuine.
+ALL_PICKED_MIN = 5
 NOTE_SNIPPET_CHARS = 600
 NOTES_PROMPT_NOTE = (
     "Each entry below is a written summary of the conversation (what was "
@@ -167,6 +171,21 @@ RATE_LIMIT_RETRY_DELAYS = (5, 20)
 # it. Since a long list is what makes a search hard to scan, only the top of
 # it is shown; `--all` lists every hit.
 SEMANTIC_ROWS_SHOWN = 10
+
+
+class Found(NamedTuple):
+    """What `find` turned up. exact_rows / semantic are listing rows
+    (tool, full id, when, short id, cwd, title), semantic strongest first;
+    judged is every row the judge picked, strongest first, whether or not
+    it matched literally too; reasons maps (tool, id) to the judge's
+    one-line why; records maps
+    (tool, id) to the light record behind each row."""
+    records: dict
+    judged: list
+    exact_rows: list
+    semantic: list
+    reasons: dict
+    used_judge: str
 
 
 class JudgeError(Exception):
@@ -512,58 +531,26 @@ def run_judge_with_fallback(prompt, n, judge, judge_explicit, label):
     indices. Returns (picked indices, the judge that succeeded).
     Raises JudgeError if every judge in the fallback sequence fails."""
     result, used = call_judge_with_fallback(prompt, judge, judge_explicit, label)
-    return parse_numbered_reasons(result.stdout or "", n), used
+    reasons = parse_numbered_reasons(result.stdout or "", n)
+    # Every candidate "relevant" is a judge gone off the rails, not a
+    # result: a real `cw wiki SBOM` got all 9 notes of a batch picked, cw
+    # session-list fixes included, with reasons copied from other entries.
+    # The same prompt asked again picked the right 2. Ask once more.
+    if n >= ALL_PICKED_MIN and len(reasons) == n:
+        print(f"  -> the judge picked all {n} sessions of {label}; asking again",
+              file=sys.stderr, flush=True)
+        result, used = call_judge_with_fallback(prompt, used, judge_explicit, label)
+        reasons = parse_numbered_reasons(result.stdout or "", n)
+    return reasons, used
 
 
-def cmd_search(argv):
-    tool_filter = None
-    judge = DEFAULT_JUDGE
-    judge_explicit = False
-    show_why = False
-    show_all = False
-    topic_parts = []
-
-    i = 0
-    while i < len(argv):
-        a = argv[i]
-        if a == "--tool":
-            if i + 1 >= len(argv):
-                print("cw search: --tool requires a value", file=sys.stderr)
-                sys.exit(1)
-            tool_filter = argv[i + 1]
-            if tool_filter not in sessions.TOOLS:
-                print(f"cw search: --tool must be one of {', '.join(sessions.TOOLS)}", file=sys.stderr)
-                sys.exit(1)
-            i += 2
-        elif a == "--judge":
-            if i + 1 >= len(argv):
-                print("cw search: --judge requires a value", file=sys.stderr)
-                sys.exit(1)
-            judge = argv[i + 1]
-            if judge not in JUDGE_CMD:
-                print(f"cw search: --judge must be one of {', '.join(JUDGE_CMD)}", file=sys.stderr)
-                sys.exit(1)
-            judge_explicit = True
-            i += 2
-        elif a == "--why":
-            show_why = True
-            i += 1
-        elif a == "--all":
-            show_all = True
-            i += 1
-        else:
-            topic_parts.append(a)
-            i += 1
-
-    topic = " ".join(topic_parts).strip()
-    if not topic:
-        print(f"Usage: cw search <topic> [--tool {'|'.join(sessions.TOOLS)}] [--judge {'|'.join(JUDGE_CMD)}] [--why] [--all]", file=sys.stderr)
-        sys.exit(1)
-
+def find(topic, tool_filter=None, judge=DEFAULT_JUDGE, judge_explicit=False, show_all=False):
+    """Both passes of `cw search` without the printing of results: a Found,
+    or None (after saying so) when there are no sessions to search."""
     candidates = gather_candidates(tool_filter, show_all)
     if not candidates:
         print("No sessions found.")
-        return
+        return None
 
     rows = [sessions.resolve_row(r) for r in candidates]
     # Same exclusion as `cw sessions`: a session a tool started for itself
@@ -577,14 +564,14 @@ def cmd_search(argv):
     rows = [rows[i] for i in keep]
     if not candidates:
         print("No sessions found.")
-        return
+        return None
     # A session with an up-to-date `cw note` is judged by its note instead
     # of a sampled snippet: the note already says what was done and why,
     # it is denser than any sample, and needs no reading of the transcript.
-    notes = note.session_notes()
+    vault_notes = note.session_notes()
     fresh_notes = {}
     for idx, r in enumerate(candidates):
-        got = notes.get(r["id"])
+        got = vault_notes.get(r["id"])
         if got and not note.is_stale(r, got[0]):
             fresh_notes[idx] = got[1]
     # row: (tool, full_id, when, short_id, cwd, title)
@@ -718,6 +705,64 @@ def cmd_search(argv):
         (rows[n - 1][0], rows[n - 1][1]): why
         for n, why in matched_reasons.items() if why
     }
+
+    return Found(
+        records={(r["tool"], r["id"]): r for r in candidates},
+        judged=[row for _, row in numbered],
+        exact_rows=exact_rows, semantic=semantic, reasons=notes, used_judge=used_judge,
+    )
+
+
+def cmd_search(argv):
+    tool_filter = None
+    judge = DEFAULT_JUDGE
+    judge_explicit = False
+    show_why = False
+    show_all = False
+    topic_parts = []
+
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--tool":
+            if i + 1 >= len(argv):
+                print("cw search: --tool requires a value", file=sys.stderr)
+                sys.exit(1)
+            tool_filter = argv[i + 1]
+            if tool_filter not in sessions.TOOLS:
+                print(f"cw search: --tool must be one of {', '.join(sessions.TOOLS)}", file=sys.stderr)
+                sys.exit(1)
+            i += 2
+        elif a == "--judge":
+            if i + 1 >= len(argv):
+                print("cw search: --judge requires a value", file=sys.stderr)
+                sys.exit(1)
+            judge = argv[i + 1]
+            if judge not in JUDGE_CMD:
+                print(f"cw search: --judge must be one of {', '.join(JUDGE_CMD)}", file=sys.stderr)
+                sys.exit(1)
+            judge_explicit = True
+            i += 2
+        elif a == "--why":
+            show_why = True
+            i += 1
+        elif a == "--all":
+            show_all = True
+            i += 1
+        else:
+            topic_parts.append(a)
+            i += 1
+
+    topic = " ".join(topic_parts).strip()
+    if not topic:
+        print(f"Usage: cw search <topic> [--tool {'|'.join(sessions.TOOLS)}] [--judge {'|'.join(JUDGE_CMD)}] [--why] [--all]", file=sys.stderr)
+        sys.exit(1)
+
+    found = find(topic, tool_filter, judge, judge_explicit, show_all)
+    if found is None:
+        return
+    exact_rows, semantic, notes, used_judge = (
+        found.exact_rows, found.semantic, found.reasons, found.used_judge)
 
     if not exact_rows and not semantic:
         print("No relevant sessions found.")

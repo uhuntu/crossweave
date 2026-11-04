@@ -271,6 +271,19 @@ Each project folder also gets an `_index.md`, the page to open in Obsidian for a
 
 You rarely need to type it: with `CW_VAULT` set, a fresh interactive `cw claude`, `cw codex`, `cw step` or `cw codebuddy` starts with those same notes already in hand — appended to the tool's system prompt (`--append-system-prompt`; codex's `developer_instructions`), so the session knows where the project stands without a message being sent or a turn spent. One stderr line says how many notes went in. It stays out of a `-p` run (a script's output should not change with the vault), a `-c` continuation (that session already knows), a subcommand (`cw claude doctor`), and a launch that passes its own system prompt; `--no-context` skips it once and `CW_CONTEXT=off` for good. kimi is left out: its only option, `--agent-file`, replaces the whole agent rather than adding to it.
 
+### Topic pages: `cw wiki`
+
+A note is one session; a wiki page is one topic, across every session and every tool that touched it:
+
+```bash
+cw wiki "SBOM 与 Dependency-Track"   # write (or rebuild) the page
+cw wiki                             # list the pages already written
+```
+
+It finds the sessions the way `cw search` does, reads each one by its note when it has a fresh one (a digest of the conversation otherwise), and asks the judge for one page: a summary, key points, commands and paths, pitfalls, and what is still open. Every bullet cites its sessions as `[S1]`, `[S2]`, which link to the session's note in Obsidian, and the source list under the page — with each session's `cw resume` command — is written by cw, so it cannot be made up. At most 12 sessions go into a page, strongest first (`--max N` to change it); `--tool` and `--judge` work as they do for `cw search`.
+
+Pages go in `$CW_VAULT/_wiki/`, one per topic. Running the same topic again rebuilds the page from the sessions as they are now; whatever you write under the marker at the end of the page is kept.
+
 ## Renaming sessions
 
 A listing is scanned, not read, and the tools themselves name sessions well only when the first message cooperates — a conversation that opened with "hi" or "中文" is indistinguishable from every other one that did. `cw rename` writes a better title through to the store itself, using each tool's own rename surface, so the name is native to the tool and every listing shows it:
