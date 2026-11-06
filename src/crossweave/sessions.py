@@ -63,6 +63,7 @@ from .common import (
     read_jsonl,
     relative_time,
     sample_stride,
+    spawnable,
     TITLE_SCAN_LINES,
     title_says_nothing,
     TRIVIAL_TITLES,
@@ -274,12 +275,14 @@ def exec_or_die(argv):
 
     On Windows, Python's exec emulation does not reliably preserve the console
     state required by interactive Node/Bun CLIs.  Keep this process alive there
-    and let the child inherit its standard handles instead.
+    and let the child inherit its standard handles instead -- started
+    through common.spawnable, since an npm-installed tool (pi, opencode) is
+    a .cmd launcher there that a bare name never finds.
     """
     try:
         if os.name == "nt":
             try:
-                sys.exit(subprocess.call(argv))
+                sys.exit(subprocess.call(spawnable(argv)))
             except KeyboardInterrupt:
                 # Ctrl+C is delivered to both the interactive child and this
                 # waiting wrapper.  The child already handles it; do not leak
@@ -586,7 +589,7 @@ def perform_handoff(source_tool, source_id, target_tool, extra, forced_cwd=None,
               file=sys.stderr)
         started = time.time()
         try:
-            rc = subprocess.call(["zcode", "-p", prompt])
+            rc = subprocess.call(spawnable(["zcode", "-p", prompt]))
         except KeyboardInterrupt:
             sys.exit(130)
         except FileNotFoundError:
@@ -1482,7 +1485,7 @@ def _run_zcode_tui(argv):
     before, just after it exits."""
     try:
         with tempfile.TemporaryFile("wb+") as errfh:
-            rc = subprocess.call(argv, stderr=errfh)
+            rc = subprocess.call(spawnable(argv), stderr=errfh)
             errfh.seek(0)
             err_text = errfh.read().decode("utf-8", "replace")
     except KeyboardInterrupt:
@@ -1742,8 +1745,8 @@ def cmd_resume(args):
                 print("cw resume: continuing this zcode session headlessly with "
                       "your instruction", file=sys.stderr)
                 try:
-                    sys.exit(subprocess.call(
-                        ["zcode", "--resume", full_id, "-p", instruction]))
+                    sys.exit(subprocess.call(spawnable(
+                        ["zcode", "--resume", full_id, "-p", instruction])))
                 except KeyboardInterrupt:
                     sys.exit(130)
                 except FileNotFoundError:

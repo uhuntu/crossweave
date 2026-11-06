@@ -32,6 +32,47 @@ TOOLS = ("claude", "codex", "kimi", "step", "pi", "opencode", "zcode", "codebudd
 
 
 
+# The target line of an npm-generated .cmd launcher:
+#   "%_prog%"  "%dp0%\node_modules\...\cli.js" %*     (a node script)
+#   "%dp0%\node_modules\...\opencode.exe"   %*        (a native binary)
+_NPM_SHIM_TARGET_RE = re.compile(r'(?:"%_prog%"\s+)?"%dp0%\\([^"]+)"\s+%\*')
+
+
+def spawnable(argv):
+    """argv in a form subprocess can start, on Windows as anywhere else.
+
+    An npm-installed CLI (pi, opencode, zcode) lands on Windows as a `.cmd`
+    launcher, and CreateProcess finds only `.exe` by bare name -- so `pi`
+    on PATH still failed as "not found". Running the .cmd through cmd.exe
+    would work, but cmd re-parses every argument, and a handoff prompt or
+    a resume instruction holding %, & or a quote would come out changed.
+    So the launcher is read instead and its target started directly: the
+    script under node, or the binary it wraps. A launcher of another shape
+    falls back to cmd.exe /c, the route `cw update` already takes."""
+    if os.name != "nt" or not argv:
+        return list(argv)
+    import shutil
+
+    found = shutil.which(argv[0])
+    if not found or not found.lower().endswith((".cmd", ".bat")):
+        return list(argv)
+    try:
+        with open(found, encoding="utf-8", errors="replace") as fh:
+            m = _NPM_SHIM_TARGET_RE.search(fh.read())
+    except OSError:
+        m = None
+    if m:
+        here = os.path.dirname(found)
+        target = os.path.join(here, m.group(1))
+        if os.path.isfile(target):
+            if target.lower().endswith(".exe"):
+                return [target, *argv[1:]]
+            node = os.path.join(here, "node.exe")
+            node = node if os.path.isfile(node) else (shutil.which("node") or "node")
+            return [node, target, *argv[1:]]
+    return [os.environ.get("COMSPEC", "cmd.exe"), "/c", found, *argv[1:]]
+
+
 def read_json(path):
     try:
         with open(path, encoding="utf-8") as fh:

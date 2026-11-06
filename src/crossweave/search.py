@@ -348,13 +348,13 @@ def _call_judge(judge, prompt):
     try:
         if judge in JUDGE_USES_STDIN:
             return subprocess.run(
-                judge_cmd, input=prompt, capture_output=True, text=True,
+                sessions.spawnable(judge_cmd), input=prompt, capture_output=True, text=True,
                 encoding="utf-8", errors="replace",
                 timeout=JUDGE_TIMEOUT_SECONDS,
                 preexec_fn=_die_with_parent,
             )
         return subprocess.run(
-            [*judge_cmd, prompt], capture_output=True, text=True,
+            sessions.spawnable([*judge_cmd, prompt]), capture_output=True, text=True,
             encoding="utf-8", errors="replace",
             timeout=JUDGE_TIMEOUT_SECONDS,
             preexec_fn=_die_with_parent,

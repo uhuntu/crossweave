@@ -44,5 +44,8 @@ def _isolate_stores(monkeypatch, tmp_path):
     monkeypatch.setattr(cb, "VS_CHANGES", str(nowhere / "cb" / "changes"))
     monkeypatch.setattr(cb, "DESKTOP_DB", str(nowhere / "cb" / "sessions.vscdb"))
     monkeypatch.setattr(cb, "LIST_CACHE_FILE", str(nowhere / "cb_last_list.json"))
+    # the machine's own npm launchers would rewrite argv[0] (pi -> node.exe)
+    # under every test that fakes a subprocess; test_spawnable covers it
+    monkeypatch.setattr(sessions, "spawnable", list)
     # the developer's own vault would put ✎ marks into every listing test
     monkeypatch.delenv("CW_VAULT", raising=False)
