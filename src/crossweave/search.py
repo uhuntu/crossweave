@@ -97,6 +97,10 @@ JUDGE_CMD = {
     # CLI -- checked against `codebuddy --help`, and a one-shot PONG run
     # confirmed -p reads the prompt on stdin).
     "codebuddy": ["codebuddy", "-p", "--no-session-persistence"],
+    # --no-session: pi's ephemeral run, for the reason claude's flag is
+    # there. pi asks no approvals, so step's allow pair has no twin here.
+    # Verified: `pi -p --no-session` reads the prompt on stdin (PONG).
+    "pi": ["pi", "-p", "--no-session"],
 }
 # Which judge runs when the caller does not pass --judge. This is a
 # per-machine setting: it must name a judge that is actually installed here,
@@ -111,7 +115,7 @@ DEFAULT_JUDGE = "step"
 # candidate list grows into the hundreds; stdin avoids that entirely.
 # Verified: `step -p` reads the prompt from stdin and answers `PONG`,
 # and codebuddy's -p does the same (claude's spelling of it).
-JUDGE_USES_STDIN = {"claude", "codex", "step", "codebuddy"}
+JUDGE_USES_STDIN = {"claude", "codex", "step", "codebuddy", "pi"}
 
 # See module docstring for why candidates are chunked instead of judged in
 # one batch.  Kept at 50 rather than 100 because a chunk's cost is now
@@ -217,6 +221,10 @@ def gather_candidates(tool_filter, show_all=False):
         light += sessions.kimi_light_records(show_all=show_all)
     if tool_filter in (None, "step"):
         light += sessions.step_light_records(show_all=show_all)
+    if tool_filter in (None, "pi"):
+        light += sessions.pi_light_records(show_all=show_all)
+    if tool_filter in (None, "opencode"):
+        light += sessions.opencode_light_records(show_all=show_all)
     if tool_filter in (None, "zcode"):
         light += sessions.zcode_light_records(show_all=show_all)
     if tool_filter in (None, "codebuddy"):
@@ -235,8 +243,10 @@ def snippet_for(r):
         # title (thread_name, when available) is already shown separately
         # in the prompt line -- the snippet's job is additional content.
         return sessions.codex_rollout_snippet(r["id"])
-    if tool == "step":
+    if tool in ("step", "pi"):
         return sessions.step_snippet(r["path"])
+    if tool == "opencode":
+        return sessions.opencode_snippet(r["id"])
     if tool == "zcode":
         return sessions.zcode_snippet(r["id"])
     if tool in ("codebuddy", "workbuddy"):

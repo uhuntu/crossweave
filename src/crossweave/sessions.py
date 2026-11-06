@@ -123,6 +123,22 @@ from .step import (
     step_title,
     step_title_with_name,
 )
+from .pi import (
+    pi_light_records,
+    pi_resolve,
+    pi_session_cwd,
+)
+from .opencode import (
+    opencode_contains,
+    opencode_first_user_text,
+    opencode_handoff_messages,
+    opencode_last_message,
+    opencode_light_records,
+    opencode_resolve,
+    opencode_session_cwd,
+    opencode_session_turns,
+    opencode_snippet,
+)
 from .codebuddy import (
     codebuddy_handoff_messages,
     codebuddy_light_records,
@@ -292,7 +308,7 @@ def session_literal_scan_files(record):
         # files under its own root, so it scans the same way.
         files = [record["path"]] if record.get("path") else []
         return files + codebuddy_tool_results(record)
-    if tool in ("claude", "step"):
+    if tool in ("claude", "step", "pi"):
         return [record["path"]]
     if tool == "codex":
         path = codex_rollout_path(record["id"])
@@ -320,8 +336,15 @@ def literal_matches(candidates, topic):
             if zcode_contains(record["id"], pattern):
                 hits.append(record)
             continue
+        if record["tool"] == "opencode":
+            # SQLite-backed as well -- the same treatment zcode gets
+            if opencode_contains(record["id"], pattern):
+                hits.append(record)
+            continue
+        # pi writes step's format, so step's line reader reads it
+        scan_as = "step" if record["tool"] == "pi" else record["tool"]
         if any(_file_contains(path, pattern,
-                              record["tool"] if path.endswith(".jsonl") else None,
+                              scan_as if path.endswith(".jsonl") else None,
                               needle=needle)
                for path in session_literal_scan_files(record)):
             hits.append(record)
@@ -343,12 +366,18 @@ def session_handoff_details(tool, sid):
             return None
         cwd = codex_cwd(sid)
         messages = codex_handoff_messages(path)
-    elif tool == "step":
-        record = next((r for r in step_light_records(show_all=True) if r["id"] == sid), None)
+    elif tool in ("step", "pi"):
+        records = step_light_records(show_all=True) if tool == "step" else pi_light_records(show_all=True)
+        record = next((r for r in records if r["id"] == sid), None)
         if not record:
             return None
         cwd = record.get("cwd")
         messages = step_handoff_messages(record["path"])
+    elif tool == "opencode":
+        cwd = opencode_session_cwd(sid)
+        if cwd is None and sid not in opencode_resolve(sid):
+            return None
+        messages = opencode_handoff_messages(sid)
     elif tool == "zcode":
         record = next((r for r in zcode_light_records(show_all=True) if r["id"] == sid), None)
         if not record:
@@ -613,6 +642,10 @@ def perform_handoff(source_tool, source_id, target_tool, extra, forced_cwd=None,
         print("cw handoff: could not determine the seeded kimi session -- continue manually "
               "with `kimi -c`", file=sys.stderr)
         return
+    if target_tool == "opencode":
+        # opencode's bare positional is the directory to start in; the TUI
+        # takes an opening prompt as --prompt.
+        exec_or_die(["opencode", *extra, "--prompt", prompt])
     else:
         exec_or_die([target_tool, *extra, prompt])
 
@@ -648,6 +681,8 @@ def _all_light_records():
     light += codex_light_records()
     light += kimi_light_records(False)
     light += step_light_records(False)
+    light += pi_light_records(False)
+    light += opencode_light_records(False)
     light += zcode_light_records(False)
     light += codebuddy_light_records(False)
     light += workbuddy_light_records(False)
@@ -714,6 +749,8 @@ def cmd_list(args):
         ("codex", codex_light_records),
         ("kimi", lambda: kimi_light_records(show_all)),
         ("step", lambda: step_light_records(show_all)),
+        ("pi", lambda: pi_light_records(show_all)),
+        ("opencode", lambda: opencode_light_records(show_all)),
         ("zcode", lambda: zcode_light_records(show_all)),
         ("codebuddy", lambda: codebuddy_light_records(show_all)),
         ("workbuddy", lambda: workbuddy_light_records(show_all)),
@@ -838,6 +875,10 @@ def cmd_stats(args):
         light += kimi_light_records(True)
     if tool_filter in (None, "step"):
         light += step_light_records(True)
+    if tool_filter in (None, "pi"):
+        light += pi_light_records(True)
+    if tool_filter in (None, "opencode"):
+        light += opencode_light_records(True)
     if tool_filter in (None, "zcode"):
         light += zcode_light_records(True)
     if tool_filter in (None, "codebuddy"):
@@ -962,7 +1003,7 @@ def _handoff_seed_texts(tool, d):
         if payload.get("type") != "message" or payload.get("role") not in ("user", "assistant"):
             return []
         return _all_text_blocks(payload.get("content"), ("input_text", "text", "output_text"))
-    if tool == "step":
+    if tool in ("step", "pi"):
         # step's records are `type: "message"`, which is nobody else's spelling
         # (claude writes user/assistant, codex response_item), so this cannot
         # read another tool's transcript as a step one. Without this branch a
@@ -989,6 +1030,10 @@ def _handoff_seed_texts(tool, d):
         if d.get("role") not in ("user", "assistant"):
             return []
         return _all_text_blocks(list_field(d, "content"), ("input_text", "output_text"))
+    if tool == "opencode":
+        # No transcript lines to read -- the store answers through
+        # opencode_first_user_text, in _handoff_source_of.
+        return []
     if tool in ("zcode", "workbuddy"):
         # Neither is ever a handoff target -- perform_handoff refuses both,
         # no CLI there seeds a session -- so no session of either can open
@@ -1039,6 +1084,17 @@ def handoff_source(path, tool, limit=60):
     return None
 
 
+def _handoff_source_of(r):
+    """(source_tool, source_id) when this session was opened by a `cw
+    handoff` seed, else None -- from its transcript file, or straight from
+    the store for opencode, which keeps no file."""
+    if r["tool"] == "opencode":
+        m = HANDOFF_SEED_RE.match(opencode_first_user_text(r["id"]).lstrip())
+        return (m.group(1), m.group(2)) if m else None
+    path = _transcript_path(r)
+    return handoff_source(path, r["tool"]) if path else None
+
+
 def _transcript_path(r):
     # A light record's own transcript when it has one -- claude and step
     # always did, and codex records carry the rollout file they were read
@@ -1047,8 +1103,8 @@ def _transcript_path(r):
     # still resolves through the index.
     if r.get("path"):
         return r["path"]
-    if r["tool"] in ("claude", "step", "zcode"):
-        # zcode's transcript lives in the SQLite store, not in a file -- a
+    if r["tool"] in ("claude", "step", "pi", "zcode", "opencode"):
+        # zcode's and opencode's transcripts live in a SQLite store, not in a file -- a
         # path-less record is the normal case there, not a missing one.
         return None
     if r["tool"] == "codex":
@@ -1068,6 +1124,10 @@ def _find_record(tool, sid):
         return next((r for r in kimi_light_records(show_all=True) if r["id"] == sid), None)
     if tool == "step":
         return next((r for r in step_light_records(show_all=True) if r["id"] == sid), None)
+    if tool == "pi":
+        return next((r for r in pi_light_records(show_all=True) if r["id"] == sid), None)
+    if tool == "opencode":
+        return next((r for r in opencode_light_records(show_all=True) if r["id"] == sid), None)
     if tool == "zcode":
         return next((r for r in zcode_light_records(show_all=True) if r["id"] == sid), None)
     if tool == "codebuddy":
@@ -1086,7 +1146,7 @@ def _has_user_title(r):
     tool = r["tool"]
     if tool == "claude":
         return bool(r.get("path") and claude_custom_title(r["path"]))
-    if tool == "step":
+    if tool in ("step", "pi"):
         return bool(r.get("path") and _step_display_name(r["path"]))
     if tool == "kimi":
         return bool(r.get("dir") and kimi_has_custom_title(r["dir"]))
@@ -1095,7 +1155,7 @@ def _has_user_title(r):
 
 def _resolve_title_and_cwd(r, depth=0):
     tool = r["tool"]
-    if tool == "step":
+    if tool in ("step", "pi"):
         title = step_title_with_name(r["path"])
         cwd_show = r.get("cwd") or "?"
     elif tool == "claude":
@@ -1109,8 +1169,9 @@ def _resolve_title_and_cwd(r, depth=0):
         # and the light record normalized it on the way in.
         title = r.get("title") or "(no title)"
         cwd_show = r.get("cwd") or "?"
-    elif tool in ("codebuddy", "workbuddy"):
-        # Same: the titler wrote into the file, and the light record read it
+    elif tool in ("codebuddy", "workbuddy", "opencode"):
+        # Same: the titler wrote it (into the file, or opencode's store), and
+        # the light record read it
         title = r.get("title") or "(no title)"
         cwd_show = r.get("cwd") or "?"
     else:
@@ -1125,8 +1186,7 @@ def _resolve_title_and_cwd(r, depth=0):
     # is the one they chose for it, and `cw rename` reporting success while
     # the row kept its `(handoff) ...` label read as a rename that failed.
     if depth < HANDOFF_MAX_DEPTH and not _has_user_title(r):
-        path = _transcript_path(r)
-        source = handoff_source(path, tool) if path else None
+        source = _handoff_source_of(r)
         record = _find_record(*source) if source else None
         if record:
             source_title = _resolve_title_and_cwd(record, depth + 1)[0]
@@ -1185,7 +1245,7 @@ def session_turns(record):
               also stores as a user record
       codex   a response_item whose payload carries "role":"user"
       kimi    a "turn.prompt" record in the wire log
-      step    a message record with "role":"user"
+      step    a message record with "role":"user" (pi: the same format)
       zcode   a user-role row of the SQLite message table
     Whole lines rather than occurrences, so a transcript pasted into a
     message is not counted twice; a message that merely quotes one of these
@@ -1202,6 +1262,8 @@ def session_turns(record):
         # Nothing to byte-count -- the store answers directly, and honestly:
         # an uncountable session shows the same "?" a file-backed one does.
         return zcode_session_turns(record.get("id"))
+    if tool == "opencode":
+        return opencode_session_turns(record.get("id"))
     if tool == "kimi":
         path = os.path.join(record.get("dir") or "", "agents", "main", "wire.jsonl")
         marker, exclude = b'"turn.prompt"', None
@@ -1209,7 +1271,7 @@ def session_turns(record):
         path = record.get("path")
         if tool == "claude":
             marker, exclude = b'"type":"user"', b'"tool_result"'
-        elif tool in ("codex", "step"):
+        elif tool in ("codex", "step", "pi"):
             marker, exclude = b'"role":"user"', None
         else:
             return None
@@ -1250,7 +1312,7 @@ def _last_text_from_record(tool, d):
 
     Each tool's shape is its own, but the question is the one every reader
     in this module answers."""
-    if tool == "step":
+    if tool in ("step", "pi"):
         if d.get("type") != "message":
             return None
         message = dict_field(d, "message")
@@ -1312,6 +1374,9 @@ def session_last_message(record):
         # The transcript lives in the store, not in a file -- the store
         # answers this one directly.
         return zcode_last_message(record.get("id"))
+    if record.get("tool") == "opencode":
+        last = opencode_last_message(record.get("id"))
+        return last[:LAST_MESSAGE_MAX] if last else None
     path = _transcript_path(record)
     if not path:
         return None
@@ -1467,7 +1532,8 @@ def _zcode_next_instruction(extra):
 # holds while the other is wrong.
 ID_RESOLVERS = {
     "claude": claude_resolve, "codex": codex_resolve, "kimi": kimi_resolve,
-    "step": step_resolve, "zcode": zcode_resolve, "codebuddy": codebuddy_resolve,
+    "step": step_resolve, "pi": pi_resolve, "opencode": opencode_resolve,
+    "zcode": zcode_resolve, "codebuddy": codebuddy_resolve,
     "workbuddy": workbuddy_resolve,
 }
 
@@ -1562,6 +1628,11 @@ def cmd_resume(args):
         elif tool == "codebuddy":
             # a real interactive picker, like claude's
             exec_or_die(["codebuddy", "-r"])
+        elif tool == "pi":
+            exec_or_die(["pi", "--resume"])
+        elif tool == "opencode":
+            # no picker flag: the TUI's own session list (ctrl+x l) is it
+            exec_or_die(["opencode"])
         elif tool == "zcode":
             if zcode_cli_on_path():
                 if zcode_tui_known_missing():
@@ -1613,7 +1684,8 @@ def cmd_resume(args):
         return
 
     cwd_getter = {"claude": claude_session_cwd, "codex": codex_cwd, "kimi": kimi_session_cwd,
-                  "step": step_session_cwd, "zcode": zcode_session_cwd,
+                  "step": step_session_cwd, "pi": pi_session_cwd,
+                  "opencode": opencode_session_cwd, "zcode": zcode_session_cwd,
                   "codebuddy": codebuddy_session_cwd}[tool]
 
     if forced_cwd:
@@ -1652,6 +1724,11 @@ def cmd_resume(args):
     elif tool == "step":
         # step takes a path or a partial id, and resumes that session directly
         exec_or_die(["step", "--resume", full_id, *extra])
+    elif tool == "pi":
+        # --session takes a full or partial id (or a path) and opens it
+        exec_or_die(["pi", "--session", full_id, *extra])
+    elif tool == "opencode":
+        exec_or_die(["opencode", "--session", full_id, *extra])
     elif tool == "codebuddy":
         exec_or_die(["codebuddy", "-r", full_id, *extra])
     elif tool == "zcode":

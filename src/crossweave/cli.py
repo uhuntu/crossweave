@@ -1,5 +1,5 @@
-"""cw - unified wrapper for the claude / codex / kimi / step / codebuddy
-CLIs, plus the zcode and workbuddy desktop apps' session stores. Normalizes a
+"""cw - unified wrapper for the claude / codex / kimi / step / pi /
+opencode / codebuddy CLIs, plus the zcode and workbuddy desktop apps' session stores. Normalizes a
 handful of common flags across the terminal tools and passes everything else
 straight through; zcode has no terminal interface, so `cw zcode` only opens
 the app, and workbuddy has no interface at all -- its sessions are listed,
@@ -12,7 +12,7 @@ import sys
 
 from . import __version__, alias, delete, doctor, machines, note, rename, search, sessions, ui, update, wiki
 
-TOOLS = ("claude", "codex", "kimi", "step", "zcode", "codebuddy", "workbuddy")
+TOOLS = ("claude", "codex", "kimi", "step", "pi", "opencode", "zcode", "codebuddy", "workbuddy")
 
 # USAGE is an f-string built from TOOLS, search.JUDGE_CMD and
 # search.DEFAULT_JUDGE for the same reason SUBCOMMANDS exists below: the
@@ -69,17 +69,19 @@ sessions across every directory; `cw sessions` is the same view with the
 full option set (pass `--cwd` there to scope the listing to the current
 directory). Set CW_LIMIT (a number or `all`) to change the row count.
 
-With CW_VAULT set, a fresh interactive `cw claude|codex|step|codebuddy`
+With CW_VAULT set, a fresh interactive `cw claude|codex|step|pi|codebuddy`
 starts with this project's newest notes (what `cw context` prints) appended
 to the tool's system prompt -- background, no message sent. Not with -p or
 -c, nor before a subcommand; --no-context skips it once, CW_CONTEXT=off
-for good. kimi has no way to take it.
+for good. kimi and opencode have no way to take it.
 
 Per-tool --yolo mapping:
   claude    -> --dangerously-skip-permissions
   codex     -> --approve-for-me   (auto-approve, still sandboxed)
   kimi      -> -y/--yolo
   step      -> --approval-mode auto + --non-interactive-approval allow
+  pi        -> (nothing to add: pi never asks before a tool call)
+  opencode  -> --auto   (approves what isn't explicitly denied)
   codebuddy -> -y, --dangerously-skip-permissions (HIGH/CRITICAL still ask)
   zcode     -> (desktop app; no flags apply)
   workbuddy -> (desktop app, no CLI; no flags apply)
@@ -89,6 +91,8 @@ Examples:
   cw codex -p -m o3 "fix the failing test"
   cw kimi -c
   cw step -p "summarize this repo"
+  cw pi -p "summarize this repo"
+  cw opencode -p "summarize this repo"   # `opencode run`
   cw codebuddy -p "summarize this repo"
   cw zcode            # open the ZCode app on this directory (its sessions
                       #   show in `cw sessions` too)
@@ -112,7 +116,7 @@ Examples:
   cw resume 2 --cwd /path/to/other-project   # can't relocate row 2 in place -- hands off to a fresh session there
   cw 3 codex          # continue row 3 in a new Codex session with context
   cw update           # update crossweave itself
-  cw update tools     # update claude, codex, kimi, and step (whichever are
+  cw update tools     # update claude, codex, kimi, step, pi and opencode (whichever are
                       #   installed; zcode updates itself)
   cw update all       # both of the above
   cw search "the nfc frequency lock issue"   # asks {search.DEFAULT_JUDGE} (the default judge)
@@ -125,7 +129,7 @@ Examples:
                       #   install; `cw alias add` with no names restores every
                       #   name in the manifest (the fresh-machine move)
   cw rename 12 "USB 枚举握手排查"   # rename row 12 in the store itself --
-                            #   zcode/codex/claude/step/kimi today; --auto
+                            #   zcode/codex/claude/step/pi/kimi today; --auto
                             #   proposes titles for the trivial ones via the judge
   cw 12 rename "USB 枚举握手排查"   # the same command, row first
   CW_VAULT=~/Notes cw note 3   # row 3 as a done/why/open note in the vault,
@@ -273,6 +277,43 @@ def build_command(tool, rest):
             # -y, --dangerously-skip-permissions: verified against
             # `codebuddy --help` (2.161.4) -- the same flag claude takes.
             cmd.append("--dangerously-skip-permissions")
+    elif tool == "pi":
+        cmd = ["pi"]
+        if print_:
+            cmd.append("-p")
+        if continue_session:
+            cmd.append("-c")
+        if model:
+            cmd += ["--model", model]
+        if add_dirs:
+            raise UsageError("--add-dir is not supported for pi")
+        # --yolo adds nothing: pi never asks before a tool call (its
+        # security doc says so), so there is no approval to skip.
+    elif tool == "opencode":
+        # opencode's bare positional is a *directory* to start in, not a
+        # prompt; a one-shot run is its `run` subcommand, which is also the
+        # only place it takes --model.
+        if add_dirs:
+            raise UsageError("--add-dir is not supported for opencode")
+        if print_:
+            cmd = ["opencode", "run"]
+            if model:
+                cmd += ["-m", model]
+        else:
+            if model:
+                raise UsageError("opencode takes --model only with -p (`opencode run -m`); "
+                                 "pick the model inside the TUI otherwise")
+            cmd = ["opencode"]
+        if continue_session:
+            cmd.append("-c")
+        if yolo:
+            cmd.append("--auto")
+        if (not print_ and trailing and not any(a.startswith("-") for a in trailing)
+                and not (len(trailing) == 1 and os.path.isdir(trailing[0]))):
+            # words are an opening prompt, which the TUI takes as --prompt;
+            # a lone existing directory is still the positional it means
+            cmd += ["--prompt", " ".join(trailing)]
+            trailing = []
     elif tool == "zcode":
         # A desktop app plus a terminal CLI answer to the name `zcode`. With
         # the CLI on PATH, `cw zcode` opens its TUI rooted in the directory
@@ -323,11 +364,13 @@ def build_command(tool, rest):
 # How each tool takes background it should know without being asked
 # anything: appended to its system prompt, so starting a session sends no
 # message and costs no turn. kimi has only --agent-file, which replaces the
-# whole agent, and zcode/workbuddy take no flags -- none of them get it.
+# whole agent, opencode has no system-prompt flag at all, and zcode/workbuddy
+# take no flags -- none of them get it.
 CONTEXT_FLAGS = {
     "claude": lambda text: ["--append-system-prompt", text],
     "codebuddy": lambda text: ["--append-system-prompt", text],
     "step": lambda text: ["--append-system-prompt", text],
+    "pi": lambda text: ["--append-system-prompt", text],
     # -c values are TOML; a JSON string is a valid TOML basic string
     "codex": lambda text: ["-c", "developer_instructions=" + json.dumps(text, ensure_ascii=False)],
 }

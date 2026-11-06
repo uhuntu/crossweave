@@ -1,5 +1,6 @@
 """cw update - update crossweave itself, and optionally the underlying
-claude/codex/kimi/step CLIs, which each ship their own self-update command.
+claude/codex/kimi/step/pi/opencode CLIs, which each ship their own
+self-update command.
 zcode, codebuddy and workbuddy are absent from TOOL_UPDATE_CMD on purpose --
 zcode and workbuddy are desktop apps that update themselves, and codebuddy is
 an npm package the user updates through their package manager -- and
@@ -22,6 +23,12 @@ TOOL_UPDATE_CMD = {
     # kimi's does, and no argument needed ("Usage: step update [version]",
     # checked against the installed binary).
     "step": ["step", "update"],
+    # `pi update` with no target updates pi itself and nothing else
+    # (extensions need --all) -- checked against `pi update --help`.
+    "pi": ["pi", "update"],
+    # opencode spells it upgrade (update is an alias); it detects its own
+    # install method.
+    "opencode": ["opencode", "upgrade"],
 }
 
 # If this is set, failed updates retry through this proxy. Confirmed live

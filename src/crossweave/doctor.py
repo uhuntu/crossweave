@@ -20,7 +20,7 @@ import os
 import sqlite3
 import sys
 
-from . import codebuddy, color, common, step, workbuddy, zcode
+from . import codebuddy, color, common, opencode, pi, step, workbuddy, zcode
 from .claude import claude_light_records
 from .codebuddy import codebuddy_light_records
 from .codex import codex_light_records, codex_rollout_files
@@ -78,6 +78,30 @@ def _check_step():
              + _file_count(os.path.join(root, "*.jsonl")))
     records = len(step_light_records(show_all=True))
     return _verdict(files, records)
+
+
+def _check_pi():
+    root = pi.PI_SESSIONS
+    if not os.path.isdir(root):
+        return MISSING, 0, None
+    files = len(step.tree_store_files(root))
+    records = len(pi.pi_light_records(show_all=True))
+    return _verdict(files, records)
+
+
+def _check_opencode():
+    if not os.path.isfile(opencode.OPENCODE_DB):
+        return MISSING, 0, None
+    schema = opencode.opencode_schema()
+    if schema is None:
+        return BROKEN, 0, "the store exists but cannot be opened"
+    if schema == "legacy":
+        return BROKEN, 0, ("an opencode 1.x store (session/message/part tables) -- "
+                           "this reader knows the 2.x session_v2 layout")
+    if schema != "v2":
+        return BROKEN, 0, ("the db opens but has no session_v2/session_message "
+                           "tables -- schema changed?")
+    return OK, len(opencode.opencode_light_records(show_all=True)), None
 
 
 def _check_zcode():
@@ -155,6 +179,8 @@ CHECKS = (
     ("codex", _check_codex),
     ("kimi", _check_kimi),
     ("step", _check_step),
+    ("pi", _check_pi),
+    ("opencode", _check_opencode),
     ("zcode", _check_zcode),
     ("codebuddy", _check_codebuddy),
     ("workbuddy", _check_workbuddy),

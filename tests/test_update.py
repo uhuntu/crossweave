@@ -224,7 +224,8 @@ def test_update_tools_runs_each_installed_tools_update_command(monkeypatch):
 
     assert update.update_tools() == 0
     assert calls == [["claude", "update"], ["codex", "update"],
-                     ["kimi", "update", "--yes"], ["step", "update"]]
+                     ["kimi", "update", "--yes"], ["step", "update"],
+                     ["pi", "update"], ["opencode", "upgrade"]]
 
 
 def test_update_tools_prints_hint_when_claude_fails(monkeypatch, capsys):
@@ -501,7 +502,7 @@ def test_update_tools_reports_worst_exit_code_but_keeps_going(monkeypatch):
 
     assert update.update_tools() == 3
     # every installed tool still ran despite codex failing
-    assert len(calls) == 4
+    assert len(calls) == len(update.TOOL_UPDATE_CMD)
 
 
 # ---------- step's busy-binary fallback ----------

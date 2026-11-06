@@ -30,9 +30,11 @@ YELLOW = "33"
 # One hue per tool. 256-color values when the terminal has them, basic
 # colors otherwise -- close enough hues that the table still reads the same.
 TOOL_256 = {"claude": "214", "codex": "114", "kimi": "117", "step": "141",
-            "zcode": "110", "codebuddy": "75", "workbuddy": "176"}
+            "zcode": "110", "codebuddy": "75", "workbuddy": "176",
+            "pi": "180", "opencode": "252"}
 TOOL_BASIC = {"claude": "33", "codex": "32", "kimi": "36", "step": "35",
-              "zcode": "34", "codebuddy": "94", "workbuddy": "95"}
+              "zcode": "34", "codebuddy": "94", "workbuddy": "95",
+              "pi": "93", "opencode": "37"}
 
 _STATE = None  # None = not probed yet, True/False once decided
 

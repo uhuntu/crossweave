@@ -18,7 +18,7 @@ def _paths(record):
                 and m.group() == record['id']]
     if tool == 'kimi':
         return [record['dir']] if record.get('dir') else []
-    if tool in ('claude', 'step', 'codebuddy', 'workbuddy'):
+    if tool in ('claude', 'step', 'pi', 'codebuddy', 'workbuddy'):
         return [record['path']] if record.get('path') else []
     return []
 

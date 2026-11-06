@@ -132,6 +132,8 @@ def own_index():
         sessions.codex_light_records,
         lambda: sessions.kimi_light_records(False),
         lambda: sessions.step_light_records(False),
+        lambda: sessions.pi_light_records(False),
+        lambda: sessions.opencode_light_records(False),
         lambda: sessions.zcode_light_records(False),
         sessions.codebuddy_light_records,
         sessions.workbuddy_light_records,

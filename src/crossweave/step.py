@@ -95,8 +95,24 @@ def step_light_records(show_all=False):
     tool started for itself, holding another session's context rather than a
     request of anyone's. Like codex's approval reviews, those are left out
     unless --all asks for them."""
+    return tree_store_records(STEP_SESSIONS, "step", show_all)
+
+
+def tree_store_files(root):
+    """Every session file of a pi-format store, in both layouts it writes."""
+    return (glob.glob(os.path.join(root, "*", "*.jsonl"))
+            + glob.glob(os.path.join(root, "*.jsonl")))
+
+
+def tree_store_records(root, tool, show_all=False):
+    """The light records of a pi-format session store at `root`.
+
+    step is built on pi, and the two write the same files: one JSONL per
+    session under the encoded cwd, a `session` header on the first line,
+    `message` entries, and `session_info` records for names. So this one
+    scanner serves both, and `tool` is only the label the records carry."""
     by_id = {}
-    if not os.path.isdir(STEP_SESSIONS):
+    if not os.path.isdir(root):
         return []
     # Both layouts step writes: its own default is per-project subdirectories
     # (<session-dir>/<encoded-cwd>/<file>.jsonl), but point the store at a
@@ -107,8 +123,7 @@ def step_light_records(show_all=False):
     # step created was invisible here: `cw sessions --tool step` printed an
     # empty table, and a title lookup or a handoff into that store read
     # nothing.
-    for path in (glob.glob(os.path.join(STEP_SESSIONS, "*", "*.jsonl"))
-                 + glob.glob(os.path.join(STEP_SESSIONS, "*.jsonl"))):
+    for path in tree_store_files(root):
         try:
             mtime = os.path.getmtime(path)
         except OSError:
@@ -122,7 +137,7 @@ def step_light_records(show_all=False):
         if prev is not None and prev["ts"] >= mtime:
             continue
         by_id[sid] = {
-            "tool": "step", "id": sid, "ts": mtime, "path": path,
+            "tool": tool, "id": sid, "ts": mtime, "path": path,
             # The cwd is in the header; the encoded directory is only the
             # fallback, for a session whose header was never flushed.
             "cwd": cwd or common.decode_project_dir_name(os.path.basename(os.path.dirname(path))),

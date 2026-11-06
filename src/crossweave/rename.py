@@ -17,12 +17,15 @@ title is native to the tool, not a cw-side overlay:
   step    append a session_info record to the session file (both of
           step's readers keep the last one, and its selector shows the
           name in place of the first prompt)
-  kimi    rewrite state.json's title with titleKind 'custom' (every
+  pi      the same session_info record -- step is built on pi, and the
+          two share the format
+  kimi   rewrite state.json's title with titleKind 'custom' (every
           titler path returns early on 'custom', so the name is
           permanent)
 
-codebuddy and workbuddy have no rename surface cw knows, and are refused
-rather than guessed at.
+codebuddy, workbuddy and opencode have no rename surface cw knows, and are
+refused rather than guessed at (opencode's title sits in a database its
+background service owns, and its CLI has no rename command).
 
 The row number may lead or follow the verb: `cw rename 12 "..."` and
 `cw 12 rename "..."` are the same command, the latter reading the way
@@ -238,7 +241,9 @@ def _apply(r, title):
         return _rename_codex(sid, title)
     if tool == "claude":
         return _rename_claude(sid, title, r.get("path"))
-    if tool == "step":
+    if tool in ("step", "pi"):
+        # pi writes the same session_info record step does (step is a pi
+        # derivative): `pi --name` and /name append exactly this
         return _rename_step(title, r.get("path"))
     if tool == "kimi":
         return _rename_kimi(r.get("dir"), title)
@@ -259,12 +264,12 @@ def _is_trivial(title):
     return sessions.title_says_nothing(t)
 
 
-# zcode, codex, claude, step and kimi each have a rename surface cw can
-# write (see the module docstring); codebuddy and workbuddy do not -- the
+# zcode, codex, claude, step, pi and kimi each have a rename surface cw can
+# write (see the module docstring); codebuddy, workbuddy and opencode do not -- the
 # only title field either offers sits in a live app's own database, not in
 # the transcript cw reads -- and both are refused before anything else
 # happens to their rows.
-_RENAMABLE = ("zcode", "codex", "claude", "step", "kimi")
+_RENAMABLE = ("zcode", "codex", "claude", "step", "pi", "kimi")
 
 
 def _is_live(r):
@@ -338,8 +343,10 @@ def _session_messages(r):
         if tool == "codex":
             path = r.get("path") or sessions.codex_rollout_path(r["id"])
             return sessions.codex_handoff_messages(path) if path else []
-        if tool == "step":
+        if tool in ("step", "pi"):
             return sessions.step_handoff_messages(r["path"]) if r.get("path") else []
+        if tool == "opencode":
+            return sessions.opencode_handoff_messages(r["id"])
         if tool == "kimi":
             return sessions.kimi_handoff_messages(r["dir"]) if r.get("dir") else []
         if tool == "zcode":
@@ -496,7 +503,7 @@ def _usage():
           "       cw rename --auto [<N>... | --trivial] [-y] [--judge T]\n"
           "  <N> is a row from the last `cw`/`cw sessions` listing. Renames\n"
           "  write through to the store itself (zcode, codex, claude, step,\n"
-          "  kimi).\n"
+          "  pi, kimi).\n"
           "  A bare `cw <N> rename` asks the judge for a title for that one\n"
           "  row and applies it. --auto proposes titles for several rows at\n"
           "  once and asks before writing; --trivial sweeps every session\n"
