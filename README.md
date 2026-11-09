@@ -166,7 +166,7 @@ An id works wherever a row number does, and is the steadier of the two: `cw <id-
 
 ### `cw ui`: the interactive picker
 
-`cw ui` puts the same sessions in one scrollable list in the terminal — every tool's, newest first, with the same rows left out that `cw sessions` leaves out. `/` starts a filter (every word has to appear in the title, directory, tool or id; Chinese works), Enter resumes the highlighted session through the same path as `cw resume`, Esc clears the filter and then quits. Tab steps through the tools, `.` keeps only the sessions of the directory you are standing in, and the pane at the bottom shows the selected session's full id, turn count, whether it has a note (`✎`), and where it left off.
+`cw ui` puts the same sessions in one scrollable list in the terminal — every tool's, newest first, with the same rows left out that `cw sessions` leaves out. `/` starts a filter (every word has to appear in the title, directory, tool or id; Chinese works), Enter resumes the highlighted session through the same path as `cw resume`, Esc clears the filter and then quits. Tab steps through the tools, `.` keeps only the sessions of the directory you are standing in, and the pane at the bottom shows the selected session's full id, turn count, whether it has a note (`✎`), whether a wiki page was built from it (`⌗`), how many rows on screen share its topic (`⧉N`), and where it left off.
 
 The highlighted row can be acted on without leaving: `h` hands it off to another tool (a digit picks which, any other key cancels), `n` writes its note, `r` renames it (type a title, or leave it empty for the judge to propose one), `d` deletes it after the usual y/N. These run the same commands as `cw <N> codex`, `cw note`, `cw rename` and `cw delete`, in the plain terminal; note, rename and delete then come back to the list, refreshed, on the same session. Because those commands take a row of the last listing, the picker writes what it shows as that listing first — after `cw ui`, `cw resume 3` means the third row the picker had on screen.
 
@@ -189,6 +189,20 @@ One exception: kimi cannot open an interactive session with an initial prompt (a
 A zcode row can be a handoff *source* like any other — `cw 3 claude` exports its conversation and continues in Claude Code, which is the way out when a session has grown past what its model can serve. As a *target* it needs the `zcode` CLI on PATH: the CLI seeds one headless `zcode -p` run and resumes the session it persisted (the kimi dance); with only the desktop app installed the command refuses, since the desktop starts no session from a prompt.
 
 WorkBuddy has no such other half: nothing but the app itself starts one of its sessions, so a workbuddy row is a handoff *source* (`cw 3 claude` exports its conversation and continues there — the only way to keep working on one from a terminal) and never a *target* (`cw 3 workbuddy` refuses, because there is no CLI to hand a prompt to).
+
+### The same topic, again
+
+A request that keeps coming back gets a fresh session every time, and nine sessions on one question used to look like nine unrelated rows. Two things name the repetition now.
+
+The listing groups rows by topic — the title, with a `(handoff)` prefix dropped (a handoff continues the topic it was handed) and case folded, since the same request capitalized two ways is still the same request. Titles that say nothing (`(no title)`, a pasted URL, a bare "ok") cluster nothing: 200 rows of `(no title)` are one absence of a topic, not a topic with 200 sessions. Every member of a cluster carries `⧉N` after its title (next to the `✎` a note would put there), and one dim line under the header names it — `⧉ 9 sessions share 'DevGetter上架与MDM分发方案' -- 650 turns, newest row #7` — pointing at the newest member's row rather than a range, since a cluster's rows are spread through the time order. `cw ui` shows the same clusters across the rows it has on screen and names them in the preview pane.
+
+Starting a session in a directory that keeps reopening a topic prints one stderr line first:
+
+```
+cw: 5 sessions here on 'DevGetter上架与MDM分发方案', newest 2d ago -- continue: `cw resume kimi 80a9a7ce`; distill: `cw note 80a9a7ce`
+```
+
+The repetition is named at the moment a sixth session is about to start, with the two ways out of it: resume the newest one, or distill it into a note. It reads the last listing's cache rather than the stores, so it costs nothing on every launch, and it is only as current as that listing — `CW_CONTEXT=off` silences it, the same clean-start intent that skips the vault notes. Subcommands (`cw claude doctor`), print runs (`cw claude -p`) and tools that start no terminal session get nothing.
 
 ### How `cw search` works
 

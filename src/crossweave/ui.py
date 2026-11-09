@@ -112,6 +112,12 @@ class Picker:
         here = self.cwd if self.here_only else None
         self.shown = [it for it in self.items if matches(it[0], words, self.tool, here)]
         self.cursor = min(self.cursor, max(0, len(self.shown) - 1))
+        # Same-topic clusters across the rows on screen (the plain listing
+        # does the same over its rows): each member's title carries the
+        # cluster size, the preview names it.
+        clusters = sessions.topic_clusters([it[0] for it in self.shown])
+        self.topic_count = {row[1]: len(members)
+                            for members in clusters.values() for row in members}
 
     def selected(self):
         return self.shown[self.cursor] if self.shown else None
@@ -264,9 +270,11 @@ class Picker:
                 # The ✎ follows the title (as in the plain listing), not
                 # before it -- it marks the row, it is not part of the title.
                 # The ⌗ rides after it: a wiki page was built from this
-                # session.
+                # session. The ⧉N rides after both: N rows on screen share
+                # this session's topic.
                 marks = ("✎" if sid in self.noted else "") + \
-                        ("⌗" if sid in self.wiked else "")
+                        ("⌗" if sid in self.wiked else "") + \
+                        (f"⧉{self.topic_count[sid]}" if sid in self.topic_count else "")
                 if marks:
                     x = put(scr, y, x, _clip(title or "", rest - 1 - len(marks)), line_attr)
                     x = put(scr, y, x, " " + marks, line_attr)
@@ -289,6 +297,8 @@ class Picker:
                     facts += "  ✎ noted"
                 if sid in self.wiked:
                     facts += "  ⌗ wiki: " + ", ".join(self.wiked[sid])
+                if sid in self.topic_count:
+                    facts += f"  ⧉ {self.topic_count[sid]} sessions on this topic"
                 put(scr, y0 + 1, 0, _clip(facts, w - 1), curses.A_BOLD)
                 put(scr, y0 + 2, 0, _clip(f" {cwd}", w - 1), curses.A_DIM)
                 lines = wrap(f"↳ {last}" if last else "↳ (no message text)", w - 2, preview_h - 3)
@@ -461,12 +471,12 @@ def cmd_ui(args):
         elif isinstance(action, tuple):  # ("handoff", target)
             # The commands below take a row of the last listing: make the
             # picker's view that listing, and the highlighted row its number.
-            sessions.write_list_cache([{"tool": r[0], "id": r[1]} for r, _ in picker.shown])
+            sessions.write_list_cache([sessions.list_cache_entry(r) for r, _ in picker.shown])
             row = str(picker.cursor + 1)
             run_cw_command([sys.executable, "-m", "crossweave.cli",
                             row, action[1]])
         else:
-            sessions.write_list_cache([{"tool": r[0], "id": r[1]} for r, _ in picker.shown])
+            sessions.write_list_cache([sessions.list_cache_entry(r) for r, _ in picker.shown])
             row = str(picker.cursor + 1)
             run_action(action, row, tool, sid)
         if not pause():

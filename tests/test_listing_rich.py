@@ -300,7 +300,15 @@ def test_cmd_list_counts_turns_for_the_rows_it_prints(monkeypatch, tmp_path, cap
     # header, then one row per session, newest first
     assert lines[0].split()[-2:] == ["TURNS", "TITLE"]
     row_lines = [l for l in lines[1:] if re.match(r"^\s*\d+\s", l)]
-    turns_of = {line.split()[-1]: line.split()[-2] for line in row_lines}
+    turns_of = {}
+    for line in row_lines:
+        # A title is not always the last word: the marks a row earned ride
+        # after it, and here two rows share a topic ("gamma"/"Gamma"), so
+        # both carry the cluster size.
+        words = line.split()
+        while words and re.fullmatch(r"[✎⌗⧉]\d*|\[[nw]\]|\[x\]\d*", words[-1]):
+            words.pop()
+        turns_of[words[-1]] = words[-2]
     assert turns_of == {"alpha": "2", "gamma": "1", "Gamma": "3"}  # tool result not counted
 
 

@@ -10,7 +10,7 @@ import os
 import re
 import sys
 
-from . import __version__, alias, delete, doctor, machines, note, rename, search, sessions, ui, update, wiki
+from . import __version__, alias, common, delete, doctor, machines, note, rename, search, sessions, ui, update, wiki
 
 TOOLS = ("claude", "codex", "kimi", "step", "pi", "opencode", "zcode", "codebuddy", "workbuddy")
 
@@ -433,6 +433,74 @@ def attach_context(tool, cmd):
 DEFAULT_LIST_LIMIT = "15"
 
 
+# Tools a steer hint makes no sense for: neither opens a terminal session
+# (`cw zcode` only opens the app, `cw workbuddy` is refused earlier for the
+# same reason).
+NON_SESSION_TOOLS = ("zcode", "workbuddy")
+
+
+def starts_session(tool, rest):
+    """Whether `cw <tool> <rest>` opens a fresh agent session -- as opposed
+    to a subcommand (`cw claude doctor`), a print run (`cw claude -p`), or
+    a tool that starts nothing in the terminal."""
+    if tool not in sessions.TOOLS or tool in NON_SESSION_TOOLS:
+        return False
+    own = rest[:rest.index("--")] if "--" in rest else rest
+    if any(a in ("-p", "--print") for a in own):
+        return False
+    positional = [a for a in own if not a.startswith("-")]
+    if positional and positional[0] == own[0] and _SUBCOMMAND_RE.match(own[0]):
+        return False
+    return True
+
+
+def steer_hint():
+    """One stderr line per topic this directory keeps reopening, when the
+    last listing knew about it.
+
+    The trigger this answers: nine sessions titled the same thing, the
+    ninth re-deriving what the eighth settled. The hint names the
+    repetition at the moment a tenth is about to start, and points at
+    continuing the newest one (`cw resume`) or distilling it (`cw note`)
+    instead. It reads the listing cache rather than the stores -- a hint
+    cheap enough to print on every launch, as current as the listing it
+    reflects. CW_CONTEXT=off silences it, the same clean-start intent that
+    skips the vault notes."""
+    if os.environ.get("CW_CONTEXT", "").strip().lower() in ("0", "off", "no", "false"):
+        return
+    here = os.getcwd()
+    rows = []
+    for entry in sessions.read_list_cache():
+        cwd = entry.get("cwd")
+        if entry.get("machine") or not isinstance(cwd, str):
+            continue
+        if not common._same_path(cwd, here):
+            continue
+        if sessions.topic_key(entry.get("title")):
+            rows.append(entry)
+    if len(rows) < 2:
+        return
+    clusters = {}
+    for entry in rows:
+        clusters.setdefault(sessions.topic_key(entry["title"]), []).append(entry)
+    printed = 0
+    for _key, members in sorted(clusters.items(), key=lambda kv: -len(kv[1])):
+        # A topic opened once is not a repetition -- it is every other row
+        # in the listing, and printing it would make the hint noise.
+        if len(members) < 2:
+            continue
+        if printed >= 2:
+            break
+        printed += 1
+        newest = members[0]  # the cache rides in listing order, newest first
+        name = sessions._without_inherited_mark(newest["title"])
+        when = f", newest {newest['when']}" if newest.get("when") else ""
+        print(f"cw: {len(members)} sessions here on {name!r}{when} -- "
+              f"continue: `cw resume {newest['tool']} {newest['id'][:8]}`; "
+              f"distill: `cw note {newest['id'][:8]}`",
+              file=sys.stderr)
+
+
 def default_list_limit():
     """How many rows a bare `cw` shows: CW_LIMIT (a number or `all`) when it
     is set to something usable, else 15."""
@@ -570,6 +638,8 @@ def main():
 
     if not no_context and wants_context(tool, rest):
         cmd = attach_context(tool, cmd)
+    if starts_session(tool, rest):
+        steer_hint()
     sessions.exec_or_die(cmd)
 
 

@@ -145,6 +145,20 @@ def test_reload_keeps_the_filters_and_the_highlighted_session(monkeypatch):
 
 def test_reload_drops_a_tool_filter_whose_tool_is_gone(monkeypatch):
     p = picker(monkeypatch)
-    p.key("\t", 10)  # claude
+    p.key("\t", 1 if False else 10)  # claude
     p.reload([ITEMS[1], ITEMS[2]])
     assert p.tool is None and len(p.shown) == 2
+
+
+def test_the_picker_counts_the_rows_sharing_a_topic(monkeypatch):
+    """The rows on screen, not the whole listing: a filter that narrows to
+    one session of a topic leaves a cluster of one, which is no cluster."""
+    p = picker(monkeypatch)
+    assert p.topic_count == {}
+    p.items = list(ITEMS) + [
+        (row("claude", "ddd-4", "/w/other", "fix the nfc lock"), {"id": "ddd-4"})]
+    p.refilter()
+    assert p.topic_count == {"bbb-2": 2, "ddd-4": 2}
+    p.query = "ddd-4"  # the id: one row, so no repetition to name
+    p.refilter()
+    assert p.topic_count == {}

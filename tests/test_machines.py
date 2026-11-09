@@ -342,11 +342,13 @@ def test_the_machines_flag_merges_and_the_cache_covers_the_union(monkeypatch, tm
     assert "remote only" in out and "kestrel" in out
     # a row the local store also holds is a local row, never printed twice
     assert out.count("m1") == 1
-    assert sessions.read_list_cache() == [
-        {"tool": "claude", "id": "s1"},
-        {"tool": "claude", "id": "m1"},
-        {"tool": "codex", "id": "r1", "machine": "kestrel"},
-    ]
+    cached = sessions.read_list_cache()
+    assert [(e["tool"], e["id"]) for e in cached] == [
+        ("claude", "s1"), ("claude", "m1"), ("codex", "r1")]
+    # the remote row keeps its machine tag; the local rows keep the display
+    # facts the steer hint reads back
+    assert cached[2]["machine"] == "kestrel" and "cwd" not in cached[2]
+    assert [e["title"] for e in cached[:2]] == ["local work", "mirrored work"]
 
 
 def _remote_cache(tmp_path, monkeypatch, **extra):
@@ -691,12 +693,14 @@ def test_the_remote_section_gets_the_same_slice_as_the_local_one(monkeypatch, tm
     out = capsys.readouterr().out
     assert "and 3 more remote sessions not shown" in out
     assert "remote 1" in out and "remote 4" not in out  # the newest two stayed
-    # the cache covers exactly what was printed: the row numbers hold
-    assert sessions.read_list_cache() == [
-        {"tool": "claude", "id": "s1"},
-        {"tool": "codex", "id": "r0", "machine": "swc-build"},
-        {"tool": "codex", "id": "r1", "machine": "swc-build"},
-    ]
+    cached = sessions.read_list_cache()
+    # the cache covers exactly what was printed, and the row numbers hold
+    assert [(e["tool"], e["id"]) for e in cached] == [
+        ("claude", "s1"), ("codex", "r0"), ("codex", "r1")]
+    # a remote row keeps its machine tag (and no cwd of this machine's),
+    # while the local rows carry the display facts the steer hint reads
+    assert all(e["machine"] == "swc-build" and "cwd" not in e for e in cached[1:])
+    assert cached[0]["title"] == "local work"
 
 
 def test_machine_targets_stop_at_the_next_flag(monkeypatch):

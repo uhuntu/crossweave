@@ -2197,7 +2197,10 @@ def test_cmd_list_writes_numbered_cache(monkeypatch, tmp_path, capsys):
     assert out.splitlines()[1].split()[0] == "1"
 
     cached = json.loads(cache_file.read_text())
-    assert cached == [{"tool": "kimi", "id": "session_abc123"}]
+    # The row's display facts ride along (cwd, title, when): the steer hint
+    # reads them back to name a topic this directory keeps reopening.
+    assert cached == [{"tool": "kimi", "id": "session_abc123", "cwd": "/home/hunt",
+                      "title": "(no title)", "when": "36mo ago"}]
 
 
 def test_resume_by_number_dispatches_correct_session(monkeypatch, tmp_path):
@@ -2699,7 +2702,9 @@ def test_cmd_list_omits_sessions_a_tool_started_for_itself(monkeypatch, tmp_path
     assert "cw search judge" not in out
     assert len(out.splitlines()) == 2  # header + the one real row
     # numbering must stay resumable: the dropped rows get no number
-    assert json.loads(cache_file.read_text()) == [{"tool": "codex", "id": real}]
+    assert json.loads(cache_file.read_text()) == [
+        {"tool": "codex", "id": real, "cwd": "/x",
+         "title": "fix the login crash", "when": "692mo ago"}]
 
 
 @pytest.mark.parametrize("stored_title", [None, "Guardian review"])

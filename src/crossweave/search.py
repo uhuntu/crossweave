@@ -786,7 +786,7 @@ def cmd_search(argv):
     # One cache write for the union in printed order, so `cw resume <N>`
     # numbers stay valid across both sections.
     sessions.write_list_cache(
-        [{"tool": tool, "id": full_id} for tool, full_id, *_ in exact_rows + semantic]
+        [sessions.list_cache_entry(r) for r in exact_rows + semantic]
     )
     if exact_rows:
         print(f"exact matches for {topic!r} (literal, case-insensitive):")

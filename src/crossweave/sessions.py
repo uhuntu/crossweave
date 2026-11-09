@@ -823,9 +823,11 @@ def cmd_list(args):
     # One cache write for the union in printed order, so `cw resume <N>`
     # numbers stay valid across both sections -- the search precedent. A
     # remote row carries its machine so the by-number paths can name it
-    # when they refuse.
+    # when they refuse. The local rows keep their display facts (cwd, title,
+    # when) as well: the steer hint reads them back to name a topic this
+    # directory keeps reopening, without walking the stores again.
     write_list_cache(
-        [{"tool": t, "id": i} for t, i, *_ in rows]
+        [list_cache_entry(r) for r in rows]
         + [{"tool": s["tool"], "id": s["id"], "machine": s["machine"],
             **({"ssh": s["ssh"]} if s.get("ssh") else {})}
            for s in remotes])
@@ -939,6 +941,54 @@ def _without_inherited_mark(title):
         if title.startswith(mark):
             return title[len(mark):]
     return title
+
+
+def topic_key(title):
+    """Normalize a display title for same-topic clustering, or None when the
+    title is not a topic at all.
+
+    A handoff/fork inherits the topic it continues, so the mark drops; case
+    folds, because the same request capitalized two ways is still the same
+    request. Titles that say nothing (`(no title)`, a pasted URL, a bare
+    acknowledgement) cluster nothing -- 200 rows of `(no title)` is one
+    absence of a topic, not a topic with 200 sessions."""
+    text = _without_inherited_mark((title or "").strip()).casefold()
+    if not text or title_says_nothing(text):
+        return None
+    return text
+
+
+def topic_clusters(rows):
+    """Group resolve_row-shaped tuples by topic key. Returns
+    {key: [row, ...]} for keys shared by at least two rows, each list in
+    the order the rows came in (the listings sort newest first, so the
+    first member is the freshest take on the topic)."""
+    groups = {}
+    for row in rows:
+        key = topic_key(row[5])
+        if key:
+            groups.setdefault(key, []).append(row)
+    return {key: members for key, members in groups.items() if len(members) >= 2}
+
+
+def list_cache_entry(row):
+    """One listing row as a cache entry: {tool, id} plus the display facts
+    (cwd, title, when) a resolve_row-shaped tuple carries, when it does.
+    The resume-by-number readers use only tool/id -- the extra fields are
+    for the steer hint, which reads them back to spot same-topic repeats
+    without re-deriving titles from the stores."""
+    entry = {"tool": row[0], "id": row[1]}
+    if len(row) > 5:
+        cwd = row[4]
+        if isinstance(cwd, str) and cwd:
+            entry["cwd"] = cwd
+        if isinstance(row[5], str) and row[5]:
+            entry["title"] = row[5]
+        if isinstance(row[2], str) and row[2]:
+            entry["when"] = row[2]
+    return entry
+
+
 # A handoff of a handoff is followed back toward the original topic; the cap
 # is only a guard against a cycle in the (hand-editable) session stores.
 HANDOFF_MAX_DEPTH = 5

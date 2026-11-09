@@ -50,6 +50,15 @@ NOTED_CHOICES = ("✎", "[n]")
 # After the title of a session a `cw wiki` page cites: the page was built
 # from it. ASCII stand-in for legacy code pages.
 WIKI_CHOICES = ("⌗", "[w]")
+# After the title of a session that shares its topic with other rows in
+# this listing, with the cluster size ("⧉9"): nine sessions have discussed
+# this. ASCII stand-in for legacy code pages.
+TOPIC_CHOICES = ("⧉", "[x]")
+# How many same-topic clusters get a summary line under the header before
+# the rest are counted off. A whole-history listing (`cw full`) can hold
+# dozens of them, and a preamble longer than the first screen of rows is
+# the table's own worst enemy.
+TOPIC_SUMMARY_MAX = 5
 # A last message is a preview, not a transcript: one line, same budget as a
 # title.
 LAST_MESSAGE_MAX = 70
@@ -178,7 +187,7 @@ def render_rows(rows, write_cache=True, start=1, notes=None, full_notes=False,
     rows = [(*r[:4], r[4] if isinstance(r[4], str) else "?", *r[5:]) for r in rows]
 
     if write_cache:
-        sessions.write_list_cache([{"tool": tool, "id": full_id} for tool, full_id, *_ in rows])
+        sessions.write_list_cache([sessions.list_cache_entry(r) for r in rows])
 
     notes = notes or {}
     inline_why = bool(notes) and not full_notes
@@ -214,6 +223,12 @@ def render_rows(rows, write_cache=True, start=1, notes=None, full_notes=False,
         except Exception:
             wiked = {}
     wiki_mark = _encodable(WIKI_CHOICES)
+    # Same-topic clusters, listing only (search rows have no sources): the
+    # rows that re-discuss one topic get a "⧉N" mark, and one summary line
+    # per cluster names the repetition under the header.
+    topics = sessions.topic_clusters(rows) if sources else {}
+    topic_size = {row[1]: len(members) for members in topics.values() for row in members}
+    topic_mark = _encodable(TOPIC_CHOICES)
     if show_turns:
         # Fit the plumbing before the title: the cwd is the most compressible
         # (a path's tail still names the project), and if even a floor-width
@@ -256,6 +271,35 @@ def render_rows(rows, write_cache=True, start=1, notes=None, full_notes=False,
         label_pad = " " * max(0, w_title - 2 - len(notes_label))
         header += f"{label_pad}  {notes_label}"
     print(color.paint(header, color.BOLD))
+    if topics:
+        # One line per cluster, biggest first: the number is the point
+        # ("this topic has been opened nine times"), so it leads. Rows are
+        # not contiguous -- a cluster's members are spread across the time
+        # order -- which is why each line points at the newest member's row
+        # number instead of a range.
+        width = shutil.get_terminal_size((100, 24)).columns
+        positions = {row[1]: n for n, row in enumerate(rows, start=start)}
+        ranked = sorted(topics.items(), key=lambda kv: -len(kv[1]))
+        for key, members in ranked[:TOPIC_SUMMARY_MAX]:
+            turns = 0
+            for row in members:
+                record = sources.get(row[1])
+                if record is None:
+                    continue
+                counted = sessions.session_turns(record)
+                if counted:
+                    turns += counted
+            name = sessions._without_inherited_mark(members[0][5])
+            line = (f"{topic_mark} {len(members)} sessions share {name!r}"
+                    f" -- {turns} turns, newest row #{positions[members[0][1]]}")
+            print(color.paint(_clip(line, width), color.DIM))
+        hidden = len(ranked) - TOPIC_SUMMARY_MAX
+        if hidden > 0:
+            # `cw full` has a cluster for every topic anyone has ever
+            # reopened: the preamble would otherwise push the table off the
+            # first screen. The rows keep their marks either way.
+            print(color.paint(_clip(
+                f"{topic_mark} ... and {hidden} more repeated topics", width), color.DIM))
     indent = " " * (w_num + 2)
     # The "where it left off" line hangs off the row number rather than under
     # the title: the title column starts most of the way across the table, and
@@ -287,6 +331,8 @@ def render_rows(rows, write_cache=True, start=1, notes=None, full_notes=False,
                                        color.YELLOW if stale else color.DIM)
         if full_id in wiked:
             title += " " + color.paint(wiki_mark, color.DIM)
+        if full_id in topic_size:
+            title += " " + color.paint(f"{topic_mark}{topic_size[full_id]}", color.DIM)
         if inline_why:
             line += f"{_clip(title, w_title):<{w_title}}  {_clip(notes.get((tool, full_id), ''), w_why)}"
         else:
