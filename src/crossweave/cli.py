@@ -487,7 +487,10 @@ def steer_hint():
         name = sessions._without_inherited_mark(entry.get("title") or "")
         when = f", newest {entry['when']}" if entry.get("when") else ""
         print(f"cw: {len(members)} sessions here continue {name!r}{when} -- "
-              f"continue: `cw resume {entry['tool']} {entry['id'][:8]}`; "
+              # The listing's own id width: eight characters were only
+              # "session_" for every kimi session, and not enough to tell
+              # codex's 01a1... ids apart either (see sessions.ID_SHOW).
+              f"continue: `cw resume {entry['tool']} {entry['id'][:sessions.ID_SHOW]}`; "
               f"distill: `cw note {n}`",
               file=sys.stderr)
 

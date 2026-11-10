@@ -269,7 +269,7 @@ def test_the_hint_names_a_topic_that_keeps_going_here(cached_listing, monkeypatc
     ])
     out = _hint(monkeypatch, here, capsys)
     assert "3 sessions here continue 'DevGetter', newest 8m ago" in out
-    assert "cw resume kimi " + "k" * 8 in out
+    assert "cw resume kimi " + "k" * sessions.ID_SHOW + "`" in out
     assert "distill: `cw note 2`" in out  # the folded row's number notes the topic
     assert "x" * 8 not in out
 
@@ -321,3 +321,12 @@ def test_starts_session_is_true_for_a_fresh_session(tool, rest):
 ])
 def test_starts_session_is_false_for_everything_else(tool, rest):
     assert not cli.starts_session(tool, rest)
+
+
+def test_the_hint_gives_a_kimi_id_that_resumes(cached_listing, monkeypatch, tmp_path, capsys):
+    """Eight characters of a kimi id are "session_" -- every one of them."""
+    here = tmp_path / "app"
+    here.mkdir()
+    cached_listing.write_list_cache([
+        _topic_entry(here, 3, sid="session_80a9a7ce-2fd4-4925-a723-1decb313393d")])
+    assert "`cw resume kimi session_80a9a7ce-2fd`" in _hint(monkeypatch, here, capsys)
