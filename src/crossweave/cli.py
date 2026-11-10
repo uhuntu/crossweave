@@ -470,14 +470,14 @@ def steer_hint():
         return
     here = os.getcwd()
     rows = []
-    for entry in sessions.read_list_cache():
+    for n, entry in enumerate(sessions.read_list_cache(), start=1):
         cwd = entry.get("cwd")
         if entry.get("machine") or not isinstance(cwd, str):
             continue
         if not common._same_path(cwd, here):
             continue
         if sessions.topic_key(entry.get("title")):
-            rows.append(entry)
+            rows.append(dict(entry, row=n))
     # A folded listing row carries its whole topic's titles (the older
     # sessions have no row of their own); an unfolded one is just itself.
     clusters = {}
@@ -500,9 +500,13 @@ def steer_hint():
         # the cache rides in listing order, newest first
         name = sessions._without_inherited_mark(newest["title"])
         when = f", newest {newest['when']}" if newest.get("when") else ""
+        # A folded row's number notes the whole topic; an id would note
+        # one session of it.
+        distill = (f"cw note {newest['row']}" if newest.get("topic_members")
+                   else f"cw note {newest['id'][:8]}")
         print(f"cw: {len(titles)} sessions here on {name!r}{when} -- "
               f"continue: `cw resume {newest['tool']} {newest['id'][:8]}`; "
-              f"distill: `cw note {newest['id'][:8]}`",
+              f"distill: `{distill}`",
               file=sys.stderr)
 
 

@@ -1020,6 +1020,8 @@ def list_cache_entry(row, members=None):
         # A folded row stands for its whole topic; the steer hint counts
         # the repeat from these, since the older sessions have no row.
         entry["topic_titles"] = [m[5] for m in members if isinstance(m[5], str)]
+        # and `cw note <N>` notes the topic from these
+        entry["topic_members"] = [{"tool": m[0], "id": m[1]} for m in members]
     return entry
 
 

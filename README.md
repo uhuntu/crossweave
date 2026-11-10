@@ -148,6 +148,7 @@ cw 3 note                   # the same, row first
 cw note --all               # every session with no note yet, or one that moved on since (asks first)
 cw note --since 2d -y       # only the last two days, no question -- the shape for cron
 cw note --index             # rebuild every project's _index.md (open items + all notes), no judge
+cw note 9                   # on a folded row (⧉ N): one note for the whole topic; --session for just that one
 cw context                  # this project's newest notes, to hand a new session
 cw codex "$(cw context) 接着做"   # ...like this, in any of the tools
 
@@ -199,7 +200,7 @@ The listing groups rows by topic — the title, with a `(handoff)` prefix droppe
 Starting a session in a directory that keeps reopening a topic prints one stderr line first:
 
 ```
-cw: 5 sessions here on 'DevGetter上架与MDM分发方案', newest 2d ago -- continue: `cw resume kimi 80a9a7ce`; distill: `cw note 80a9a7ce`
+cw: 5 sessions here on 'DevGetter上架与MDM分发方案', newest 2d ago -- continue: `cw resume kimi 80a9a7ce`; distill: `cw note 9`
 ```
 
 The repetition is named at the moment a sixth session is about to start, with the two ways out of it: resume the newest one, or distill it into a note. It reads the last listing's cache rather than the stores, so it costs nothing on every launch, and it is only as current as that listing — `CW_CONTEXT=off` silences it, the same clean-start intent that skips the vault notes. Subcommands (`cw claude doctor`), print runs (`cw claude -p`) and tools that start no terminal session get nothing.
@@ -283,7 +284,9 @@ With `CW_VAULT` set, the listing marks every session that has a note: `✎` afte
 
 Each project folder also gets an `_index.md`, the page to open in Obsidian for a project: the open items from its five newest notes at the top, each under a link to its note, then every note in one table with its date, tool and the `cw resume` command for its session. It is built from the notes alone, with no judge call, and rebuilt whenever `cw note` writes into that folder; `cw note --index` rebuilds every project's at once (after editing or deleting notes by hand, say). Like the notes it is generated, so edits to it are replaced. It has no `session:` line, so `cw context` and the `✎` marks never take it for a note.
 
-`cw context [DIR]` reads them back: the newest three notes for that directory's project (the current one by default; `--limit N` for more), printed as one Markdown block a new session can start from — in whichever tool, since it is only text: `cw claude "$(cw context) 接着做"`. With no notes it prints nothing and exits 1, so the substitution stays empty.
+A topic gets one note of its own. `cw note <N>` on a folded row (the `⧉ N` rows of a bare `cw`, or a topic row in `cw ui`) reads every session of that topic in the directory — not just the ones the listing folded — oldest first, each from its note when that is still current and from its digest otherwise, and asks the judge for one note in four sections: where the topic stands now, the decisions that still hold, what is still open, and one line per session of how it got there (`## 现状` / `## 决定` / `## 还剩什么` / `## 经过` in a Chinese topic, `## Now` / `## Decisions` / `## Open` / `## History` otherwise). It lands in the project folder as `<topic>.md` — no date, since there is one per topic — and noting the topic again rewrites it. Its frontmatter lists the sessions it covers; it carries `topic_key:` rather than `session:`, so nothing that reads session notes mistakes it for one. The folded row's `✎` is then the topic note's, and turns `✎+` when a session joins the topic or one of its sessions moves on after the note. `--session` notes only the row's own session, as before. The project's `_index.md` lists its topic notes under `## Topics` and takes their open items in place of the older ones of the sessions they cover.
+
+`cw context [DIR]` reads them back: the newest three notes for that directory's project — its topic notes first, then the newest session notes no topic note covers, so three sessions of one topic no longer take every slot (the current one by default; `--limit N` for more), printed as one Markdown block a new session can start from — in whichever tool, since it is only text: `cw claude "$(cw context) 接着做"`. With no notes it prints nothing and exits 1, so the substitution stays empty.
 
 You rarely need to type it: with `CW_VAULT` set, a fresh interactive `cw claude`, `cw codex`, `cw step`, `cw pi` or `cw codebuddy` starts with those same notes already in hand — appended to the tool's system prompt (`--append-system-prompt`; codex's `developer_instructions`), so the session knows where the project stands without a message being sent or a turn spent. One stderr line says how many notes went in. It stays out of a `-p` run (a script's output should not change with the vault), a `-c` continuation (that session already knows), a subcommand (`cw claude doctor`), and a launch that passes its own system prompt; `--no-context` skips it once and `CW_CONTEXT=off` for good. kimi is left out: its only option, `--agent-file`, replaces the whole agent rather than adding to it. So is opencode, which has no system-prompt flag.
 

@@ -85,6 +85,7 @@ class Picker:
         self.details = {}  # full id -> (turns, last message), filled on view
         self.turns = {}  # full id -> turn count, filled as rows render
         self.noted = note.noted_index()
+        self.topic_noted = note.topic_noted_index()
         self.wiked = wiki.wiki_index()
         self.tools = [t for t in sessions.TOOLS if any(r[0] == t for r, _ in items)]
         self.refilter()
@@ -98,6 +99,7 @@ class Picker:
         self.details = {}
         self.turns = {}
         self.noted = note.noted_index()
+        self.topic_noted = note.topic_noted_index()
         self.wiked = wiki.wiki_index()
         self.tools = [t for t in sessions.TOOLS if any(r[0] == t for r, _ in items)]
         if self.tool not in self.tools:
@@ -144,6 +146,17 @@ class Picker:
         self.cursor = min(self.cursor, max(0, len(self.shown) - 1))
         self.topic_count = {sid: len(group) for sid, group in self.members.items()}
 
+    def write_cache(self):
+        """Make the rows on screen the last listing, as the row-number
+        commands read it. A folded row carries its topic's sessions, so
+        `n` on it notes the topic -- the same as `cw note <N>` on the plain
+        listing's folded row."""
+        sessions.write_list_cache([
+            sessions.list_cache_entry(
+                r, [m[0] for m in self.members[r[1]]]
+                if self.kind[n] == "head" else None)
+            for n, (r, _rec) in enumerate(self.shown)])
+
     def head_index(self, n):
         """The row a member row hangs under (n itself for any other row)."""
         while n > 0 and self.kind[n] == "member":
@@ -168,6 +181,18 @@ class Picker:
             self.expanded.discard(key)
             self.cursor = n
         self.refilter()
+
+    def topic_note(self, sid):
+        """"✎" / "✎+" (behind its sessions) for a topic row with a topic
+        note, else None."""
+        if sid not in self.members:
+            return None
+        (_tool, _sid, _when, _s, cwd, title), _rec = self.members[sid][0]
+        got = self.topic_noted.get((note._project(cwd), sessions.topic_key(title)))
+        if not got:
+            return None
+        stale = note.topic_note_is_stale([rec for _r, rec in self.members[sid]], got)
+        return "✎+" if stale else "✎"
 
     def topic_turns(self, sid):
         """Every turn the topic's sessions hold, or None when none counts."""
@@ -348,7 +373,8 @@ class Picker:
                     # (seen live) covered the digit that followed it.
                     fold = f"⧉ {self.topic_count[sid]}" + \
                         ("▾" if self.key_of[sid] in self.expanded else "")
-                marks = ("✎" if any(g in self.noted for g in group) else "") + \
+                pen = self.topic_note(sid) or ("✎" if any(g in self.noted for g in group) else "")
+                marks = pen + \
                         ("⌗" if any(g in self.wiked for g in group) else "") + fold
                 if marks:
                     x = put(scr, y, x, _clip(title or "", rest - 1 - len(marks)), line_attr)
@@ -368,7 +394,10 @@ class Picker:
                 facts = f" {tool}  {sid}  {when}"
                 if turns:
                     facts += f"  {turns} turns"
-                if sid in self.noted:
+                topic_pen = self.topic_note(sid)
+                if topic_pen:
+                    facts += "  ✎ topic noted" + (" (behind its sessions)" if topic_pen == "✎+" else "")
+                elif sid in self.noted:
                     facts += "  ✎ noted"
                 if sid in self.wiked:
                     facts += "  ⌗ wiki: " + ", ".join(self.wiked[sid])
@@ -552,18 +581,19 @@ def cmd_ui(args):
         elif isinstance(action, tuple):  # ("handoff", target)
             # The commands below take a row of the last listing: make the
             # picker's view that listing, and the highlighted row its number.
-            sessions.write_list_cache([sessions.list_cache_entry(r) for r, _ in picker.shown])
+            picker.write_cache()
             row = str(picker.cursor + 1)
             run_cw_command([sys.executable, "-m", "crossweave.cli",
                             row, action[1]])
         else:
-            sessions.write_list_cache([sessions.list_cache_entry(r) for r, _ in picker.shown])
+            picker.write_cache()
             row = str(picker.cursor + 1)
             run_action(action, row, tool, sid)
         if not pause():
             return 0
         if action == "note":
             picker.noted = note.noted_index()
+            picker.topic_noted = note.topic_noted_index()
         else:
             print("cw ui: reading session stores…", file=sys.stderr, end="", flush=True)
             picker.reload(gather())

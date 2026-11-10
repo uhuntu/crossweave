@@ -212,9 +212,11 @@ def render_rows(rows, write_cache=True, start=1, notes=None, full_notes=False,
     # The ✎ belongs to the listing (the rows with sources), not to search
     # hits, whose title column is clipped to share the line with a reason.
     noted = {}
+    topic_noted = {}
     if sources:
         from . import note
         noted = note.noted_index()
+        topic_noted = note.topic_noted_index() if folded else {}
     noted_mark = _encodable(NOTED_CHOICES)
     # The wiki mark rides the same gate as the ✎: a search hit's title
     # column is clipped to share the line with a reason, so neither fits.
@@ -353,7 +355,16 @@ def render_rows(rows, write_cache=True, start=1, notes=None, full_notes=False,
         # older session would otherwise vanish with its row.
         noted_id = full_id if full_id in noted or not members else next(
             (m[1] for m in members if m[1] in noted), full_id)
-        if noted_id in noted:
+        topic_got = (topic_noted.get((note._project(cwd_show), sessions.topic_key(title)))
+                     if members else None)
+        if topic_got:
+            # The topic's own note: behind when a session joined the topic
+            # or moved on after it was written.
+            stale = note.topic_note_is_stale(
+                [sources[m[1]] for m in members if m[1] in sources], topic_got)
+            title += " " + color.paint(noted_mark + ("+" if stale else ""),
+                                       color.YELLOW if stale else color.DIM)
+        elif noted_id in noted:
             stale = note.is_stale(sources.get(noted_id), noted[noted_id])
             title += " " + color.paint(noted_mark + ("+" if stale else ""),
                                        color.YELLOW if stale else color.DIM)
