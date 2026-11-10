@@ -251,6 +251,18 @@ TRIVIAL_TITLES = {
     # for sessions whose next message held the actual request. A session
     # whose *only* message is a greeting still shows it, via the fallback.
     "hi", "hello",
+    # A language switch is the same: seven real sessions in ~ were titled
+    # "中文" -- the instruction to answer in Chinese, typed before the
+    # question it was about -- and clustered as one topic they never were.
+    "中文", "用中文", "说中文", "请用中文", "中文回答", "请用中文回答", "用中文回答",
+    "english", "in english", "chinese", "in chinese", "英文", "用英文",
+    # The Chinese acknowledgements: the list above was English only, so
+    # a session opened with "中文" and then "好的" landed on "好的" -- and
+    # four such sessions clustered as one topic.
+    "好的", "好", "好吧", "可以", "行", "嗯", "是", "是的", "对", "对的", "继续",
+    "谢谢", "收到", "没问题", "确认", "同意", "你决定", "你来定",
+    # Titles a tool generates for a session with no topic yet.
+    "greeting", "session greeting", "try again",
 }
 
 

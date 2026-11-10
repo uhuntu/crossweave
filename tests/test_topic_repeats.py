@@ -275,3 +275,29 @@ def test_a_cut_listing_points_the_first_summary_at_cw_full(monkeypatch, capsys):
     assert len(summaries) == 2
     assert "`cw full` counts every session" in summaries[0]
     assert "cw full" not in summaries[1]
+
+
+def test_a_batch_of_one_turn_sessions_gets_no_summary(monkeypatch, capsys):
+    """Eleven one-turn probes ("只回复两个字：正常") or greeting-only
+    sessions topped `cw full`; nobody reopened anything."""
+    rows = [_row("zcode", "z1", "只回复两个字：正常"), _row("step", "s1", "只回复两个字：正常"),
+            _row("zcode", "z2", "只回复两个字：正常")]
+    monkeypatch.setattr(sessions, "session_turns", lambda record: 1)
+    out = _listing(monkeypatch, capsys, rows)
+    assert not any(" shown share " in l for l in out)
+    assert sum(l.count("⧉3") for l in out) == 3  # the marks stay
+
+
+def test_one_member_with_real_work_keeps_the_summary(monkeypatch, capsys):
+    rows = [_row("claude", "c1", "nfc lock"), _row("codex", "x1", "NFC Lock")]
+    monkeypatch.setattr(sessions, "session_turns", lambda record: 40 if record["id"] == "x1" else 1)
+    out = _listing(monkeypatch, capsys, rows)
+    assert any("2 of 2 shown share 'nfc lock' -- 41 turns" in l for l in out)
+
+
+@pytest.mark.parametrize("title", ["中文", "用中文", "In English", "chinese.", "好的", "继续",
+                                   "Session greeting", "Try again"])
+def test_a_language_switch_is_not_a_topic(title):
+    """Typed before the question it was about: seven unrelated sessions in
+    ~ were titled "中文" and clustered as one topic."""
+    assert sessions.topic_key(title) is None

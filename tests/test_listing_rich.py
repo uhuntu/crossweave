@@ -516,6 +516,7 @@ def test_an_english_last_message_is_not_cut_at_seventy_characters(tmp_path):
     ("**提交**：`b6bdceb` — done", "提交：b6bdceb — done"),
     ("run this:\n```bash\ncw ui\n```", "run this: cw ui"),
     ("- item one\n- item two", "- item one - item two"),
+    ("done [清理记录](/home/hunt/notes/clean.md) and [x](https://a.b/c)", "done 清理记录 and x"),
     ("snake_case, `__init__.py` and a*b stay", "snake_case, __init__.py and a*b stay"),
 ])
 def test_the_preview_drops_markdown_and_keeps_the_words(text, plain):

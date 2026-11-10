@@ -284,18 +284,21 @@ def render_rows(rows, write_cache=True, start=1, notes=None, full_notes=False,
         positions = {row[1]: n for n, row in enumerate(rows, start=start)}
         # A source and its one handoff keep their ⧉2 marks but get no line:
         # that is a continuation, not a topic being reopened.
+        # Nor does a batch of one-turn sessions: eleven "只回复两个字：正常"
+        # probes and seven greeting-only "Session greeting"s were the top
+        # of `cw full`, ahead of any topic anyone had reopened. A count
+        # that could not be taken (None) proves nothing either way.
+        def turns_of(row):
+            record = sources.get(row[1])
+            return sessions.session_turns(record) if record is not None else None
+        member_turns = {row[1]: turns_of(row)
+                        for members in topics.values() for row in members}
         ranked = sorted(((key, members) for key, members in topics.items()
-                         if sessions.is_repeated_topic(r[5] for r in members)),
+                         if sessions.is_repeated_topic(r[5] for r in members)
+                         and not all(member_turns[r[1]] == 1 for r in members)),
                         key=lambda kv: -len(kv[1]))
         for key, members in ranked[:TOPIC_SUMMARY_MAX]:
-            turns = 0
-            for row in members:
-                record = sources.get(row[1])
-                if record is None:
-                    continue
-                counted = sessions.session_turns(record)
-                if counted:
-                    turns += counted
+            turns = sum(member_turns[row[1]] or 0 for row in members)
             name = sessions._without_inherited_mark(members[0][5])
             # The count covers the rows on screen, not the history: a
             # bare `cw` shows 15, and the topic it names may hold more

@@ -1490,6 +1490,9 @@ _MD_TABLE_RULE_RE = re.compile(r"^\s*\|?(\s*:?-{3,}:?\s*\|)+\s*:?-*:?\s*$")
 _MD_FENCE_RE = re.compile(r"^\s*(```|~~~)")
 _MD_HEADING_RE = re.compile(r"^\s*#{1,6}\s+")
 _MD_EMPHASIS_RE = re.compile(r"\*\*|`")  # not __: it would eat __init__
+# [text](target) keeps its text: the target is a path or URL the line
+# has no room for.
+_MD_LINK_RE = re.compile(r"\[([^\]\n]+)\]\([^)\n]*\)")
 
 
 def preview_text(text):
@@ -1501,6 +1504,7 @@ def preview_text(text):
         if _MD_TABLE_RULE_RE.match(line) or _MD_FENCE_RE.match(line):
             continue
         line = _MD_HEADING_RE.sub("", line)
+        line = _MD_LINK_RE.sub(r"\1", line)
         line = _MD_EMPHASIS_RE.sub("", line).replace("|", " ")
         lines.append(line)
     return " ".join(" ".join(lines).split())[:LAST_MESSAGE_MAX]
