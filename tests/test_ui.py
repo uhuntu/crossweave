@@ -152,13 +152,66 @@ def test_reload_drops_a_tool_filter_whose_tool_is_gone(monkeypatch):
 
 def test_the_picker_counts_the_rows_sharing_a_topic(monkeypatch):
     """The rows on screen, not the whole listing: a filter that narrows to
-    one session of a topic leaves a cluster of one, which is no cluster."""
+    one session of a topic leaves a cluster of one, which is no cluster.
+    The topic folds into its newest session, which carries the count."""
     p = picker(monkeypatch)
     assert p.topic_count == {}
     p.items = list(ITEMS) + [
         (row("claude", "ddd-4", "/w/other", "fix the nfc lock"), {"id": "ddd-4"})]
     p.refilter()
-    assert p.topic_count == {"bbb-2": 2, "ddd-4": 2}
+    assert p.topic_count == {"bbb-2": 2}
+    assert [it[0][1] for it in p.shown] == ["aaa-1", "bbb-2", "ccc-3"]
     p.query = "ddd-4"  # the id: one row, so no repetition to name
     p.refilter()
     assert p.topic_count == {}
+
+
+def _topic_picker(monkeypatch):
+    p = picker(monkeypatch)
+    p.items = [
+        ITEMS[0],
+        (row("kimi", "dev-3", "/w/api", "(handoff) DevGetter 上架"), {"id": "dev-3"}),
+        ITEMS[1],
+        (row("claude", "dev-2", "/w/api", "(handoff) DevGetter 上架"), {"id": "dev-2"}),
+        (row("claude", "dev-1", "/w/api", "DevGetter 上架"), {"id": "dev-1"}),
+    ]
+    p.refilter()
+    return p
+
+
+def test_a_topic_is_one_row_until_unfolded(monkeypatch):
+    """Nine sessions on one request were nine rows; now they are one, and
+    → lays them out under it, newest first."""
+    p = _topic_picker(monkeypatch)
+    assert [it[0][1] for it in p.shown] == ["aaa-1", "dev-3", "bbb-2"]
+    assert p.topic_count == {"dev-3": 3}
+    p.cursor = 1
+    p.key("KEY_RIGHT", 10)
+    assert [it[0][1] for it in p.shown] == ["aaa-1", "dev-3", "dev-2", "dev-1", "bbb-2"]
+    assert p.kind == ["row", "head", "member", "member", "row"]
+    # Enter on a member resumes that older session, not the newest
+    p.cursor = 3
+    assert p.key("\n", 10) == "resume" and p.selected()[0][1] == "dev-1"
+    # ← from a member folds the topic and lands on its row
+    p.key("KEY_LEFT", 10)
+    assert [it[0][1] for it in p.shown] == ["aaa-1", "dev-3", "bbb-2"]
+    assert p.cursor == 1
+
+
+def test_space_toggles_and_a_plain_row_ignores_it(monkeypatch):
+    p = _topic_picker(monkeypatch)
+    p.cursor = 1
+    p.key(" ", 10)
+    assert len(p.shown) == 5
+    p.key(" ", 10)
+    assert len(p.shown) == 3
+    p.cursor = 0  # not a topic
+    p.key("KEY_RIGHT", 10)
+    assert len(p.shown) == 3
+
+
+def test_a_topic_counts_its_turns_across_sessions(monkeypatch):
+    p = _topic_picker(monkeypatch)
+    turns = {"dev-3": 3, "dev-2": 117, "dev-1": None}
+    monkeypatch.setattr(ui.sessions, "session_turns", lambda rec: turns.get(rec["id"]))
+    assert p.topic_turns("dev-3") == 120

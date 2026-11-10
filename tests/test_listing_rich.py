@@ -285,7 +285,7 @@ def test_cmd_list_counts_turns_for_the_rows_it_prints(monkeypatch, tmp_path, cap
                                   "path": str(claude), "cwd": "/work"}])
     monkeypatch.setattr(sessions, "codex_light_records",
                         lambda: [{"tool": "codex", "id": "x1", "ts": 200,
-                                  "path": str(codex), "title": "Gamma", "cwd": "/work"}])
+                                  "path": str(codex), "title": "Delta", "cwd": "/work"}])
     monkeypatch.setattr(sessions, "kimi_light_records", lambda show_all: [])
     monkeypatch.setattr(sessions, "step_light_records",
                         lambda show_all=False: [{"tool": "step", "id": "s1", "ts": 100,
@@ -309,7 +309,7 @@ def test_cmd_list_counts_turns_for_the_rows_it_prints(monkeypatch, tmp_path, cap
         while words and re.fullmatch(r"[✎⌗⧉]\d*|\[[nw]\]|\[x\]\d*", words[-1]):
             words.pop()
         turns_of[words[-1]] = words[-2]
-    assert turns_of == {"alpha": "2", "gamma": "1", "Gamma": "3"}  # tool result not counted
+    assert turns_of == {"alpha": "2", "gamma": "1", "Delta": "3"}  # tool result not counted
 
 
 # ---------- color ----------

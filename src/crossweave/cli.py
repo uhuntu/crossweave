@@ -478,27 +478,29 @@ def steer_hint():
             continue
         if sessions.topic_key(entry.get("title")):
             rows.append(entry)
-    if len(rows) < 2:
-        return
+    # A folded listing row carries its whole topic's titles (the older
+    # sessions have no row of their own); an unfolded one is just itself.
     clusters = {}
     for entry in rows:
-        clusters.setdefault(sessions.topic_key(entry["title"]), []).append(entry)
+        titles = entry.get("topic_titles") or [entry["title"]]
+        newest, prior = clusters.get(sessions.topic_key(entry["title"]), (entry, []))
+        clusters[sessions.topic_key(entry["title"])] = (newest, prior + list(titles))
     printed = 0
-    for _key, members in sorted(clusters.items(), key=lambda kv: -len(kv[1])):
+    for _key, (newest, titles) in sorted(clusters.items(), key=lambda kv: -len(kv[1][1])):
         # A topic opened once is not a repetition -- it is every other row
         # in the listing, and printing it would make the hint noise.
-        if len(members) < 2:
+        if len(titles) < 2:
             continue
         # Nor is one handoff: the source and the session it seeded.
-        if not sessions.is_repeated_topic(m["title"] for m in members):
+        if not sessions.is_repeated_topic(titles):
             continue
         if printed >= 2:
             break
         printed += 1
-        newest = members[0]  # the cache rides in listing order, newest first
+        # the cache rides in listing order, newest first
         name = sessions._without_inherited_mark(newest["title"])
         when = f", newest {newest['when']}" if newest.get("when") else ""
-        print(f"cw: {len(members)} sessions here on {name!r}{when} -- "
+        print(f"cw: {len(titles)} sessions here on {name!r}{when} -- "
               f"continue: `cw resume {newest['tool']} {newest['id'][:8]}`; "
               f"distill: `cw note {newest['id'][:8]}`",
               file=sys.stderr)

@@ -154,7 +154,7 @@ def _same_saying(a, b):
 
 
 def render_rows(rows, write_cache=True, start=1, notes=None, full_notes=False,
-                sources=None, notes_label="WHY", cut=False):
+                sources=None, notes_label="WHY", cut=False, folded=None):
     """rows: list of resolve_row()-shaped tuples, already in display order.
     Prints the numbered table and, unless write_cache=False, writes the
     resume cache (cmd_search renders two sections with continuing numbers
@@ -231,6 +231,9 @@ def render_rows(rows, write_cache=True, start=1, notes=None, full_notes=False,
     # per cluster names the repetition under the header.
     topics = sessions.topic_clusters(rows) if sources else {}
     topic_size = {row[1]: len(members) for members in topics.values() for row in members}
+    # A folded row (see cmd_list) stands for its topic's sessions: its mark
+    # counts them, and the row says how much work and how long a span.
+    folded = folded or {}
     topic_mark = _encodable(TOPIC_CHOICES)
     if show_turns:
         # Fit the plumbing before the title: the cwd is the most compressible
@@ -341,14 +344,30 @@ def render_rows(rows, write_cache=True, start=1, notes=None, full_notes=False,
         # After the title, not before: in front it needed a blank slot on
         # every unmarked row to keep the titles in one column, and that
         # slot read as a gap with nothing in it.
-        if full_id in noted:
-            stale = note.is_stale(sources.get(full_id), noted[full_id])
+        members = folded.get(full_id)
+        if members:
+            # The topic, not the newest session's take on it: "(handoff)"
+            # says how that one session started, not what the row is.
+            title = sessions._without_inherited_mark(title)
+        # A folded row shows a note any of its sessions has: the ✎ on an
+        # older session would otherwise vanish with its row.
+        noted_id = full_id if full_id in noted or not members else next(
+            (m[1] for m in members if m[1] in noted), full_id)
+        if noted_id in noted:
+            stale = note.is_stale(sources.get(noted_id), noted[noted_id])
             title += " " + color.paint(noted_mark + ("+" if stale else ""),
                                        color.YELLOW if stale else color.DIM)
         if full_id in wiked:
             title += " " + color.paint(wiki_mark, color.DIM)
-        if full_id in topic_size:
-            title += " " + color.paint(f"{topic_mark}{topic_size[full_id]}", color.DIM)
+        if members:
+            total = sum(sessions.session_turns(sources[m[1]]) or 0
+                        for m in members if m[1] in sources)
+            span = f" · since {members[-1][2]}" if members[-1][2] else ""
+            title += " " + color.paint(
+                f"{topic_mark} {len(members)} · {total} turns{span}", color.DIM)
+        elif full_id in topic_size:
+            # The space: a font that draws ⧉ two cells wide covers the next.
+            title += " " + color.paint(f"{topic_mark} {topic_size[full_id]}", color.DIM)
         if inline_why:
             line += f"{_clip(title, w_title):<{w_title}}  {_clip(notes.get((tool, full_id), ''), w_why)}"
         else:

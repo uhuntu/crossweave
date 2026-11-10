@@ -777,6 +777,15 @@ def cmd_list(args):
     rows = []
     sources = {}
     cut = False  # the limit stopped the walk with sessions left over
+    # A limited listing folds a topic into its newest session: nine
+    # sessions on one request took four of fifteen rows and needed a line
+    # under the header to say they were one thing. The older ones ride on
+    # the newest row (folded[head id] = every member row, newest first) and
+    # do not count against the limit, so the screen holds fifteen topics.
+    # `cw full` (no limit) still lists every session on its own row.
+    fold = limit is not None
+    folded = {}
+    head_of = {}  # topic key -> the row that stands for it
     for n, r in enumerate(light):
         # A Claude session `/clear` left behind holds nothing to resume.
         if not show_all and r["tool"] == "claude" and r.get("path") and claude_is_empty(r["path"]):
@@ -784,10 +793,16 @@ def cmd_list(args):
         row = resolve_row(r)
         if not show_all and is_tool_started_row(row):
             continue
-        rows.append(row)
         # The light record rides along so the renderer can count turns for
         # the rows it actually prints (see render_rows' sources).
         sources[row[1]] = r
+        key = topic_key(row[5]) if fold else None
+        if key is not None and key in head_of:
+            folded.setdefault(head_of[key][1], [head_of[key]]).append(row)
+            continue
+        if key is not None:
+            head_of[key] = row
+        rows.append(row)
         if limit is not None and len(rows) >= limit:
             cut = n < len(light) - 1
             break
@@ -829,12 +844,12 @@ def cmd_list(args):
     # when) as well: the steer hint reads them back to name a topic this
     # directory keeps reopening, without walking the stores again.
     write_list_cache(
-        [list_cache_entry(r) for r in rows]
+        [list_cache_entry(r, folded.get(r[1])) for r in rows]
         + [{"tool": s["tool"], "id": s["id"], "machine": s["machine"],
             **({"ssh": s["ssh"]} if s.get("ssh") else {})}
            for s in remotes])
     if rows:
-        render_rows(rows, sources=sources, write_cache=False, cut=cut)
+        render_rows(rows, sources=sources, write_cache=False, cut=cut, folded=folded)
     if remotes:
         if rows:
             print()
@@ -986,7 +1001,7 @@ def is_repeated_topic(titles):
     return len(fresh) >= 2
 
 
-def list_cache_entry(row):
+def list_cache_entry(row, members=None):
     """One listing row as a cache entry: {tool, id} plus the display facts
     (cwd, title, when) a resolve_row-shaped tuple carries, when it does.
     The resume-by-number readers use only tool/id -- the extra fields are
@@ -1001,6 +1016,10 @@ def list_cache_entry(row):
             entry["title"] = row[5]
         if isinstance(row[2], str) and row[2]:
             entry["when"] = row[2]
+    if members and len(members) > 1:
+        # A folded row stands for its whole topic; the steer hint counts
+        # the repeat from these, since the older sessions have no row.
+        entry["topic_titles"] = [m[5] for m in members if isinstance(m[5], str)]
     return entry
 
 

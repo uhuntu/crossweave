@@ -104,7 +104,7 @@ def test_the_listing_marks_and_summarizes_repeated_topics(monkeypatch, capsys):
     out = _listing(monkeypatch, capsys, rows)
 
     row_lines = [l for l in out if re.match(r"^\s*\d+\s", l)]
-    assert "⧉3" in row_lines[0] and "⧉3" in row_lines[2] and "⧉3" in row_lines[3]
+    assert "⧉ 3" in row_lines[0] and "⧉ 3" in row_lines[2] and "⧉ 3" in row_lines[3]
     assert "⧉" not in row_lines[1]
     # One summary line, under the header: the count leads, and it points at
     # the newest member's row number rather than a range -- the members are
@@ -130,7 +130,8 @@ def test_the_summary_lines_stop_at_five_and_count_the_rest(monkeypatch, capsys):
     assert len(summaries) == render.TOPIC_SUMMARY_MAX
     assert any(f"and {len(rows) // 2 - render.TOPIC_SUMMARY_MAX} more repeated topics" in l
                for l in out)
-    assert sum(l.count("⧉2") for l in out) == len(rows)  # every row keeps its mark
+    row_lines = [l for l in out if re.match(r"^\s*\d+\s", l)]
+    assert sum(l.count("⧉ 2") for l in row_lines) == len(rows)  # every row keeps its mark
 
 
 def test_search_rows_are_not_clustered(monkeypatch, capsys):
@@ -250,7 +251,7 @@ def test_a_single_handoff_keeps_its_marks_but_gets_no_summary(monkeypatch, capsy
     ]
     out = _listing(monkeypatch, capsys, rows)
     assert not any(" shown share " in l for l in out)
-    assert sum(l.count("⧉2") for l in out) == 2
+    assert sum(l.count("⧉ 2") for l in out) == 2
 
 
 def test_the_hint_says_nothing_about_a_single_handoff(cached_listing, monkeypatch, tmp_path, capsys):
@@ -285,7 +286,7 @@ def test_a_batch_of_one_turn_sessions_gets_no_summary(monkeypatch, capsys):
     monkeypatch.setattr(sessions, "session_turns", lambda record: 1)
     out = _listing(monkeypatch, capsys, rows)
     assert not any(" shown share " in l for l in out)
-    assert sum(l.count("⧉3") for l in out) == 3  # the marks stay
+    assert sum(l.count("⧉ 3") for l in out) == 3  # the marks stay
 
 
 def test_one_member_with_real_work_keeps_the_summary(monkeypatch, capsys):
@@ -301,3 +302,73 @@ def test_a_language_switch_is_not_a_topic(title):
     """Typed before the question it was about: seven unrelated sessions in
     ~ were titled "中文" and clustered as one topic."""
     assert sessions.topic_key(title) is None
+
+
+# ---------- folding the listing ----------
+
+def _fold_listing(monkeypatch, tmp_path, records, limit="15"):
+    monkeypatch.setattr(sessions, "LIST_CACHE_FILE", str(tmp_path / "last_list.json"))
+    monkeypatch.setattr(render.color, "_STATE", False)
+    monkeypatch.setattr(sessions, "_all_light_records", lambda: records, raising=False)
+    for name in ("claude_light_records", "codex_light_records"):
+        monkeypatch.setattr(sessions, name, lambda: [])
+    for name in ("kimi_light_records", "step_light_records", "pi_light_records",
+                 "opencode_light_records", "zcode_light_records",
+                 "codebuddy_light_records", "workbuddy_light_records"):
+        monkeypatch.setattr(sessions, name, lambda show_all=False: [])
+    monkeypatch.setattr(sessions, "claude_light_records", lambda: records)
+    monkeypatch.setattr(sessions, "resolve_row",
+                        lambda r: (r["tool"], r["id"], r["when"], r["id"][:8], "/work", r["title"]))
+    monkeypatch.setattr(sessions, "session_turns", lambda r: r.get("turns"))
+    monkeypatch.setattr(sessions, "session_last_message", lambda r: None)
+    monkeypatch.setattr(sessions, "claude_is_empty", lambda p: False)
+    monkeypatch.setattr(sessions, "is_tool_started_row", lambda row: False)
+    sessions.cmd_list(["--limit", limit])
+
+
+def _rec(sid, title, ts, turns, when):
+    return {"tool": "claude", "id": sid, "ts": ts, "title": title, "turns": turns, "when": when}
+
+
+DEV = [
+    _rec("d3", "(handoff) DevGetter", 90, 3, "3d ago"),
+    _rec("o1", "other work", 80, 5, "3d ago"),
+    _rec("d2", "(handoff) DevGetter", 70, 117, "4d ago"),
+    _rec("d1", "DevGetter", 60, 164, "5d ago"),
+    _rec("o2", "more work", 50, 2, "6d ago"),
+]
+
+
+def test_a_limited_listing_folds_a_topic_into_its_newest_row(monkeypatch, tmp_path, capsys):
+    _fold_listing(monkeypatch, tmp_path, DEV)
+    rows = [l for l in capsys.readouterr().out.splitlines() if re.match(r"^\s*\d+\s", l)]
+    assert len(rows) == 3
+    assert "DevGetter ⧉ 3 · 284 turns · since 5d ago" in rows[0]
+    assert "(handoff)" not in rows[0]  # the row is the topic
+    assert " shown share " not in "".join(rows)
+    # the folded sessions do not eat the limit: o2 still made the cut
+    _fold_listing(monkeypatch, tmp_path, DEV, limit="3")
+    rows = [l for l in capsys.readouterr().out.splitlines() if re.match(r"^\s*\d+\s", l)]
+    assert [r.split()[4] for r in rows] == ["d3", "o1", "o2"]
+
+
+def test_cw_full_still_lists_every_session(monkeypatch, tmp_path, capsys):
+    _fold_listing(monkeypatch, tmp_path, DEV, limit="all")
+    rows = [l for l in capsys.readouterr().out.splitlines() if re.match(r"^\s*\d+\s", l)]
+    assert len(rows) == 5
+
+
+def test_the_hint_counts_a_folded_rows_sessions(monkeypatch, tmp_path, capsys):
+    """The older sessions have no row of their own in the cache any more;
+    the folded row carries their titles."""
+    here = tmp_path / "app"
+    here.mkdir()
+    monkeypatch.setattr(sessions, "LIST_CACHE_FILE", str(tmp_path / "last_list.json"))
+    sessions.write_list_cache([
+        {"tool": "kimi", "id": "k" * 32, "cwd": str(here), "title": "(handoff) DevGetter",
+         "when": "3d ago",
+         "topic_titles": ["(handoff) DevGetter", "(handoff) DevGetter", "DevGetter"]},
+    ])
+    out = _hint(monkeypatch, here, capsys)
+    assert "3 sessions here on 'DevGetter'" in out
+    assert "cw resume kimi " + "k" * 8 in out

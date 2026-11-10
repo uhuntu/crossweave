@@ -22,7 +22,7 @@ import sys
 from . import common, delete, note, rename, sessions, wiki
 from .render import _clip, _display_width, TURNS_WIDTH
 
-KEYS_HELP = ("↑↓ move  / filter  Tab tool  . dir  Enter resume  "
+KEYS_HELP = ("↑↓ move  →← unfold  / filter  Tab tool  . dir  Enter resume  "
              "h handoff  n note  r rename  d delete  q quit")
 
 # The tools a session can be handed to: every one with a CLI to start.
@@ -79,6 +79,7 @@ class Picker:
         self.handoff_to = None  # the target list while asking "hand off to?"
         self.tool = None
         self.here_only = False
+        self.expanded = set()  # topic keys unfolded to show every session
         self.cursor = 0
         self.top = 0
         self.details = {}  # full id -> (turns, last message), filled on view
@@ -110,14 +111,69 @@ class Picker:
     def refilter(self):
         words = self.query.casefold().split()
         here = self.cwd if self.here_only else None
-        self.shown = [it for it in self.items if matches(it[0], words, self.tool, here)]
+        matched = [it for it in self.items if matches(it[0], words, self.tool, here)]
+        # One row per topic: a topic's sessions fold into the newest, which
+        # carries the count; → unfolds them under it, newest first. The
+        # picker holds every session, so the count is the whole history's.
+        groups = {}
+        for it in matched:
+            key = sessions.topic_key(it[0][5])
+            if key is not None:
+                groups.setdefault(key, []).append(it)
+        self.shown = []
+        self.kind = []  # per shown row: "row", "head" or "member"
+        self.members = {}  # head id -> [(row, rec)] of its topic, newest first
+        self.key_of = {}  # head id -> its topic key
+        for it in matched:
+            key = sessions.topic_key(it[0][5])
+            group = groups.get(key) if key is not None else None
+            if not group or len(group) < 2:
+                self.shown.append(it)
+                self.kind.append("row")
+                continue
+            if group[0] is not it:
+                continue  # folded under its head
+            self.shown.append(it)
+            self.kind.append("head")
+            self.members[it[0][1]] = group
+            self.key_of[it[0][1]] = key
+            if key in self.expanded:
+                for member in group[1:]:
+                    self.shown.append(member)
+                    self.kind.append("member")
         self.cursor = min(self.cursor, max(0, len(self.shown) - 1))
-        # Same-topic clusters across the rows on screen (the plain listing
-        # does the same over its rows): each member's title carries the
-        # cluster size, the preview names it.
-        clusters = sessions.topic_clusters([it[0] for it in self.shown])
-        self.topic_count = {row[1]: len(members)
-                            for members in clusters.values() for row in members}
+        self.topic_count = {sid: len(group) for sid, group in self.members.items()}
+
+    def head_index(self, n):
+        """The row a member row hangs under (n itself for any other row)."""
+        while n > 0 and self.kind[n] == "member":
+            n -= 1
+        return n
+
+    def toggle(self, unfold):
+        """Unfold (or fold) the topic under the cursor. Folding from a member
+        row lands the cursor on its topic's row."""
+        if not self.shown:
+            return
+        n = self.head_index(self.cursor)
+        if self.kind[n] != "head":
+            return
+        sid = self.shown[n][0][1]
+        key = self.key_of[sid]
+        if unfold is None:
+            unfold = key not in self.expanded
+        if unfold:
+            self.expanded.add(key)
+        else:
+            self.expanded.discard(key)
+            self.cursor = n
+        self.refilter()
+
+    def topic_turns(self, sid):
+        """Every turn the topic's sessions hold, or None when none counts."""
+        counts = [self.turns_of(rec) for _row, rec in self.members.get(sid, ())]
+        counts = [c for c in counts if c]
+        return sum(counts) if counts else None
 
     def selected(self):
         return self.shown[self.cursor] if self.shown else None
@@ -191,6 +247,10 @@ class Picker:
             return None
         if ch == "/":
             self.typing = True
+        elif ch in ("KEY_RIGHT", " "):
+            self.toggle(None if ch == " " else True)
+        elif ch == "KEY_LEFT":
+            self.toggle(False)
         elif ch in ("KEY_UP", "k"):
             self.move(-1)
         elif ch in ("KEY_DOWN", "j"):
@@ -248,6 +308,13 @@ class Picker:
             if n >= len(self.shown):
                 break
             (tool, sid, when, _short, cwd, title), rec = self.shown[n]
+            kind = self.kind[n]
+            if kind == "head":
+                # The topic, not how its newest session happened to start.
+                title = sessions._without_inherited_mark(title or "")
+            elif kind == "member":
+                last_member = n + 1 >= len(self.shown) or self.kind[n + 1] != "member"
+                title = ("└ " if last_member else "├ ") + (title or "")
             turns = self.turns_of(rec)
             shown = "?" if turns is None else str(turns)
             mark = "▸" if common._same_path(cwd, self.cwd) else " "
@@ -272,9 +339,17 @@ class Picker:
                 # The ⌗ rides after it: a wiki page was built from this
                 # session. The ⧉N rides after both: N rows on screen share
                 # this session's topic.
-                marks = ("✎" if sid in self.noted else "") + \
-                        ("⌗" if sid in self.wiked else "") + \
-                        (f"⧉{self.topic_count[sid]}" if sid in self.topic_count else "")
+                group = [r[1] for r, _ in self.members.get(sid, ())] or [sid]
+                fold = ""
+                if sid in self.topic_count:
+                    # ▾ only when unfolded: ▸ already marks "this directory"
+                    # in the first column.
+                    # A space after ⧉: fonts that draw it two cells wide
+                    # (seen live) covered the digit that followed it.
+                    fold = f"⧉ {self.topic_count[sid]}" + \
+                        ("▾" if self.key_of[sid] in self.expanded else "")
+                marks = ("✎" if any(g in self.noted for g in group) else "") + \
+                        ("⌗" if any(g in self.wiked for g in group) else "") + fold
                 if marks:
                     x = put(scr, y, x, _clip(title or "", rest - 1 - len(marks)), line_attr)
                     x = put(scr, y, x, " " + marks, line_attr)
@@ -298,7 +373,13 @@ class Picker:
                 if sid in self.wiked:
                     facts += "  ⌗ wiki: " + ", ".join(self.wiked[sid])
                 if sid in self.topic_count:
-                    facts += f"  ⧉ {self.topic_count[sid]} sessions on this topic"
+                    group = self.members[sid]
+                    total = self.topic_turns(sid)
+                    facts += f"  ⧉ {len(group)} sessions on this topic"
+                    if total:
+                        facts += f", {total} turns"
+                    facts += f" since {group[-1][0][2]}"
+                    facts += "  (← fold)" if self.key_of[sid] in self.expanded else "  (→ unfold)"
                 put(scr, y0 + 1, 0, _clip(facts, w - 1), curses.A_BOLD)
                 put(scr, y0 + 2, 0, _clip(f" {cwd}", w - 1), curses.A_DIM)
                 lines = wrap(f"↳ {last}" if last else "↳ (no message text)", w - 2, preview_h - 3)
