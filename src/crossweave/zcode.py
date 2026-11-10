@@ -419,7 +419,7 @@ def zcode_last_message(sid):
             continue
         if common.is_image_only(text) or common._is_injected_or_pasted(text):
             continue
-        return " ".join(text.split())
+        return text  # the caller folds it into one preview line
     return None
 
 

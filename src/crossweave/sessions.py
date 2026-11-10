@@ -1445,10 +1445,11 @@ def session_last_message(record):
     if record.get("tool") == "zcode":
         # The transcript lives in the store, not in a file -- the store
         # answers this one directly.
-        return zcode_last_message(record.get("id"))
+        last = zcode_last_message(record.get("id"))
+        return (preview_text(last) or None) if last else None
     if record.get("tool") == "opencode":
         last = opencode_last_message(record.get("id"))
-        return last[:LAST_MESSAGE_MAX] if last else None
+        return (preview_text(last) or None) if last else None
     path = _transcript_path(record)
     if not path:
         return None
@@ -1473,13 +1474,34 @@ def session_last_message(record):
                 continue
             if is_image_only(text) or _is_injected_or_pasted(text):
                 continue
-            return " ".join(text.split())[:LAST_MESSAGE_MAX]
+            return preview_text(text) or None
         if window >= size:
             break
     return None
 
 
 LAST_MESSAGE_WINDOWS = (16384, 262144, 2097152)
+
+# Markdown the preview line drops. A one-line preview renders none of it,
+# and a reply that ends on a table spent most of its line on `|---|---|`.
+_MD_TABLE_RULE_RE = re.compile(r"^\s*\|?(\s*:?-{3,}:?\s*\|)+\s*:?-*:?\s*$")
+_MD_FENCE_RE = re.compile(r"^\s*(```|~~~)")
+_MD_HEADING_RE = re.compile(r"^\s*#{1,6}\s+")
+_MD_EMPHASIS_RE = re.compile(r"\*\*|`")  # not __: it would eat __init__
+
+
+def preview_text(text):
+    """A message as one plain line for the where-it-left-off preview: the
+    words kept, the Markdown that only marks them up dropped (headings,
+    bold, code ticks, fences, table rules and pipes), whitespace folded."""
+    lines = []
+    for line in text.splitlines():
+        if _MD_TABLE_RULE_RE.match(line) or _MD_FENCE_RE.match(line):
+            continue
+        line = _MD_HEADING_RE.sub("", line)
+        line = _MD_EMPHASIS_RE.sub("", line).replace("|", " ")
+        lines.append(line)
+    return " ".join(" ".join(lines).split())[:LAST_MESSAGE_MAX]
 
 
 # A listing row number: ASCII digits only. str.isdigit() also accepts

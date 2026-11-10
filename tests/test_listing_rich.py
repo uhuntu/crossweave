@@ -509,6 +509,19 @@ def test_an_english_last_message_is_not_cut_at_seventy_characters(tmp_path):
     assert sessions.session_last_message({"tool": "claude", "path": str(claude)}) == long
 
 
+@pytest.mark.parametrize("text, plain", [
+    ("## 结果确认\n| 项目 | 状态 |\n|---|---|\n| `qoder` | ✅ 已装 |",
+     "结果确认 项目 状态 qoder ✅ 已装"),
+    ("| a | b |\n| :--- | ---: |\n| 1 | 2 |", "a b 1 2"),
+    ("**提交**：`b6bdceb` — done", "提交：b6bdceb — done"),
+    ("run this:\n```bash\ncw ui\n```", "run this: cw ui"),
+    ("- item one\n- item two", "- item one - item two"),
+    ("snake_case, `__init__.py` and a*b stay", "snake_case, __init__.py and a*b stay"),
+])
+def test_the_preview_drops_markdown_and_keeps_the_words(text, plain):
+    assert sessions.preview_text(text) == plain
+
+
 def test_a_codex_last_message_resolves_through_the_path_index(monkeypatch, tmp_path):
     """The listing hands the renderer a light record, and a codex record's
     transcript is found the way the rest of the module finds it."""
