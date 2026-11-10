@@ -776,7 +776,8 @@ def cmd_list(args):
     # user asked for. `--all` brings them back.
     rows = []
     sources = {}
-    for r in light:
+    cut = False  # the limit stopped the walk with sessions left over
+    for n, r in enumerate(light):
         # A Claude session `/clear` left behind holds nothing to resume.
         if not show_all and r["tool"] == "claude" and r.get("path") and claude_is_empty(r["path"]):
             continue
@@ -788,6 +789,7 @@ def cmd_list(args):
         # the rows it actually prints (see render_rows' sources).
         sources[row[1]] = r
         if limit is not None and len(rows) >= limit:
+            cut = n < len(light) - 1
             break
     remotes = []
     if with_machines:
@@ -832,7 +834,7 @@ def cmd_list(args):
             **({"ssh": s["ssh"]} if s.get("ssh") else {})}
            for s in remotes])
     if rows:
-        render_rows(rows, sources=sources, write_cache=False)
+        render_rows(rows, sources=sources, write_cache=False, cut=cut)
     if remotes:
         if rows:
             print()

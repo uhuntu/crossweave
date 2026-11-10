@@ -154,7 +154,7 @@ def _same_saying(a, b):
 
 
 def render_rows(rows, write_cache=True, start=1, notes=None, full_notes=False,
-                sources=None, notes_label="WHY"):
+                sources=None, notes_label="WHY", cut=False):
     """rows: list of resolve_row()-shaped tuples, already in display order.
     Prints the numbered table and, unless write_cache=False, writes the
     resume cache (cmd_search renders two sections with continuing numbers
@@ -297,8 +297,14 @@ def render_rows(rows, write_cache=True, start=1, notes=None, full_notes=False,
                 if counted:
                     turns += counted
             name = sessions._without_inherited_mark(members[0][5])
-            line = (f"{topic_mark} {len(members)} sessions share {name!r}"
+            # The count covers the rows on screen, not the history: a
+            # bare `cw` shows 15, and the topic it names may hold more
+            # sessions further back. Say so rather than understate it --
+            # counting the whole history costs seconds of title reads.
+            line = (f"{topic_mark} {len(members)} of {len(rows)} shown share {name!r}"
                     f" -- {turns} turns, newest row #{positions[members[0][1]]}")
+            if cut and key == ranked[0][0]:
+                line += " · `cw full` counts every session"
             print(color.paint(_clip(line, width), color.DIM))
         hidden = len(ranked) - TOPIC_SUMMARY_MAX
         if hidden > 0:

@@ -109,8 +109,10 @@ def test_the_listing_marks_and_summarizes_repeated_topics(monkeypatch, capsys):
     # One summary line, under the header: the count leads, and it points at
     # the newest member's row number rather than a range -- the members are
     # not contiguous.
-    summary = next(l for l in out if "sessions share" in l)
-    assert "3 sessions share 'DevGetter 上架与 MDM'" in summary
+    summary = next(l for l in out if " shown share " in l)
+    # "of 4 shown": the count is the screen's, not the history's.
+    assert "3 of 4 shown share 'DevGetter 上架与 MDM'" in summary
+    assert "cw full" not in summary  # nothing was left out
     assert "newest row #1" in summary
 
 
@@ -124,7 +126,7 @@ def test_the_summary_lines_stop_at_five_and_count_the_rest(monkeypatch, capsys):
         rows.append(_row("codex", f"x{n}", f"Topic {n}"))
     out = _listing(monkeypatch, capsys, rows)
 
-    summaries = [l for l in out if "sessions share" in l]
+    summaries = [l for l in out if " shown share " in l]
     assert len(summaries) == render.TOPIC_SUMMARY_MAX
     assert any(f"and {len(rows) // 2 - render.TOPIC_SUMMARY_MAX} more repeated topics" in l
                for l in out)
@@ -136,7 +138,7 @@ def test_search_rows_are_not_clustered(monkeypatch, capsys):
     and the cluster summary would read as a ranking rather than a repeat."""
     rows = [_row("claude", "c1", "nfc lock"), _row("codex", "x1", "NFC Lock")]
     out = _listing(monkeypatch, capsys, rows, sources=None)
-    assert not any("sessions share" in l for l in out)
+    assert not any(" shown share " in l for l in out)
 
 
 # ---------- the steer hint ----------
@@ -247,7 +249,7 @@ def test_a_single_handoff_keeps_its_marks_but_gets_no_summary(monkeypatch, capsy
         _row("codex", "x2", "Rock 5B 蓝牙"),
     ]
     out = _listing(monkeypatch, capsys, rows)
-    assert not any("sessions share" in l for l in out)
+    assert not any(" shown share " in l for l in out)
     assert sum(l.count("⧉2") for l in out) == 2
 
 
@@ -259,3 +261,17 @@ def test_the_hint_says_nothing_about_a_single_handoff(cached_listing, monkeypatc
         {"tool": "codex", "id": "x" * 32, "cwd": str(here), "title": "Rock 5B"},
     ])
     assert _hint(monkeypatch, here, capsys) == ""
+
+
+def test_a_cut_listing_points_the_first_summary_at_cw_full(monkeypatch, capsys):
+    """A bare `cw` shows 15 rows; the topic it names may have more sessions
+    further back (seen live: 4 on screen, 9 in the history)."""
+    rows = [_row("claude", "c1", "topic a"), _row("codex", "x1", "Topic A"),
+            _row("claude", "c2", "topic b"), _row("codex", "x2", "Topic B")]
+    sources = {r[1]: {"tool": r[0], "id": r[1], "ts": 0} for r in rows}
+    monkeypatch.setattr(render.color, "_STATE", False)
+    render.render_rows(rows, write_cache=False, sources=sources, cut=True)
+    summaries = [l for l in capsys.readouterr().out.splitlines() if " shown share " in l]
+    assert len(summaries) == 2
+    assert "`cw full` counts every session" in summaries[0]
+    assert "cw full" not in summaries[1]
