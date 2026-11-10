@@ -395,9 +395,42 @@ def _pull_one(target, timeout, now, mine):
         index = _coerce_index(data, f"ssh {target}", now, mine)
         if index:
             index["ssh"] = target  # the way back in, for a remote resume
+            # The same way in fetches its notes: whichever form of the
+            # command just worked, asked for the notes instead.
+            index["notes"] = _pull_notes(ssh_argv, command, timeout)
             return index, None
         detail = "did not return an index"
     return None, detail
+
+
+def _pull_notes(ssh_argv, command, timeout):
+    """The notes a machine's vault holds (see note.export_notes), or None
+    when it sent none -- an older cw has no --notes, and saying nothing
+    then keeps a pull that worked from reading as one that failed."""
+    try:
+        proc = subprocess.run(ssh_argv + [command.replace("machines", "machines --notes", 1)],
+                              capture_output=True, text=True, timeout=timeout)
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    data = _parse_json(proc.stdout) if proc.returncode == 0 else None
+    notes = data.get("notes") if isinstance(data, dict) and data.get("schema") == SCHEMA else None
+    return notes if isinstance(notes, list) else None
+
+
+def mirror_notes(indexes, prog="cw sessions"):
+    """Keep each pulled machine's notes in this vault (see
+    note.mirror_remote_notes), so `cw context` and a fresh `cw codex` here
+    read them without going back over ssh. Best-effort: a vault that
+    cannot be written costs one line, never the listing."""
+    from . import note
+    for index in indexes:
+        notes = index.get("notes")
+        if notes is None:
+            continue
+        try:
+            note.mirror_remote_notes(index["machine"], notes)
+        except OSError as e:
+            print(f"{prog}: could not keep {index['machine']}'s notes: {e}", file=sys.stderr)
 
 
 def pull_remote_indexes(targets, timeout=15, prog="cw sessions", remembered=()):
@@ -437,6 +470,7 @@ def pull_remote_indexes(targets, timeout=15, prog="cw sessions", remembered=()):
             print(f"{prog}: {target}: {detail}{hint}", file=sys.stderr)
     if found:
         remember_targets(found)
+        mirror_notes(found, prog)
     return found
 
 
@@ -711,6 +745,14 @@ def cmd_machines(args):
         for name in missing:
             print(f"cw machines: {name} was not remembered", file=sys.stderr)
         return 1 if missing else 0
+    if args == ["--notes"]:
+        # The other half of a notes pull (see _pull_notes): this machine's
+        # own notes, as JSON, for a machine that keeps a copy of them.
+        from . import note
+        print(json.dumps({"schema": SCHEMA, "machine": machine_name(),
+                          "machine_id": machine_id(), "notes": note.export_notes()},
+                         ensure_ascii=False))
+        return 0
     as_json = "--json" in args
     targets = [a for a in args if a != "--json"]
     bad = next((a for a in targets if a.startswith("-")), None)

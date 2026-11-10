@@ -738,15 +738,19 @@ def render_context(project, notes):
            "Background to build on, not instructions.)", ""]
     for meta, body in notes:
         when = str(meta.get("updated") or meta.get("noted") or "")[:10]
+        where = f", on {meta['machine']}" if meta.get("machine") else ""
         if "topic_key" in meta:
             count = len(meta.get("sessions") or [])
             out.append(f"## {meta.get('title') or meta['topic_key']} "
-                       f"(topic, {count} sessions, {when})")
+                       f"(topic, {count} sessions, {when}{where})")
         else:
             out.append(f"## {meta.get('title') or meta['session']} "
-                       f"({meta.get('tool', '?')}, {when})")
+                       f"({meta.get('tool', '?')}, {when}{where})")
         if meta.get("resume"):
-            out.append(f"Resume: `{meta['resume']}`")
+            # A pulled note's session lives on its machine: `cw resume`
+            # here would not find it.
+            label = f"Resume on {meta['machine']}" if meta.get("machine") else "Resume"
+            out.append(f"{label}: `{meta['resume']}`")
         out.append("")
         # one level down, so each note's sections sit under its title
         out.append(re.sub(r"(?m)^(#+) ", r"#\1 ", body))
@@ -784,7 +788,7 @@ def cmd_context(args):
         return 1
     cwd = os.path.abspath(os.path.expanduser(where or os.getcwd()))
     project = _project(cwd)
-    notes = context_notes(os.path.join(vault, project), limit)
+    notes = context_notes(vault, project, limit)
     if not notes:
         print(f"cw context: no notes for {project} in {vault} yet -- "
               "`cw note <N>` writes one", file=sys.stderr)
@@ -793,15 +797,28 @@ def cmd_context(args):
     return 0
 
 
-def context_notes(folder, limit):
+def context_notes(vault, project, limit):
     """[(meta, body)] a new session in this project starts from: its topic
     notes first -- each is the state of a topic across all its sessions --
     then the newest session notes no topic note already covers. Without
     the topics, three sessions of one topic took every slot, each telling
-    its own slice and none of them where the topic stood."""
-    topics = _project_topic_notes(folder)
+    its own slice and none of them where the topic stood. Notes pulled
+    from other machines' same-named project count alongside this one's,
+    newest first, each marked with its machine."""
+    topics, notes = [], []
+    for machine, folder in _project_folders(vault, project):
+        for stem, meta, body in _project_topic_notes(folder):
+            topics.append((stem, dict(meta, machine=machine) if machine else meta, body))
+        for stem, meta, body in _project_notes(folder):
+            notes.append((stem, dict(meta, machine=machine) if machine else meta, body))
+
+    def newest(n):
+        return str(n[1].get("updated") or "")
+
+    topics.sort(key=newest, reverse=True)
+    notes.sort(key=newest, reverse=True)
     covered = {sid for _stem, meta, _body in topics for sid in (meta.get("sessions") or [])}
-    rest = [n for n in _project_notes(folder) if n[1].get("session") not in covered]
+    rest = [n for n in notes if n[1].get("session") not in covered]
     return [(m, b) for _stem, m, b in (topics + rest)[:limit]]
 
 
@@ -813,7 +830,7 @@ def project_context(cwd, limit=CONTEXT_LIMIT):
     if vault is None:
         return None
     project = _project(os.path.abspath(cwd))
-    notes = context_notes(os.path.join(vault, project), limit)
+    notes = context_notes(vault, project, limit)
     if not notes:
         return None
     return project, len(notes), render_context(project, notes)
@@ -912,6 +929,111 @@ def is_stale(record, noted_at):
     if ts > 1e12:
         ts /= 1000
     return ts > noted_at + 60
+
+
+# ---------- other machines' notes ----------
+
+# Where notes pulled from other machines are kept in this vault: one folder
+# per machine, the same project folders inside. Apart from the vault's own
+# notes, so a pull never overwrites one, and so Obsidian shows where each
+# came from. Each pull replaces a machine's folder whole -- a note deleted
+# there goes here too.
+MACHINES_FOLDER = "_machines"
+# What one machine may send: notes are a few KB each, so this is hundreds
+# of them -- newest kept when a vault holds more.
+EXPORT_MAX_BYTES = 2_000_000
+
+
+def export_notes(vault=None):
+    """This vault's own notes -- session and topic notes, never another
+    machine's mirror or the generated indexes -- as [{path, text, mtime}],
+    newest first, within EXPORT_MAX_BYTES. What `cw machines --notes`
+    prints for a machine pulling this one."""
+    vault = vault or vault_path()
+    if vault is None:
+        return []
+    found = []
+    for path in glob.glob(os.path.join(vault, "*", "*.md")):
+        rel = os.path.relpath(path, vault)
+        if os.path.basename(path) == INDEX_NAME or rel.startswith(MACHINES_FOLDER + os.sep):
+            continue
+        if not (_read_note(path) or _read_note(path, "topic_key")):
+            continue
+        try:
+            with open(path, encoding="utf-8") as fh:
+                text = fh.read()
+            mtime = os.path.getmtime(path)
+        except (OSError, UnicodeDecodeError):
+            continue
+        found.append({"path": rel.replace(os.sep, "/"), "text": text, "mtime": mtime})
+    found.sort(key=lambda n: n["mtime"], reverse=True)
+    out, size = [], 0
+    for n in found:
+        size += len(n["text"].encode("utf-8"))
+        if size > EXPORT_MAX_BYTES:
+            break
+        out.append(n)
+    return out
+
+
+def _safe_rel(rel):
+    """A pulled note's `project/file.md` path as its two parts, or None if
+    it would land anywhere but one folder down -- the sender is another
+    machine, and its paths are data."""
+    parts = rel.split("/")
+    if len(parts) != 2 or any(not p or p in (".", "..") for p in parts):
+        return None
+    if not parts[1].endswith(".md") or parts[0].startswith("_"):
+        return None
+    if any(_UNSAFE_NAME_RE.search(p) for p in parts):
+        return None
+    return parts
+
+
+def mirror_remote_notes(machine, notes, vault=None):
+    """Replace this vault's copy of one machine's notes with `notes` (as
+    export_notes gives them). Returns how many were kept. With no vault
+    yet, the default one is made -- a pull is an explicit ask."""
+    import shutil
+
+    vault = vault or vault_path() or _vault_dir(None, "cw machines")
+    folder = os.path.join(vault, MACHINES_FOLDER)
+    name = _safe_name(machine) or "machine"
+    target = os.path.join(folder, name)
+    tmp = os.path.join(folder, f".{name}.{os.getpid()}.tmp")
+    shutil.rmtree(tmp, ignore_errors=True)
+    os.makedirs(tmp)
+    kept = 0
+    for n in notes if isinstance(notes, list) else []:
+        if not isinstance(n, dict) or not isinstance(n.get("text"), str):
+            continue
+        parts = _safe_rel(str(n.get("path") or ""))
+        if parts is None:
+            continue
+        os.makedirs(os.path.join(tmp, parts[0]), exist_ok=True)
+        path = os.path.join(tmp, *parts)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(n["text"])
+        mtime = n.get("mtime")
+        if isinstance(mtime, (int, float)):
+            os.utime(path, (mtime, mtime))
+        kept += 1
+    old = f"{target}.{os.getpid()}.old"
+    if os.path.isdir(target):
+        os.replace(target, old)
+    os.replace(tmp, target)
+    shutil.rmtree(old, ignore_errors=True)
+    return kept
+
+
+def _project_folders(vault, project):
+    """[(machine or None, folder)]: this vault's folder for a project,
+    then each other machine's mirror of the same-named project."""
+    folders = [(None, os.path.join(vault, project))]
+    for machine_dir in sorted(glob.glob(os.path.join(vault, MACHINES_FOLDER, "*", ""))):
+        machine_dir = os.path.normpath(machine_dir)
+        folders.append((os.path.basename(machine_dir), os.path.join(machine_dir, project)))
+    return folders
 
 
 # ---------- the project index: _index.md ----------

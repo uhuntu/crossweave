@@ -120,7 +120,7 @@ def test_context_starts_from_the_topic_and_drops_what_it_covers(world):
     _write_session_note(world.vault, "c1", "DevGetter 上架", "2026-10-27T10:00")
     _write_session_note(world.vault, "o1", "other work", "2026-10-20T10:00")
     note.cmd_note(["1"])
-    notes = note.context_notes(str(world.vault / "ApiService"), 3)
+    notes = note.context_notes(str(world.vault), "ApiService", 3)
     assert [m.get("topic_key") or m["session"] for m, _b in notes] == ["c1", "o1"]
     text = note.render_context("ApiService", notes)
     assert "## DevGetter 上架 (topic, 3 sessions," in text

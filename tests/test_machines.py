@@ -501,7 +501,9 @@ def _ssh_runs(monkeypatch, results):
 
     def fake_run(argv, **kwargs):
         calls.append(argv)
-        result = queue.pop(0)
+        # past the scripted answers: the notes fetch that follows a pull,
+        # answered as a cw without --notes would
+        result = queue.pop(0) if queue else _Proc(1, stderr="unknown option '--notes'")
         if isinstance(result, Exception):
             raise result
         return result
@@ -521,7 +523,7 @@ def test_pull_probes_the_shell_then_uses_the_first_attempt_that_answers(monkeypa
     found = machines.pull_remote_indexes(["kestrel"])
 
     assert [s["title"] for s in found[0]["sessions"]] == ["pulled row"]
-    assert len(calls) == 2
+    assert len(calls) == 3  # the probe, the index, then its notes
     assert calls[0][8] == machines._WIN_PROBE
     # the ssh shape: BatchMode (never hang at a prompt), connect timeout,
     # the target verbatim -- a config alias works as-is
@@ -529,7 +531,8 @@ def test_pull_probes_the_shell_then_uses_the_first_attempt_that_answers(monkeypa
                             "-o", "ClearAllForwardings=yes"]
     assert calls[0][7] == "kestrel"
     assert calls[1][8] == "cw machines"
-    assert capsys.readouterr().err == ""
+    assert calls[2][8] == "cw machines --notes"
+    assert capsys.readouterr().err == ""  # a cw without --notes is no failure
 
 
 def test_a_windows_host_gets_the_cmd_form(monkeypatch, capsys):
@@ -554,8 +557,9 @@ def test_pull_falls_through_a_host_that_lacks_the_command(monkeypatch, capsys):
 
     found = machines.pull_remote_indexes(["kestrel"])
 
-    assert len(calls) == 3 and found  # the login-shell attempt answered
+    assert len(calls) == 4 and found  # the login-shell attempt answered
     assert "sh -lc" in calls[2][8]
+    assert calls[3][8] == "sh -lc 'cw machines --notes'"  # the form that worked
 
 
 def test_an_old_remote_cw_earns_an_actionable_hint(monkeypatch, capsys):
@@ -879,3 +883,75 @@ def test_remembered_machines_that_all_fail_are_not_called_no_machines(monkeypatc
     out = capsys.readouterr().out
     assert "none of the remembered machines answered" in out
     assert "no other machines yet" not in out
+
+
+# ---------- other machines' notes ----------
+
+def _note_text(sid, title="DevGetter", updated="2026-11-06T10:00"):
+    return (f'---\ntitle: "{title}"\ntool: "claude"\nsession: "{sid}"\n'
+            f'updated: {updated}\nnoted: {updated}\nresume: "cw resume claude {sid}"\n---\n'
+            f'# {title}\n\n## 还剩什么\n- 送审\n')
+
+
+def test_a_pull_keeps_the_machines_notes(monkeypatch, tmp_path, capsys):
+    from crossweave import note
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    monkeypatch.setenv("CW_VAULT", str(vault))
+    notes = {"schema": machines.SCHEMA, "notes": [
+        {"path": "ApiService/2026-11-06 DevGetter.md", "text": _note_text("r1"), "mtime": 1}]}
+    _ssh_runs(monkeypatch, [_posix_probe(), _Proc(0, stdout=json.dumps(remote_payload())),
+                            _Proc(0, stdout=json.dumps(notes))])
+    found = machines.pull_remote_indexes(["kestrel"])
+    machine = found[0]["machine"]
+    kept = vault / "_machines" / machine / "ApiService" / "2026-11-06 DevGetter.md"
+    assert kept.read_text(encoding="utf-8") == _note_text("r1")
+    # and a fresh session here in ApiService starts from it
+    got = note.project_context(str(tmp_path / "ApiService"))
+    assert got and f"(claude, 2026-11-06, on {machine})" in got[2]
+    assert "Resume on " + machine in got[2]
+    assert capsys.readouterr().err == ""
+
+
+def test_a_pull_replaces_the_machines_copy_whole(tmp_path):
+    from crossweave import note
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    note.mirror_remote_notes("kestrel", [{"path": "P/a.md", "text": "a"},
+                                         {"path": "P/b.md", "text": "b"}], str(vault))
+    note.mirror_remote_notes("kestrel", [{"path": "P/a.md", "text": "a2"}], str(vault))
+    folder = vault / "_machines" / "kestrel" / "P"
+    assert sorted(p.name for p in folder.iterdir()) == ["a.md"]  # b was deleted there
+    assert (folder / "a.md").read_text(encoding="utf-8") == "a2"
+
+
+@pytest.mark.parametrize("path", ["../evil.md", "P/../../x.md", "/etc/x.md", "P/Q/x.md",
+                                  "P/x.txt", "_machines/x.md", "P\\..\\x.md"])
+def test_a_pulled_note_cannot_land_outside_its_folder(tmp_path, path):
+    from crossweave import note
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    assert note.mirror_remote_notes("kestrel", [{"path": path, "text": "x"}], str(vault)) == 0
+    assert [p for p in vault.rglob("*") if p.is_file()] == []
+
+
+def test_the_export_skips_mirrors_and_indexes(tmp_path):
+    from crossweave import note
+    vault = tmp_path / "vault"
+    (vault / "ApiService").mkdir(parents=True)
+    (vault / "ApiService" / "n.md").write_text(_note_text("own"), encoding="utf-8")
+    (vault / "ApiService" / note.INDEX_NAME).write_text("---\nproject: x\n---\n", encoding="utf-8")
+    (vault / "ApiService" / "mine.md").write_text("# my own writing\n", encoding="utf-8")
+    note.mirror_remote_notes("kestrel", [{"path": "ApiService/r.md", "text": _note_text("r")}],
+                             str(vault))
+    assert [n["path"] for n in note.export_notes(str(vault))] == ["ApiService/n.md"]
+
+
+def test_machines_notes_prints_this_vaults_notes(monkeypatch, tmp_path, capsys):
+    vault = tmp_path / "vault"
+    (vault / "P").mkdir(parents=True)
+    (vault / "P" / "n.md").write_text(_note_text("own"), encoding="utf-8")
+    monkeypatch.setenv("CW_VAULT", str(vault))
+    assert machines.cmd_machines(["--notes"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["schema"] == machines.SCHEMA and [n["path"] for n in data["notes"]] == ["P/n.md"]
