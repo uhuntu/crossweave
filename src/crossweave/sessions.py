@@ -1388,6 +1388,12 @@ def _last_text_from_record(tool, d):
     if tool == "claude":
         if d.get("type") not in ("user", "assistant"):
             return None
+        # Claude Code writes its own notices into the transcript as assistant
+        # records: a usage limit, a refused connection, an expired login,
+        # "No response requested." None of them is where the conversation
+        # got to, and a session that ran out of quota ended on one.
+        if d.get("isApiErrorMessage") or dict_field(d, "message").get("model") == "<synthetic>":
+            return None
         # a tool result is a user record whose content holds no text block,
         # so this returns None for one without a special case
         return extract_text_from_content(dict_field(d, "message").get("content"))
@@ -1446,20 +1452,34 @@ def session_last_message(record):
     path = _transcript_path(record)
     if not path:
         return None
-    for raw in _tail_lines(path):
-        try:
-            d = json.loads(raw.decode("utf-8", "replace"))
-        except Exception:
-            continue
-        if not isinstance(d, dict):
-            continue
-        text = _last_text_from_record(record.get("tool"), d)
-        if not text or not text.strip():
-            continue
-        if is_image_only(text) or _is_injected_or_pasted(text):
-            continue
-        return " ".join(text.split())[:LAST_MESSAGE_MAX]
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        return None
+    # The last 16 KiB almost always holds the last word. When it does not
+    # -- a long run of tool output after it, or a session that ended on a
+    # quota notice -- widen rather than show nothing; the wider reads are
+    # paid only by the sessions that need them.
+    for window in LAST_MESSAGE_WINDOWS:
+        for raw in _tail_lines(path, window):
+            try:
+                d = json.loads(raw.decode("utf-8", "replace"))
+            except Exception:
+                continue
+            if not isinstance(d, dict):
+                continue
+            text = _last_text_from_record(record.get("tool"), d)
+            if not text or not text.strip():
+                continue
+            if is_image_only(text) or _is_injected_or_pasted(text):
+                continue
+            return " ".join(text.split())[:LAST_MESSAGE_MAX]
+        if window >= size:
+            break
     return None
+
+
+LAST_MESSAGE_WINDOWS = (16384, 262144, 2097152)
 
 
 # A listing row number: ASCII digits only. str.isdigit() also accepts

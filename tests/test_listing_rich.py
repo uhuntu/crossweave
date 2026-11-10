@@ -465,6 +465,38 @@ def test_the_last_message_comes_from_each_tools_own_shape(monkeypatch, tmp_path)
         {"tool": "kimi", "dir": str(tmp_path / ".kimi-code" / "k1")}) == "kimi's last word"
 
 
+def test_a_claude_last_message_skips_claude_codes_own_notices(tmp_path):
+    """A session that ran out of quota ends on "You've hit your 5-hour
+    limit"; that is Claude Code talking, not where the conversation got
+    to. The same goes for a refused connection or "No response requested."."""
+    claude = write_claude(tmp_path, "c1", [
+        claude_user("one"),
+        {"type": "assistant", "message": {"role": "assistant",
+                                          "content": [{"type": "text", "text": "the real answer"}]}},
+        claude_user("two"),
+        {"type": "assistant", "isApiErrorMessage": True,
+         "message": {"role": "assistant", "model": "<synthetic>",
+                     "content": [{"type": "text", "text": "You've hit your 5-hour limit"}]}},
+        {"type": "assistant",
+         "message": {"role": "assistant", "model": "<synthetic>",
+                     "content": [{"type": "text", "text": "No response requested."}]}},
+    ])
+    assert sessions.session_last_message({"tool": "claude", "path": str(claude)}) == "two"
+
+
+def test_the_last_message_is_found_past_a_long_tail_of_tool_output(tmp_path):
+    """150 KB of tool calls after the last reply used to leave the row
+    with no preview at all: only the last 16 KiB was read."""
+    noise = {"type": "user", "message": {"role": "user", "content": [
+        {"type": "tool_result", "tool_use_id": "t", "content": "x" * 4000}]}}
+    claude = write_claude(tmp_path, "c1", [
+        claude_user("one"),
+        {"type": "assistant", "message": {"role": "assistant",
+                                          "content": [{"type": "text", "text": "the real answer"}]}},
+    ] + [noise] * 40)
+    assert sessions.session_last_message({"tool": "claude", "path": str(claude)}) == "the real answer"
+
+
 def test_a_codex_last_message_resolves_through_the_path_index(monkeypatch, tmp_path):
     """The listing hands the renderer a light record, and a codex record's
     transcript is found the way the rest of the module finds it."""
