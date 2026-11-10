@@ -489,6 +489,9 @@ def steer_hint():
         # in the listing, and printing it would make the hint noise.
         if len(members) < 2:
             continue
+        # Nor is one handoff: the source and the session it seeded.
+        if not sessions.is_repeated_topic(m["title"] for m in members):
+            continue
         if printed >= 2:
             break
         printed += 1

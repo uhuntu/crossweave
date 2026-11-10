@@ -225,3 +225,37 @@ def test_starts_session_is_true_for_a_fresh_session(tool, rest):
 ])
 def test_starts_session_is_false_for_everything_else(tool, rest):
     assert not cli.starts_session(tool, rest)
+
+
+# ---------- one handoff is a continuation, not a repeat ----------
+
+@pytest.mark.parametrize("titles, repeated", [
+    (["(handoff) Rock 5B", "Rock 5B"], False),
+    (["(fork) Rock 5B", "Rock 5B"], False),
+    (["(handoff) Rock 5B", "(handoff) Rock 5B"], False),
+    (["Rock 5B", "rock 5b"], True),
+    (["(handoff) Rock 5B", "(handoff) Rock 5B", "(handoff) Rock 5B"], True),
+])
+def test_is_repeated_topic(titles, repeated):
+    assert sessions.is_repeated_topic(titles) is repeated
+
+
+def test_a_single_handoff_keeps_its_marks_but_gets_no_summary(monkeypatch, capsys):
+    rows = [
+        _row("claude", "c1", "(handoff) Rock 5B 蓝牙"),
+        _row("codex", "x1", "other work"),
+        _row("codex", "x2", "Rock 5B 蓝牙"),
+    ]
+    out = _listing(monkeypatch, capsys, rows)
+    assert not any("sessions share" in l for l in out)
+    assert sum(l.count("⧉2") for l in out) == 2
+
+
+def test_the_hint_says_nothing_about_a_single_handoff(cached_listing, monkeypatch, tmp_path, capsys):
+    here = tmp_path / "app"
+    here.mkdir()
+    cached_listing.write_list_cache([
+        {"tool": "claude", "id": "c" * 32, "cwd": str(here), "title": "(handoff) Rock 5B"},
+        {"tool": "codex", "id": "x" * 32, "cwd": str(here), "title": "Rock 5B"},
+    ])
+    assert _hint(monkeypatch, here, capsys) == ""

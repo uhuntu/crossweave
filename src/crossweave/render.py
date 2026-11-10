@@ -279,7 +279,11 @@ def render_rows(rows, write_cache=True, start=1, notes=None, full_notes=False,
         # number instead of a range.
         width = shutil.get_terminal_size((100, 24)).columns
         positions = {row[1]: n for n, row in enumerate(rows, start=start)}
-        ranked = sorted(topics.items(), key=lambda kv: -len(kv[1]))
+        # A source and its one handoff keep their ⧉2 marks but get no line:
+        # that is a continuation, not a topic being reopened.
+        ranked = sorted(((key, members) for key, members in topics.items()
+                         if sessions.is_repeated_topic(r[5] for r in members)),
+                        key=lambda kv: -len(kv[1]))
         for key, members in ranked[:TOPIC_SUMMARY_MAX]:
             turns = 0
             for row in members:

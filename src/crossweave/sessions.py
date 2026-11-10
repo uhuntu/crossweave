@@ -971,6 +971,19 @@ def topic_clusters(rows):
     return {key: members for key, members in groups.items() if len(members) >= 2}
 
 
+def is_repeated_topic(titles):
+    """Whether a cluster's titles show the topic being reopened rather than
+    one session handed on. A source and its handoff (or fork) is a single
+    deliberate continuation; naming it as a repeat made every handoff look
+    like a topic that keeps coming back. Three sessions, or two that were
+    each started fresh, is a repeat."""
+    titles = list(titles)
+    if len(titles) >= 3:
+        return True
+    fresh = [t for t in titles if isinstance(t, str) and _without_inherited_mark(t) == t]
+    return len(fresh) >= 2
+
+
 def list_cache_entry(row):
     """One listing row as a cache entry: {tool, id} plus the display facts
     (cwd, title, when) a resolve_row-shaped tuple carries, when it does.
