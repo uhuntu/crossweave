@@ -113,7 +113,8 @@ def test_cmd_wiki_lists_pages_without_a_topic(monkeypatch, tmp_path, capsys):
     _setup(monkeypatch, tmp_path, _found(judged=[1, 2]))
     monkeypatch.setenv("CW_VAULT", str(tmp_path))
     assert wiki.cmd_wiki(["SBOM"]) == 0
-    assert "wiki: _wiki/SBOM.md" in capsys.readouterr().out
+    # the platform's own separator: Windows prints _wiki\SBOM.md
+    assert "wiki: " + os.path.join("_wiki", "SBOM.md") in capsys.readouterr().out
     assert wiki.cmd_wiki([]) == 0
     assert "SBOM  (2 sessions, built" in capsys.readouterr().out
 
@@ -226,7 +227,8 @@ def test_cmd_wiki_stale_and_rebuild_touch_only_the_stale_page(monkeypatch, tmp_p
     assert wiki.cmd_wiki(["--rebuild", "-y"]) == 0
     # only the stale page was rebuilt: the SCA prompt never grew
     assert len(prompts) == 2 and "SBOM" in prompts[1]
-    assert "wiki: _wiki/SBOM.md" in capsys.readouterr().out
+    # the platform's own separator: Windows prints _wiki\SBOM.md
+    assert "wiki: " + os.path.join("_wiki", "SBOM.md") in capsys.readouterr().out
 
 
 def test_cmd_wiki_rebuild_with_nothing_stale_says_so(monkeypatch, tmp_path, capsys):
@@ -253,7 +255,7 @@ def test_discover_proposes_topics_and_builds_the_new_ones(monkeypatch, tmp_path,
     monkeypatch.setenv("CW_VAULT", str(tmp_path))
     assert wiki.cmd_wiki(["--discover", "-y"]) == 0
     out = capsys.readouterr().out
-    assert "SCA" in out and "wiki: _wiki/SCA.md" in out
+    assert "SCA" in out and "wiki: " + os.path.join("_wiki", "SCA.md") in out
     # the topic list read the vault's notes, and SBOM was not rebuilt
     assert "画了 SBOM 流程图" in prompts[0]
     assert len(prompts) == 2
