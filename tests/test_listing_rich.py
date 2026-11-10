@@ -497,6 +497,18 @@ def test_the_last_message_is_found_past_a_long_tail_of_tool_output(tmp_path):
     assert sessions.session_last_message({"tool": "claude", "path": str(claude)}) == "the real answer"
 
 
+def test_an_english_last_message_is_not_cut_at_seventy_characters(tmp_path):
+    """The cap counted code points, so English stopped at half a line with
+    no ellipsis; the row clips to the terminal's width instead."""
+    long = "Same single warning as before, supported devices unchanged, now publishing to internal testing"
+    claude = write_claude(tmp_path, "c1", [
+        claude_user("one"),
+        {"type": "assistant", "message": {"role": "assistant",
+                                          "content": [{"type": "text", "text": long}]}},
+    ])
+    assert sessions.session_last_message({"tool": "claude", "path": str(claude)}) == long
+
+
 def test_a_codex_last_message_resolves_through_the_path_index(monkeypatch, tmp_path):
     """The listing hands the renderer a light record, and a codex record's
     transcript is found the way the rest of the module finds it."""

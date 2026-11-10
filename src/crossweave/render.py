@@ -59,9 +59,12 @@ TOPIC_CHOICES = ("⧉", "[x]")
 # dozens of them, and a preamble longer than the first screen of rows is
 # the table's own worst enemy.
 TOPIC_SUMMARY_MAX = 5
-# A last message is a preview, not a transcript: one line, same budget as a
-# title.
-LAST_MESSAGE_MAX = 70
+# A last message is a preview, not a transcript -- but this is only a cap
+# on what is read, not the line's width: the row clips it to the terminal
+# (by columns, with an ellipsis). A 70-character cap here counted code
+# points, so an English preview stopped at half a line, mid-word, with no
+# ellipsis, while a Chinese one of the same count filled the line.
+LAST_MESSAGE_MAX = 400
 
 
 def _encodable(choices):
