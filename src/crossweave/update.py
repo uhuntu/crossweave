@@ -45,7 +45,14 @@ UPDATE_PROXY_ENV = "CROSSWEAVE_UPDATE_PROXY"
 # the same treatment for a different reason: its update check
 # (code.kimi.com/kimi-code/latest) intermittently hangs at connect time (2 of
 # 5 attempts exceeded 10s on 2026-09-24), and a bare retry usually gets through.
-TOOL_UPDATE_RETRIES = {"claude": 2, "kimi": 2}
+# pi and opencode need it for a third reason: both pull from a single host with
+# no mirror, and this network's route to those hosts swings between "stalls at
+# zero bytes" and "fast" from one attempt to the next -- confirmed live
+# 2026-11-10 in a single `cw update all`: pi's `npm ci` died on read ECONNRESET
+# after a 46s tarball fetch and opencode's curl upgrade hit its own deadline,
+# yet both went through on the next attempt via the local proxy (pi 1.5.0 ->
+# 1.5.1 in 31s, opencode 2.2.0 -> 2.2.6). One more attempt is all it took.
+TOOL_UPDATE_RETRIES = {"claude": 2, "kimi": 2, "pi": 2, "opencode": 2}
 
 # The self-update is a `git pull` (or a pip upgrade) on the same network that
 # severs long TLS transfers, and it used to get exactly one attempt: a pull
