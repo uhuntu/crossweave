@@ -462,6 +462,21 @@ def codex_parent_thread_id(sid):
     return parent if parent and parent != sid else None
 
 
+def codex_fork_parent(sid):
+    """The thread a codex rollout was forked from by the user, or None. A
+    subagent thread (a Guardian review, say) records a parent too, but
+    codex started it for itself -- it is not the user carrying work on,
+    and sixteen of them joined one topic before this was checked."""
+    parent = codex_parent_thread_id(sid)
+    if not parent:
+        return None
+    meta = _codex_session_meta(codex_rollout_path(sid))
+    source = common.dict_field(meta, "payload").get("source") if meta else None
+    if isinstance(source, dict) and "subagent" in source:
+        return None
+    return parent
+
+
 def codex_resolve(prefix):
     ids = {sid for sid in codex_thread_names() if sid.startswith(prefix)}
     ids |= {sid for sid in build_codex_path_index() if sid.startswith(prefix)}

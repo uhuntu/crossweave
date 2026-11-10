@@ -79,7 +79,7 @@ class Picker:
         self.handoff_to = None  # the target list while asking "hand off to?"
         self.tool = None
         self.here_only = False
-        self.expanded = set()  # topic keys unfolded to show every session
+        self.expanded = set()  # topics (their first session's id) unfolded
         self.cursor = 0
         self.top = 0
         self.details = {}  # full id -> (turns, last message), filled on view
@@ -88,7 +88,20 @@ class Picker:
         self.topic_noted = note.topic_noted_index()
         self.wiked = wiki.wiki_index()
         self.tools = [t for t in sessions.TOOLS if any(r[0] == t for r, _ in items)]
+        self.link(items)
         self.refilter()
+
+    def link(self, items):
+        """Which topic each session belongs to: the sessions joined by the
+        user's continuations (see session_parents), across every session
+        the picker holds. A topic is named by its oldest session's id,
+        which stays put as newer sessions join it."""
+        records = [dict(rec, tool=row[0], id=row[1]) for row, rec in items]
+        group = sessions.link_groups(records)
+        oldest = {}
+        for r in records:  # newest first, so the last one seen is the oldest
+            oldest[group[(r["tool"], r["id"])]] = r["id"]
+        self.topic_of = {r["id"]: oldest[group[(r["tool"], r["id"])]] for r in records}
 
     def reload(self, items):
         """New items after a rename or delete; the filters stay, and the
@@ -102,6 +115,7 @@ class Picker:
         self.topic_noted = note.topic_noted_index()
         self.wiked = wiki.wiki_index()
         self.tools = [t for t in sessions.TOOLS if any(r[0] == t for r, _ in items)]
+        self.link(items)
         if self.tool not in self.tools:
             self.tool = None
         self.refilter()
@@ -117,18 +131,17 @@ class Picker:
         # One row per topic: a topic's sessions fold into the newest, which
         # carries the count; → unfolds them under it, newest first. The
         # picker holds every session, so the count is the whole history's.
+        # Under a filter, only the matching sessions of a topic count.
         groups = {}
         for it in matched:
-            key = sessions.topic_key(it[0][5])
-            if key is not None:
-                groups.setdefault(key, []).append(it)
+            groups.setdefault(self.topic_of.get(it[0][1]), []).append(it)
         self.shown = []
         self.kind = []  # per shown row: "row", "head" or "member"
         self.members = {}  # head id -> [(row, rec)] of its topic, newest first
         self.key_of = {}  # head id -> its topic key
         for it in matched:
-            key = sessions.topic_key(it[0][5])
-            group = groups.get(key) if key is not None else None
+            key = self.topic_of.get(it[0][1])
+            group = groups.get(key)
             if not group or len(group) < 2:
                 self.shown.append(it)
                 self.kind.append("row")
@@ -187,8 +200,7 @@ class Picker:
         note, else None."""
         if sid not in self.members:
             return None
-        (_tool, _sid, _when, _s, cwd, title), _rec = self.members[sid][0]
-        got = self.topic_noted.get((note._project(cwd), sessions.topic_key(title)))
+        got = note.topic_note_for(self.topic_noted, [r[1] for r, _rec in self.members[sid]])
         if not got:
             return None
         stale = note.topic_note_is_stale([rec for _r, rec in self.members[sid]], got)

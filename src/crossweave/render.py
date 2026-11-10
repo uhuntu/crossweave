@@ -154,7 +154,7 @@ def _same_saying(a, b):
 
 
 def render_rows(rows, write_cache=True, start=1, notes=None, full_notes=False,
-                sources=None, notes_label="WHY", cut=False, folded=None):
+                sources=None, notes_label="WHY", folded=None):
     """rows: list of resolve_row()-shaped tuples, already in display order.
     Prints the numbered table and, unless write_cache=False, writes the
     resume cache (cmd_search renders two sections with continuing numbers
@@ -228,10 +228,19 @@ def render_rows(rows, write_cache=True, start=1, notes=None, full_notes=False,
         except Exception:
             wiked = {}
     wiki_mark = _encodable(WIKI_CHOICES)
-    # Same-topic clusters, listing only (search rows have no sources): the
-    # rows that re-discuss one topic get a "⧉N" mark, and one summary line
-    # per cluster names the repetition under the header.
-    topics = sessions.topic_clusters(rows) if sources else {}
+    # Topics, listing only (search rows have no sources): rows that continue
+    # one another (handoff, /clear, fork -- see session_parents) get a "⧉N"
+    # mark, and one summary line per topic under the header. A folded
+    # listing has none of these: each topic is already one row.
+    topics = {}
+    if sources:
+        in_rows = [dict(sources[r[1]], tool=r[0], id=r[1]) for r in rows if r[1] in sources]
+        group = sessions.link_groups(in_rows)
+        by_group = {}
+        for r in rows:
+            if r[1] in sources:
+                by_group.setdefault(group[(r[0], r[1])], []).append(r)
+        topics = {g: members for g, members in by_group.items() if len(members) >= 2}
     topic_size = {row[1]: len(members) for members in topics.values() for row in members}
     # A folded row (see cmd_list) stands for its topic's sessions: its mark
     # counts them, and the row says how much work and how long a span.
@@ -287,32 +296,12 @@ def render_rows(rows, write_cache=True, start=1, notes=None, full_notes=False,
         # number instead of a range.
         width = shutil.get_terminal_size((100, 24)).columns
         positions = {row[1]: n for n, row in enumerate(rows, start=start)}
-        # A source and its one handoff keep their ⧉2 marks but get no line:
-        # that is a continuation, not a topic being reopened.
-        # Nor does a batch of one-turn sessions: eleven "只回复两个字：正常"
-        # probes and seven greeting-only "Session greeting"s were the top
-        # of `cw full`, ahead of any topic anyone had reopened. A count
-        # that could not be taken (None) proves nothing either way.
-        def turns_of(row):
-            record = sources.get(row[1])
-            return sessions.session_turns(record) if record is not None else None
-        member_turns = {row[1]: turns_of(row)
-                        for members in topics.values() for row in members}
-        ranked = sorted(((key, members) for key, members in topics.items()
-                         if sessions.is_repeated_topic(r[5] for r in members)
-                         and not all(member_turns[r[1]] == 1 for r in members)),
-                        key=lambda kv: -len(kv[1]))
-        for key, members in ranked[:TOPIC_SUMMARY_MAX]:
-            turns = sum(member_turns[row[1]] or 0 for row in members)
+        ranked = sorted(topics.items(), key=lambda kv: -len(kv[1]))
+        for _g, members in ranked[:TOPIC_SUMMARY_MAX]:
+            turns = sum(sessions.session_turns(sources[row[1]]) or 0 for row in members)
             name = sessions._without_inherited_mark(members[0][5])
-            # The count covers the rows on screen, not the history: a
-            # bare `cw` shows 15, and the topic it names may hold more
-            # sessions further back. Say so rather than understate it --
-            # counting the whole history costs seconds of title reads.
-            line = (f"{topic_mark} {len(members)} of {len(rows)} shown share {name!r}"
+            line = (f"{topic_mark} {len(members)} sessions continue {name!r}"
                     f" -- {turns} turns, newest row #{positions[members[0][1]]}")
-            if cut and key == ranked[0][0]:
-                line += " · `cw full` counts every session"
             print(color.paint(_clip(line, width), color.DIM))
         hidden = len(ranked) - TOPIC_SUMMARY_MAX
         if hidden > 0:
@@ -320,7 +309,7 @@ def render_rows(rows, write_cache=True, start=1, notes=None, full_notes=False,
             # reopened: the preamble would otherwise push the table off the
             # first screen. The rows keep their marks either way.
             print(color.paint(_clip(
-                f"{topic_mark} ... and {hidden} more repeated topics", width), color.DIM))
+                f"{topic_mark} ... and {hidden} more topics", width), color.DIM))
     indent = " " * (w_num + 2)
     # The "where it left off" line hangs off the row number rather than under
     # the title: the title column starts most of the way across the table, and
@@ -355,8 +344,7 @@ def render_rows(rows, write_cache=True, start=1, notes=None, full_notes=False,
         # older session would otherwise vanish with its row.
         noted_id = full_id if full_id in noted or not members else next(
             (m[1] for m in members if m[1] in noted), full_id)
-        topic_got = (topic_noted.get((note._project(cwd_show), sessions.topic_key(title)))
-                     if members else None)
+        topic_got = note.topic_note_for(topic_noted, [m[1] for m in members]) if members else None
         if topic_got:
             # The topic's own note: behind when a session joined the topic
             # or moved on after it was written.

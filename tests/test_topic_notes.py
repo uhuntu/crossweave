@@ -40,6 +40,9 @@ def world(monkeypatch, tmp_path):
     monkeypatch.setattr(sessions, "resolve_row",
                         lambda r: (r["tool"], r["id"], "", r["id"], r["cwd"], r["title"]))
     monkeypatch.setattr(sessions, "is_tool_started_row", lambda row: False)
+    # the topic is its links: k3 continues c2, which continues c1
+    links = {"k3": [("claude", "c2")], "c2": [("claude", "c1")]}
+    monkeypatch.setattr(sessions, "session_parents", lambda r: links.get(r["id"], []))
     monkeypatch.setattr(rename, "_digest_for", lambda r: f"User asked: {r['id']} work")
     monkeypatch.setattr(sessions, "LIST_CACHE_FILE", str(tmp_path / "last_list.json"))
     sessions.write_list_cache([
@@ -52,7 +55,7 @@ def world(monkeypatch, tmp_path):
     vault = tmp_path / "vault"
     vault.mkdir()
     monkeypatch.setenv("CW_VAULT", str(vault))
-    w = SimpleNamespace(vault=vault, calls=[], reply=TOPIC_REPLY, recs=recs)
+    w = SimpleNamespace(vault=vault, calls=[], reply=TOPIC_REPLY, recs=recs, links=links)
 
     def judge(name, prompt):
         w.calls.append(prompt)
@@ -74,7 +77,7 @@ def test_a_folded_row_notes_its_whole_topic(world, capsys):
     assert note.cmd_note(["1"]) == 0
     path = world.vault / "ApiService" / "DevGetter 上架.md"
     text = path.read_text(encoding="utf-8")
-    assert 'topic_key: "devgetter 上架"' in text
+    assert 'topic_key: "c1"' in text  # its first session: the one the rest continue
     assert 'sessions: ["k3", "c2", "c1"]' in text
     assert 'resume: "cw resume kimi k3"' in text
     assert "# DevGetter 上架\n" in text and "## 现状" in text
@@ -118,7 +121,7 @@ def test_context_starts_from_the_topic_and_drops_what_it_covers(world):
     _write_session_note(world.vault, "o1", "other work", "2026-10-20T10:00")
     note.cmd_note(["1"])
     notes = note.context_notes(str(world.vault / "ApiService"), 3)
-    assert [m.get("topic_key") or m["session"] for m, _b in notes] == ["devgetter 上架", "o1"]
+    assert [m.get("topic_key") or m["session"] for m, _b in notes] == ["c1", "o1"]
     text = note.render_context("ApiService", notes)
     assert "## DevGetter 上架 (topic, 3 sessions," in text
 
@@ -128,13 +131,15 @@ def test_the_topic_note_is_not_a_session_note(world):
     assert note.noted_index(str(world.vault)) == {}
     assert note.session_notes(str(world.vault)) == {}
     index = note.topic_noted_index(str(world.vault))
-    assert set(index) == {("ApiService", "devgetter 上架")}
-    assert index[("ApiService", "devgetter 上架")][1] == {"k3", "c2", "c1"}
+    assert len(index) == 1 and index[0][1] == {"k3", "c2", "c1"}
+    # found by the sessions it shares, whatever the topic is called now
+    assert note.topic_note_for(index, ["k4", "k3"]) == index[0]
+    assert note.topic_note_for(index, ["o1"]) is None
 
 
 def test_the_topic_note_falls_behind(world):
     note.cmd_note(["1"])
-    got = note.topic_noted_index(str(world.vault))[("ApiService", "devgetter 上架")]
+    got = note.topic_note_for(note.topic_noted_index(str(world.vault)), ["k3"])
     members = [world.recs["k3"], world.recs["c2"], world.recs["c1"]]
     assert not note.topic_note_is_stale(members, got)
     # a session joined the topic after the note
@@ -168,9 +173,11 @@ def test_the_hint_points_at_the_folded_rows_number(world, monkeypatch, tmp_path,
 
 
 def test_the_topic_takes_in_the_sessions_the_listing_did_not_walk(world):
-    """A bare `cw` folded six of nine; the note covers all nine."""
+    """A listing cached before c0 joined the topic still notes all of it;
+    a same-titled session with no link stays out."""
     world.recs["c0"] = _rec("c0", "claude", "DevGetter 上架", 400)
-    world.recs["x9"] = dict(_rec("x9", "claude", "DevGetter 上架", 500), cwd="/elsewhere")
+    world.links["c1"] = [("claude", "c0")]
+    world.recs["x9"] = _rec("x9", "claude", "DevGetter 上架", 500)
     note.cmd_note(["1"])
     text = (world.vault / "ApiService" / "DevGetter 上架.md").read_text(encoding="utf-8")
     assert 'sessions: ["k3", "c2", "c1", "c0"]' in text

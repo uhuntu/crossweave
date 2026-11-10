@@ -326,19 +326,20 @@ def _topic_parts(records, vault):
     return parts
 
 
-def _existing_topic_note(folder, key):
-    needle = f"topic_key: {json.dumps(key, ensure_ascii=False)}"
+def _existing_topic_note(folder, ids):
+    """The topic note in this folder sharing the most sessions with ids --
+    the one to rewrite as the topic grows."""
+    ids, best, shared = set(ids), None, 0
     for path in glob.glob(os.path.join(folder, "*.md")):
-        try:
-            with open(path, encoding="utf-8") as fh:
-                for i, line in enumerate(fh):
-                    if i >= FRONTMATTER_LINES:
-                        break
-                    if line.rstrip("\n") == needle:
-                        return path
-        except (OSError, UnicodeDecodeError):
+        if os.path.basename(path) == INDEX_NAME:
             continue
-    return None
+        got = _read_note(path, "topic_key")
+        if not got:
+            continue
+        n = len(set(got[0].get("sessions") or []) & ids)
+        if n > shared:
+            best, shared = path, n
+    return best
 
 
 def render_topic(records, name, key, cwd, body, now=None):
@@ -374,12 +375,9 @@ def note_topic(records, vault, judge, judge_explicit=False):
     title, cwd = sessions._resolve_title_and_cwd(records[0])
     cwd = None if cwd == "?" else cwd
     name = sessions._without_inherited_mark(title)
-    key = sessions.topic_key(title)
-    if key is None:
-        print(f"cw note: '{title}' names no topic -- noting the session alone",
-              file=sys.stderr)
-        return _note_one(records[0], vault, judge, judge_explicit)
     oldest_first = sorted(records, key=_ts)
+    # The topic's id is its first session's: the one the rest continue.
+    key = oldest_first[0]["id"]
     parts = _topic_parts(oldest_first, vault)
     if not parts:
         print(f"cw note: the sessions of '{name}' hold nothing to note", file=sys.stderr)
@@ -404,7 +402,7 @@ def note_topic(records, vault, judge, judge_explicit=False):
     folder = os.path.join(vault, _project(cwd))
     os.makedirs(folder, exist_ok=True)
     with _WRITE_LOCK:
-        path = _existing_topic_note(folder, key)
+        path = _existing_topic_note(folder, [r["id"] for r in records])
         if path is None:
             # No date in the name: one file per topic, rewritten as it moves.
             path = os.path.join(folder, f"{_safe_name(name) or 'topic'}.md")
@@ -438,28 +436,19 @@ def _topic_records(target, cache):
 
 
 def _whole_topic(found):
-    """found plus the topic's older sessions in the same directory. A bare
-    `cw` folds only what it walked to fill its rows -- six of DevGetter's
-    nine sessions -- and a topic note missing the first ones would lose
-    where the topic began. Reading the directory's titles costs about a
-    second, next to a judge call that takes many."""
-    from . import common, sessions
+    """Every session joined to `found` by a continuation (see
+    session_parents), newest first -- the whole history's, so a topic row
+    of an older listing still notes the sessions added since."""
+    from . import sessions
 
-    title, cwd = sessions._resolve_title_and_cwd(found[0])
-    key = sessions.topic_key(title)
-    if key is None or not cwd or cwd == "?":
-        return found
+    light = sessions._all_light_records()
+    group = sessions.link_groups(light)
+    mine = {group.get((r["tool"], r["id"])) for r in found} - {None}
     have = {(r["tool"], r["id"]) for r in found}
-    more = []
-    for r in sessions._all_light_records():
-        if (r["tool"], r["id"]) in have or not common._same_path(r.get("cwd"), cwd):
-            continue
-        if r["tool"] == "claude" and r.get("path") and sessions.claude_is_empty(r["path"]):
-            continue
-        row = sessions.resolve_row(r)
-        if sessions.is_tool_started_row(row) or sessions.topic_key(row[5]) != key:
-            continue
-        more.append(r)
+    more = [r for r in light if group.get((r["tool"], r["id"])) in mine
+            and (r["tool"], r["id"]) not in have
+            and not (r["tool"] == "claude" and r.get("path")
+                     and sessions.claude_is_empty(r["path"]))]
     return sorted(found + more, key=_ts, reverse=True)
 
 
@@ -938,14 +927,15 @@ def _project_topic_notes(folder):
 
 
 def topic_noted_index(vault=None):
-    """{(project, topic key): (when noted, {session ids it covers})} for
-    every topic note in $CW_VAULT -- the listing's ✎ on a folded row."""
+    """[(when noted, {session ids it covers})] for every topic note in
+    $CW_VAULT -- the listing's ✎ on a folded row, matched by the sessions
+    it shares with the row (see topic_note_for)."""
     if vault is None:
         raw = os.environ.get("CW_VAULT", "").strip()
         if not raw:
             return {}
         vault = os.path.abspath(os.path.expanduser(raw))
-    index = {}
+    index = []
     for path in glob.glob(os.path.join(vault, "*", "*.md")):
         if os.path.basename(path) == INDEX_NAME:
             continue
@@ -958,9 +948,17 @@ def topic_noted_index(vault=None):
                 str(meta.get("noted", "")).strip(), "%Y-%m-%dT%H:%M").timestamp()
         except ValueError:
             noted = os.path.getmtime(path)
-        project = os.path.basename(os.path.dirname(path))
-        index[(project, meta["topic_key"])] = (noted, set(meta.get("sessions") or []))
+        index.append((noted, set(meta.get("sessions") or [])))
     return index
+
+
+def topic_note_for(index, ids):
+    """(when noted, covered ids) of the topic note sharing the most
+    sessions with `ids`, or None. Sessions, not a name: a topic's title
+    changes with its newest session, its sessions only grow."""
+    ids = set(ids)
+    best = max(index, key=lambda got: len(got[1] & ids), default=None)
+    return best if best and best[1] & ids else None
 
 
 def topic_note_is_stale(members, got):

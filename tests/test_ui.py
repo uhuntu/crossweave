@@ -14,9 +14,20 @@ ITEMS = [
 ]
 
 
-def picker(monkeypatch):
+LINKS = {}  # id -> [(tool, id)] the session continues; set per test
+
+
+def picker(monkeypatch, links=None):
     monkeypatch.setattr(ui.note, "noted_index", lambda: {})
+    monkeypatch.setattr(ui.note, "topic_noted_index", lambda: [])
+    monkeypatch.setattr(ui.sessions, "session_parents", lambda r: (links or {}).get(r["id"], []))
     return ui.Picker(list(ITEMS), "/w/crossweave")
+
+
+def relink(p, items):
+    p.items = items
+    p.link(items)
+    p.refilter()
 
 
 def test_every_word_has_to_appear_case_folded():
@@ -151,31 +162,30 @@ def test_reload_drops_a_tool_filter_whose_tool_is_gone(monkeypatch):
 
 
 def test_the_picker_counts_the_rows_sharing_a_topic(monkeypatch):
-    """The rows on screen, not the whole listing: a filter that narrows to
-    one session of a topic leaves a cluster of one, which is no cluster.
+    """A topic is the sessions joined by a continuation, not alike titles;
+    a filter that narrows to one session of it leaves no topic to name.
     The topic folds into its newest session, which carries the count."""
-    p = picker(monkeypatch)
+    p = picker(monkeypatch, {"ddd-4": [("codex", "bbb-2")]})
     assert p.topic_count == {}
-    p.items = list(ITEMS) + [
-        (row("claude", "ddd-4", "/w/other", "fix the nfc lock"), {"id": "ddd-4"})]
-    p.refilter()
+    relink(p, list(ITEMS) + [
+        (row("claude", "ddd-4", "/w/other", "fix the nfc lock"), {"id": "ddd-4"}),
+        (row("claude", "eee-5", "/w/other", "fix the NFC lock"), {"id": "eee-5"})])  # no link
     assert p.topic_count == {"bbb-2": 2}
-    assert [it[0][1] for it in p.shown] == ["aaa-1", "bbb-2", "ccc-3"]
+    assert [it[0][1] for it in p.shown] == ["aaa-1", "bbb-2", "ccc-3", "eee-5"]
     p.query = "ddd-4"  # the id: one row, so no repetition to name
     p.refilter()
     assert p.topic_count == {}
 
 
 def _topic_picker(monkeypatch):
-    p = picker(monkeypatch)
-    p.items = [
+    p = picker(monkeypatch, {"dev-3": [("claude", "dev-2")], "dev-2": [("claude", "dev-1")]})
+    relink(p, [
         ITEMS[0],
         (row("kimi", "dev-3", "/w/api", "(handoff) DevGetter 上架"), {"id": "dev-3"}),
         ITEMS[1],
         (row("claude", "dev-2", "/w/api", "(handoff) DevGetter 上架"), {"id": "dev-2"}),
         (row("claude", "dev-1", "/w/api", "DevGetter 上架"), {"id": "dev-1"}),
-    ]
-    p.refilter()
+    ])
     return p
 
 

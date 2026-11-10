@@ -89,6 +89,7 @@ from .codex import (
     codex_handoff_messages,
     codex_index,
     codex_light_records,
+    codex_fork_parent,
     codex_parent_thread_id,
     codex_resolve,
     codex_rollout_files,
@@ -776,7 +777,6 @@ def cmd_list(args):
     # user asked for. `--all` brings them back.
     rows = []
     sources = {}
-    cut = False  # the limit stopped the walk with sessions left over
     # A limited listing folds a topic into its newest session: nine
     # sessions on one request took four of fifteen rows and needed a line
     # under the header to say they were one thing. The older ones ride on
@@ -785,27 +785,49 @@ def cmd_list(args):
     # `cw full` (no limit) still lists every session on its own row.
     fold = limit is not None
     folded = {}
-    head_of = {}  # topic key -> the row that stands for it
-    for n, r in enumerate(light):
+    # A topic is what the user's own continuations join (see
+    # session_parents) -- over the whole history, which costs a tenth of a
+    # second: the links sit at the head of each file, not behind a title.
+    group = link_groups(light) if fold else {}
+    head_of = {}  # group -> the row that stands for it
+    for r in light:
         # A Claude session `/clear` left behind holds nothing to resume.
         if not show_all and r["tool"] == "claude" and r.get("path") and claude_is_empty(r["path"]):
             continue
+        g = group.get((r["tool"], r["id"]))
+        if g in head_of:
+            continue  # an older session of a topic already on screen
         row = resolve_row(r)
         if not show_all and is_tool_started_row(row):
             continue
         # The light record rides along so the renderer can count turns for
         # the rows it actually prints (see render_rows' sources).
         sources[row[1]] = r
-        key = topic_key(row[5]) if fold else None
-        if key is not None and key in head_of:
-            folded.setdefault(head_of[key][1], [head_of[key]]).append(row)
-            continue
-        if key is not None:
-            head_of[key] = row
+        if g is not None:
+            head_of[g] = row
         rows.append(row)
         if limit is not None and len(rows) >= limit:
-            cut = n < len(light) - 1
             break
+    # Each shown topic's other sessions, from the whole history. Their
+    # rows are built without a title (the slow part of a row, and the
+    # folded row never shows one); `when` and the id are what it uses.
+    members_of = {}
+    for r in light:
+        g = group.get((r["tool"], r["id"]))
+        if g in head_of:
+            members_of.setdefault(g, []).append(r)
+    for g, head in head_of.items():
+        members = [head]
+        for r in members_of.get(g, ()):
+            if r["id"] == head[1]:
+                continue
+            if not show_all and r["tool"] == "claude" and r.get("path") and claude_is_empty(r["path"]):
+                continue
+            members.append((r["tool"], r["id"], relative_time(r["ts"]),
+                            r["id"][:ID_SHOW], r.get("cwd") or "?", ""))
+            sources.setdefault(r["id"], r)
+        if len(members) > 1:
+            folded[head[1]] = members
     remotes = []
     if with_machines:
         indexes = machines.read_remote_indexes()
@@ -849,7 +871,7 @@ def cmd_list(args):
             **({"ssh": s["ssh"]} if s.get("ssh") else {})}
            for s in remotes])
     if rows:
-        render_rows(rows, sources=sources, write_cache=False, cut=cut, folded=folded)
+        render_rows(rows, sources=sources, write_cache=False, folded=folded)
     if remotes:
         if rows:
             print()
@@ -960,47 +982,6 @@ def _without_inherited_mark(title):
     return title
 
 
-def topic_key(title):
-    """Normalize a display title for same-topic clustering, or None when the
-    title is not a topic at all.
-
-    A handoff/fork inherits the topic it continues, so the mark drops; case
-    folds, because the same request capitalized two ways is still the same
-    request. Titles that say nothing (`(no title)`, a pasted URL, a bare
-    acknowledgement) cluster nothing -- 200 rows of `(no title)` is one
-    absence of a topic, not a topic with 200 sessions."""
-    text = _without_inherited_mark((title or "").strip()).casefold()
-    if not text or title_says_nothing(text):
-        return None
-    return text
-
-
-def topic_clusters(rows):
-    """Group resolve_row-shaped tuples by topic key. Returns
-    {key: [row, ...]} for keys shared by at least two rows, each list in
-    the order the rows came in (the listings sort newest first, so the
-    first member is the freshest take on the topic)."""
-    groups = {}
-    for row in rows:
-        key = topic_key(row[5])
-        if key:
-            groups.setdefault(key, []).append(row)
-    return {key: members for key, members in groups.items() if len(members) >= 2}
-
-
-def is_repeated_topic(titles):
-    """Whether a cluster's titles show the topic being reopened rather than
-    one session handed on. A source and its handoff (or fork) is a single
-    deliberate continuation; naming it as a repeat made every handoff look
-    like a topic that keeps coming back. Three sessions, or two that were
-    each started fresh, is a repeat."""
-    titles = list(titles)
-    if len(titles) >= 3:
-        return True
-    fresh = [t for t in titles if isinstance(t, str) and _without_inherited_mark(t) == t]
-    return len(fresh) >= 2
-
-
 def list_cache_entry(row, members=None):
     """One listing row as a cache entry: {tool, id} plus the display facts
     (cwd, title, when) a resolve_row-shaped tuple carries, when it does.
@@ -1017,10 +998,8 @@ def list_cache_entry(row, members=None):
         if isinstance(row[2], str) and row[2]:
             entry["when"] = row[2]
     if members and len(members) > 1:
-        # A folded row stands for its whole topic; the steer hint counts
-        # the repeat from these, since the older sessions have no row.
-        entry["topic_titles"] = [m[5] for m in members if isinstance(m[5], str)]
-        # and `cw note <N>` notes the topic from these
+        # A folded row stands for its whole topic: `cw note <N>` notes it
+        # from these, and the steer hint counts them.
         entry["topic_members"] = [{"tool": m[0], "id": m[1]} for m in members]
     return entry
 
@@ -1182,6 +1161,86 @@ def _handoff_source_of(r):
         return (m.group(1), m.group(2)) if m else None
     path = _transcript_path(r)
     return handoff_source(path, r["tool"]) if path else None
+
+
+# Claude Code's own record of a continuation: a session started with
+# /clear (or a fresh start offered over an inactive one) opens with a
+# reminder naming the session it follows. It is written before the first
+# prompt, so the head of the file is the only place to look.
+CLAUDE_CONTINUES_RE = re.compile(
+    r"instead of resuming an earlier, inactive one \(session ([0-9a-f]{8}-[0-9a-f-]{27})\)")
+CLAUDE_CONTINUES_LINES = 12
+
+
+def claude_continues(path):
+    """The id of the Claude session this one was started to follow, or
+    None -- see CLAUDE_CONTINUES_RE."""
+    try:
+        with open_text(path) as fh:
+            for i, line in enumerate(fh):
+                if i >= CLAUDE_CONTINUES_LINES:
+                    break
+                if '"type":"user"' not in line and '"type": "user"' not in line:
+                    continue
+                m = CLAUDE_CONTINUES_RE.search(line)
+                if m:
+                    return m.group(1)
+    except OSError:
+        pass
+    return None
+
+
+def session_parents(r):
+    """[(tool, id)] of the sessions this one explicitly continues: the
+    source of a `cw handoff` (`cw 1 codex`), the Claude session a /clear
+    started it after, the codex thread it forked from. A topic is what
+    these links join -- the user's own act of carrying work on, not two
+    titles that happen to read alike."""
+    parents = []
+    source = _handoff_source_of(r)
+    if source:
+        parents.append(source)
+    if r["tool"] == "claude" and r.get("path"):
+        prior = claude_continues(r["path"])
+        # Only within one directory: a /clear is also how a session is
+        # cleared to start something unrelated, and the one that moved to
+        # another project (TesSmartUpdater after DevGetter) is that. Claude
+        # files a session under its directory, so the predecessor's file
+        # sitting next to this one is the same-directory test.
+        if prior and os.path.exists(os.path.join(os.path.dirname(r["path"]), prior + ".jsonl")):
+            parents.append(("claude", prior))
+    if r["tool"] == "codex":
+        fork = codex_fork_parent(r["id"])
+        if fork:
+            parents.append(("codex", fork))
+    return parents
+
+
+def link_groups(records, parents_of=None):
+    """Join records that continue one another into topics. Returns
+    {(tool, id): group number}, with numbers shared by the records of one
+    topic. Parents outside `records` still join: two handoffs of a session
+    the listing never reached are still one topic."""
+    parents_of = parents_of or session_parents
+    parent = {}
+
+    def find(k):
+        parent.setdefault(k, k)
+        while parent[k] != k:
+            parent[k] = parent[parent[k]]
+            k = parent[k]
+        return k
+
+    for r in records:
+        me = find((r["tool"], r["id"]))
+        for p in parents_of(r):
+            other = find(tuple(p))
+            if other != me:
+                parent[other] = me
+    roots, out = {}, {}
+    for r in records:
+        out[(r["tool"], r["id"])] = roots.setdefault(find((r["tool"], r["id"])), len(roots))
+    return out
 
 
 def _transcript_path(r):
