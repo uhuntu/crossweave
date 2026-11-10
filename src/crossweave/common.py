@@ -63,7 +63,11 @@ def spawnable(argv):
         m = None
     if m:
         here = os.path.dirname(found)
-        target = os.path.join(here, m.group(1))
+        # npm writes the shim's target with backslashes, and os.path.join only
+        # treats those as separators on Windows -- off it the path stays literal
+        # and isfile() fails, silently routing every launch through cmd.exe /c
+        # (and with it the arguments that re-parsing would mangle).
+        target = os.path.join(here, *m.group(1).split("\\"))
         if os.path.isfile(target):
             if target.lower().endswith(".exe"):
                 return [target, *argv[1:]]
