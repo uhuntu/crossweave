@@ -935,6 +935,16 @@ def test_a_pulled_note_cannot_land_outside_its_folder(tmp_path, path):
     assert [p for p in vault.rglob("*") if p.is_file()] == []
 
 
+def test_the_home_projects_notes_come_along(tmp_path):
+    """Sessions started in ~ note into `_home`: an ordinary project folder."""
+    from crossweave import note
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    assert note.mirror_remote_notes("kestrel", [{"path": f"{note.HOME_PROJECT}/a.md", "text": "a"},
+                                                {"path": f"{note.NO_PROJECT}/b.md", "text": "b"}],
+                                    str(vault)) == 2
+
+
 def test_the_export_skips_mirrors_and_indexes(tmp_path):
     from crossweave import note
     vault = tmp_path / "vault"

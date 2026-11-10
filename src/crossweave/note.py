@@ -983,7 +983,9 @@ def _safe_rel(rel):
     parts = rel.split("/")
     if len(parts) != 2 or any(not p or p in (".", "..") for p in parts):
         return None
-    if not parts[1].endswith(".md") or parts[0].startswith("_"):
+    # `_home` and `_unsorted` are ordinary project folders; a machine's
+    # mirror inside another's is the one folder never taken in.
+    if not parts[1].endswith(".md") or parts[0] == MACHINES_FOLDER:
         return None
     if any(_UNSAFE_NAME_RE.search(p) for p in parts):
         return None
