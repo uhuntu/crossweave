@@ -99,11 +99,28 @@ def test_the_row_may_lead_the_verb(world, monkeypatch):
     assert len(_notes(world.vault)) == 1
 
 
-def test_no_vault_writes_nothing(world, monkeypatch, capsys):
+def test_no_vault_set_notes_into_the_default_folder(world, monkeypatch, tmp_path, capsys):
+    """A machine nobody set up -- no Obsidian, no CW_VAULT -- still notes:
+    into a default folder made on first use, said once, and read back by
+    everything that reads notes."""
     monkeypatch.delenv("CW_VAULT")
-    assert note.cmd_note(["1"]) == 1
-    assert "CW_VAULT" in capsys.readouterr().err
-    assert world.calls == []  # not even the judge is asked
+    default = tmp_path / "data" / "crossweave" / "notes"
+    monkeypatch.setattr(note, "DEFAULT_VAULT", str(default))
+    assert note.vault_path() is None  # nothing made by merely looking
+    assert note.cmd_note(["1"]) == 0
+    assert f"notes go to {default}" in capsys.readouterr().err
+    assert _notes(default) == ["board/" + _notes(default)[0].split("/", 1)[1]]
+    assert note.vault_path() == str(default)
+    assert set(note.noted_index()) == {"sess_abc"}
+    # the second note says nothing more about where they go
+    note.cmd_note(["1"])
+    assert "notes go to" not in capsys.readouterr().err
+
+
+def test_the_default_folder_follows_xdg(monkeypatch, tmp_path):
+    monkeypatch.setattr(note, "DEFAULT_VAULT", None)
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    assert note.default_vault() == str(tmp_path / "xdg" / "crossweave" / "notes")
 
 
 def test_a_missing_vault_is_not_created(world, tmp_path, capsys):

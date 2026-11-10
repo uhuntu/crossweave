@@ -209,10 +209,10 @@ def wiki_index(vault=None):
     what the listing's mark reads. Only _wiki is looked in, and only the
     frontmatter is read, so a big vault costs one directory listing."""
     if vault is None:
-        raw = os.environ.get("CW_VAULT", "").strip()
-        if not raw:
+        from . import note
+        vault = note.vault_path()
+        if vault is None:
             return {}
-        vault = os.path.abspath(os.path.expanduser(raw))
     index = {}
     for path, _topic, _built, sources in all_pages(vault):
         stem = os.path.splitext(os.path.basename(path))[0]

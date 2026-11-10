@@ -69,7 +69,8 @@ sessions across every directory; `cw sessions` is the same view with the
 full option set (pass `--cwd` there to scope the listing to the current
 directory). Set CW_LIMIT (a number or `all`) to change the row count.
 
-With CW_VAULT set, a fresh interactive `cw claude|codex|step|pi|codebuddy`
+With a vault (CW_VAULT, else ~/.local/share/crossweave/notes once a note
+is written there), a fresh interactive `cw claude|codex|step|pi|codebuddy`
 starts with this project's newest notes (what `cw context` prints) appended
 to the tool's system prompt -- background, no message sent. Not with -p or
 -c, nor before a subcommand; --no-context skips it once, CW_CONTEXT=off

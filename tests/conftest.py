@@ -49,3 +49,6 @@ def _isolate_stores(monkeypatch, tmp_path):
     monkeypatch.setattr(sessions, "spawnable", list)
     # the developer's own vault would put ✎ marks into every listing test
     monkeypatch.delenv("CW_VAULT", raising=False)
+    # ...and so would the default one, when CW_VAULT is unset
+    from crossweave import note
+    monkeypatch.setattr(note, "DEFAULT_VAULT", str(nowhere / "default-vault"))

@@ -6,8 +6,11 @@ what was done, why, what is still open -- written as plain Markdown into
 a vault the user already reads, so the next session can pick it up no
 matter which agent runs it.
 
-The vault is a directory: --vault, or CW_VAULT. It has to exist already,
-so a typo never quietly grows a new vault. Notes land in a folder per
+The vault is a directory: --vault, or CW_VAULT -- which has to exist
+already, so a typo never quietly grows a new vault -- or, with neither,
+a default folder cw creates on first write (DEFAULT_VAULT). Obsidian is
+only one way to read it: a vault is Markdown files in folders, and a
+machine with no Obsidian (a remote box, a server) notes all the same. Notes land in a folder per
 project (the basename of the session's cwd), named by date and title,
 with YAML frontmatter Obsidian's properties and Dataview read: tool,
 session id, cwd, the command that resumes it, and tags.
@@ -69,12 +72,42 @@ def _usage():
     return 2
 
 
+def default_vault():
+    """Where notes go with no --vault and no CW_VAULT: the platform's
+    per-user data folder ($XDG_DATA_HOME, else ~/.local/share; Windows'
+    %LOCALAPPDATA%), under crossweave/notes."""
+    if DEFAULT_VAULT:
+        return DEFAULT_VAULT
+    base = (os.environ.get("XDG_DATA_HOME") or
+            (os.environ.get("LOCALAPPDATA") if os.name == "nt" else None) or
+            os.path.join(os.path.expanduser("~"), ".local", "share"))
+    return os.path.join(base, "crossweave", "notes")
+
+
+# Set to a path to move the default vault (the tests point it at a scratch
+# folder); None means default_vault()'s own choice.
+DEFAULT_VAULT = None
+
+
+def vault_path():
+    """The vault the readers use -- CW_VAULT, else the default folder -- or
+    None when there is none yet (quietly: every listing asks)."""
+    raw = os.environ.get("CW_VAULT", "").strip()
+    path = os.path.abspath(os.path.expanduser(raw)) if raw else default_vault()
+    return path if os.path.isdir(path) else None
+
+
 def _vault_dir(flag, prog="cw note"):
     raw = flag or os.environ.get("CW_VAULT", "").strip()
     if not raw:
-        print(f"{prog}: no vault -- pass --vault DIR or set CW_VAULT "
-              "(export it in ~/.zshrc to keep)", file=sys.stderr)
-        return None
+        # No vault named: the default folder, made on first use, so notes
+        # work on a machine nobody set up -- one line says where they went.
+        path = default_vault()
+        if not os.path.isdir(path):
+            os.makedirs(path, exist_ok=True)
+            print(f"{prog}: no CW_VAULT set -- notes go to {path} "
+                  "(set CW_VAULT to put them in an Obsidian vault)", file=sys.stderr)
+        return path
     path = os.path.abspath(os.path.expanduser(raw))
     if not os.path.isdir(path):
         print(f"{prog}: vault {path} does not exist -- create it first "
@@ -774,13 +807,10 @@ def context_notes(folder, limit):
 
 def project_context(cwd, limit=CONTEXT_LIMIT):
     """(project, how many notes, `cw context` text) for cwd's project, or
-    None with no CW_VAULT, no such vault, or no notes -- quietly, because
+    None with no vault or no notes -- quietly, because
     the caller is a tool launch that goes ahead either way."""
-    raw = os.environ.get("CW_VAULT", "").strip()
-    if not raw:
-        return None
-    vault = os.path.abspath(os.path.expanduser(raw))
-    if not os.path.isdir(vault):
+    vault = vault_path()
+    if vault is None:
         return None
     project = _project(os.path.abspath(cwd))
     notes = context_notes(os.path.join(vault, project), limit)
@@ -802,10 +832,9 @@ def noted_index(vault=None):
     folders are looked in -- that is the one place cw writes -- so a big
     vault of the user's own notes costs one directory listing, not a walk."""
     if vault is None:
-        raw = os.environ.get("CW_VAULT", "").strip()
-        if not raw:
+        vault = vault_path()
+        if vault is None:
             return {}
-        vault = os.path.abspath(os.path.expanduser(raw))
     index = {}
     for path in glob.glob(os.path.join(vault, "*", "*.md")):
         try:
@@ -838,10 +867,9 @@ def session_notes(vault=None):
     $CW_VAULT, or {} with no vault. What `cw search` judges a noted session
     by, and what `cw wiki` builds its pages from."""
     if vault is None:
-        raw = os.environ.get("CW_VAULT", "").strip()
-        if not raw:
+        vault = vault_path()
+        if vault is None:
             return {}
-        vault = os.path.abspath(os.path.expanduser(raw))
     notes = {}
     for path in glob.glob(os.path.join(vault, "*", "*.md")):
         if os.path.basename(path) == INDEX_NAME:
@@ -931,10 +959,9 @@ def topic_noted_index(vault=None):
     $CW_VAULT -- the listing's ✎ on a folded row, matched by the sessions
     it shares with the row (see topic_note_for)."""
     if vault is None:
-        raw = os.environ.get("CW_VAULT", "").strip()
-        if not raw:
+        vault = vault_path()
+        if vault is None:
             return {}
-        vault = os.path.abspath(os.path.expanduser(raw))
     index = []
     for path in glob.glob(os.path.join(vault, "*", "*.md")):
         if os.path.basename(path) == INDEX_NAME:
