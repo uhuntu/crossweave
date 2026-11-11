@@ -249,10 +249,12 @@ def render(r, title, cwd, body, now=None):
     fields += [
         ("noted", now.strftime("%Y-%m-%dT%H:%M")),
         ("resume", q(f"cw resume {r['tool']} {r['id']}")),
+        ("show", q(f"cw show {r['tool']} {r['id']}")),
         ("tags", f"[ai-session, {r['tool']}]"),
     ]
     head = "\n".join(f"{k}: {v}" for k, v in fields)
-    return f"---\n{head}\n---\n# {title}\n\n{body}\n"
+    return (f"---\n{head}\n---\n# {title}\n\n"
+            f"原文 / Transcript: `cw show {r['tool']} {r['id']}`\n\n{body}\n")
 
 
 def _note_one(r, vault, judge, judge_explicit=False):
@@ -397,7 +399,9 @@ def render_topic(records, name, key, cwd, body, now=None):
         ("tags", "[ai-topic]"),
     ]
     head = "\n".join(f"{k}: {v}" for k, v in fields)
-    return f"---\n{head}\n---\n# {name}\n\n{body}\n"
+    sources = "\n".join(f"- `cw show {r['tool']} {r['id']}`" for r in records)
+    return (f"---\n{head}\n---\n# {name}\n\n"
+            f"原文 / Transcripts:\n\n{sources}\n\n{body}\n")
 
 
 def note_topic(records, vault, judge, judge_explicit=False):

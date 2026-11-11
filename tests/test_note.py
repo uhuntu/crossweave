@@ -70,7 +70,8 @@ def test_a_note_lands_in_the_project_folder_with_frontmatter(world, capsys):
     assert 'resume: "cw resume zcode sess_abc"' in text
     assert "tags: [ai-session, zcode]" in text
     assert text.rstrip().endswith("- 回归测试")
-    assert "# USB 枚举握手排查\n\n## 做了什么" in text
+    assert "# USB 枚举握手排查\n\n原文 / Transcript: `cw show zcode sess_abc`\n\n## 做了什么" in text
+    assert 'show: "cw show zcode sess_abc"' in text
     assert f"noted: board{os.sep}" in capsys.readouterr().out  # a native path
 
 

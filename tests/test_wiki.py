@@ -66,6 +66,7 @@ def test_build_reads_notes_and_digests_and_links_citations(monkeypatch, tmp_path
     assert 'topic: "SBOM"' in text
     # a citation of a noted source links to the note; the other stays plain
     assert "[[2026-10-27 SBOM|S1]][S2]" in text
+    assert "原文: `cw show codex id-1`" in text
     assert "- **S1** [[2026-10-27 SBOM]] · codex · 2d ago · `cw resume codex id-1` — SBOM 流程" in text
     assert "- **S2** session 2 · codex" in text
     assert wiki.OWN_MARKER in text

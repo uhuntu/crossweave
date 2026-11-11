@@ -115,14 +115,15 @@ def test_action_keys_name_the_command_for_the_highlighted_row(monkeypatch):
     assert p.key("n", 10) == "note"
     assert p.key("d", 10) == "delete"
     assert p.key("r", 10) == "rename"
+    assert p.key("v", 10) == "show"
 
 
 def test_action_keys_are_letters_while_typing_a_filter(monkeypatch):
     p = picker(monkeypatch)
     p.key("/", 10)
-    for ch in "hndr":
+    for ch in "hndrv":
         assert p.key(ch, 10) is None
-    assert p.query == "hndr"
+    assert p.query == "hndrv"
 
 
 def test_handoff_asks_for_a_target_other_than_the_source(monkeypatch):
@@ -225,3 +226,40 @@ def test_a_topic_counts_its_turns_across_sessions(monkeypatch):
     turns = {"dev-3": 3, "dev-2": 117, "dev-1": None}
     monkeypatch.setattr(ui.sessions, "session_turns", lambda rec: turns.get(rec["id"]))
     assert p.topic_turns("dev-3") == 120
+
+
+def test_view_returns_to_picker_without_pause(monkeypatch):
+    import curses
+    monkeypatch.setattr(ui.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(ui.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(ui, "gather", lambda: list(ITEMS))
+    monkeypatch.setattr(ui.note, "noted_index", lambda: {})
+    monkeypatch.setattr(ui.note, "topic_noted_index", lambda: [])
+    monkeypatch.setattr(ui.sessions, "session_parents", lambda record: [])
+    actions = iter(["show", None])
+    monkeypatch.setattr(curses, "wrapper", lambda *args: next(actions))
+    calls = []
+    monkeypatch.setattr(ui.show, "cmd_show", lambda args: calls.append(args) or 0)
+    monkeypatch.setattr(ui, "pause", lambda: (_ for _ in ()).throw(AssertionError("extra pause")))
+    assert ui.cmd_ui([]) == 0
+    assert calls == [["claude", "aaa-1"]]
+
+
+def test_zcode_without_tui_enters_chat(monkeypatch):
+    import curses
+    monkeypatch.setattr(ui.sys.stdin, 'isatty', lambda: True)
+    monkeypatch.setattr(ui.sys.stdout, 'isatty', lambda: True)
+    items = [(row('zcode', 'sess_saved', '/w', 'saved'), {'id': 'sess_saved'})]
+    monkeypatch.setattr(ui, 'gather', lambda: items)
+    monkeypatch.setattr(ui.note, 'noted_index', lambda: {})
+    monkeypatch.setattr(ui.note, 'topic_noted_index', lambda: [])
+    monkeypatch.setattr(ui.sessions, 'session_parents', lambda record: [])
+    monkeypatch.setattr(ui.sessions, 'zcode_cli_on_path', lambda: True)
+    monkeypatch.setattr(ui.sessions, 'zcode_tui_known_missing', lambda: True)
+    actions = iter(['resume', None])
+    monkeypatch.setattr(curses, 'wrapper', lambda *args: next(actions))
+    calls = []
+    monkeypatch.setattr(ui, 'run_cw_command', lambda args: calls.append(args) or 0)
+    monkeypatch.setattr(ui, 'pause', lambda: (_ for _ in ()).throw(AssertionError('extra pause')))
+    assert ui.cmd_ui([]) == 0
+    assert calls[0][-3:] == ['chat', 'zcode', 'sess_saved']

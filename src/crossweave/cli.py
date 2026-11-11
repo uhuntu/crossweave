@@ -10,7 +10,7 @@ import os
 import re
 import sys
 
-from . import __version__, alias, common, delete, doctor, machines, note, rename, search, sessions, ui, update, wiki
+from . import __version__, alias, chat, common, delete, doctor, machines, note, rename, search, sessions, show, ui, update, wiki
 
 TOOLS = ("claude", "codex", "kimi", "step", "pi", "opencode", "zcode", "codebuddy", "workbuddy")
 
@@ -26,6 +26,8 @@ USAGE = f"""Usage: cw <{'|'.join(TOOLS)}> [common-options] [prompt] [-- extra na
        cw full [--tool T] [--cwd] [--all]
        cw search <topic> [--tool {'|'.join(TOOLS)}] [--judge {'|'.join(search.JUDGE_CMD)}] [--why] [--all]
        cw resume <{'|'.join(TOOLS)}|N> [session-id-or-prefix] [--cwd <dir>]
+       cw show <N> | cw show <tool> <session-id-or-prefix>
+       cw chat zcode <session-id-or-prefix>
        cw <N> <{'|'.join(TOOLS)}> [native-options]
        cw <N> delete [-y]      # remove session files, keeping a backup
        cw delete <N> [-y]
@@ -47,7 +49,7 @@ USAGE = f"""Usage: cw <{'|'.join(TOOLS)}> [common-options] [prompt] [-- extra na
        cw note --index          # rebuild each project's _index.md from its notes
        cw context [DIR] [--limit N]   # print that project's newest notes, for a new session
        cw wiki <topic>          # one page per topic in the vault's _wiki/, from every session about it
-       cw ui                  # pick a session: type to filter, Enter resumes, h/n/r/d hand off/note/rename/delete
+       cw ui                  # pick a session: type to filter, Enter resumes, v views, h/n/r/d hand off/note/rename/delete
 
 Common options (translated per-tool, all optional):
   -p, --print              Non-interactive: print response and exit
@@ -143,7 +145,7 @@ Examples:
 # this list, and the test asserts it matches what main() actually dispatches,
 # so adding a subcommand cannot leave the message stale the way it was when
 # `stats` and `step` were both missing from it.
-SUBCOMMANDS = ("sessions", "full", "search", "resume", "update", "stats", "doctor", "alias", "machines", "rename", "delete", "note", "context", "wiki", "ui")
+SUBCOMMANDS = ("sessions", "full", "search", "resume", "show", "chat", "update", "stats", "doctor", "alias", "machines", "rename", "delete", "note", "context", "wiki", "ui")
 
 
 def usage(name="cw"):
@@ -544,6 +546,10 @@ def main():
     if tool == "resume":
         sessions.cmd_resume(rest)
         return
+    if tool == "show":
+        sys.exit(show.cmd_show(rest))
+    if tool == "chat":
+        sys.exit(chat.cmd_chat(rest))
     if sessions.ROW_NUMBER_RE.match(tool):
         # `cw <N>` is shorthand for `cw resume <N>`.
         if rest and rest[0] == "delete":

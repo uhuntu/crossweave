@@ -357,7 +357,8 @@ def render(topic, body, sources, own, judge, related=None, now=None):
         tool, sid, when, _short, _cwd, title = row[:6]
         link = f"[[{stem}]]" if stem else title
         extra = f" — {why}" if why else ""
-        lines.append(f"- **S{n}** {link} · {tool} · {when} · `cw resume {tool} {sid}`{extra}")
+        lines.append(f"- **S{n}** {link} · {tool} · {when} · `cw resume {tool} {sid}`{extra}"
+                     f" · 原文: `cw show {tool} {sid}`")
     if related:
         rel = "\n".join(f"- [[{stem}]] — {topic_} · {n} shared session"
                         f"{'s' if n != 1 else ''}" for stem, topic_, n in related)

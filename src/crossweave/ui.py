@@ -19,18 +19,18 @@ import os
 import subprocess
 import sys
 
-from . import common, delete, note, rename, sessions, wiki
+from . import common, delete, note, rename, sessions, show, wiki
 from .render import _clip, _display_width, TURNS_WIDTH
 
 KEYS_HELP = ("↑↓ move  →← unfold  / filter  Tab tool  . dir  Enter resume  "
-             "h handoff  n note  r rename  d delete  q quit")
+             "v view  h handoff  n note  r rename  d delete  q quit")
 
 # The tools a session can be handed to: every one with a CLI to start.
 # workbuddy has none (perform_handoff refuses it), so it is never offered.
 HANDOFF_TARGETS = tuple(t for t in sessions.TOOLS if t != "workbuddy")
 
 # Keys that leave the list to run a command on the highlighted row.
-ACTION_KEYS = {"n": "note", "d": "delete", "r": "rename"}
+ACTION_KEYS = {"n": "note", "d": "delete", "r": "rename", "v": "show"}
 
 # Colors per tool, as curses pair numbers; the ANSI palette in color.py is
 # escape codes, which curses cannot take.
@@ -242,7 +242,7 @@ class Picker:
 
     def key(self, ch, page):
         """Apply one key. Returns None, "quit", "resume", "note", "delete",
-        "rename", or ("handoff", target tool)."""
+        "rename", "show", or ("handoff", target tool)."""
         if self.handoff_to is not None:
             targets, self.handoff_to = self.handoff_to, None
             if len(ch) == 1 and ch.isdigit() and 1 <= int(ch) <= len(targets):
@@ -587,9 +587,18 @@ def cmd_ui(args):
         # the tool or command gets a normal terminal -- and the list takes
         # the terminal back when it is done. The picker is the home screen:
         # quitting a tool comes back here, it does not end cw.
+        if action == "show":
+            if show.cmd_show([tool, sid]) != 0 and not pause():
+                return 0
+            continue
         if action == "resume":
-            run_cw_command([sys.executable, "-m", "crossweave.cli",
-                            "resume", tool, sid])
+            command = ("chat" if tool == "zcode" and sessions.zcode_cli_on_path()
+                       and sessions.zcode_tui_known_missing() else "resume")
+            rc = run_cw_command([sys.executable, "-m", "crossweave.cli",
+                                 command, tool, sid])
+            if command == "chat" and rc == 0:
+                picker.reload(gather())
+                continue
         elif isinstance(action, tuple):  # ("handoff", target)
             # The commands below take a row of the last listing: make the
             # picker's view that listing, and the highlighted row its number.

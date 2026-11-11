@@ -189,6 +189,27 @@ To switch agents, put the target tool after the row number: `cw 3 codex`. Crossw
 
 One exception: kimi cannot open an interactive session with an initial prompt (a bare prompt parses as a subcommand name), so a handoff to it runs the seed as a one-shot `kimi -p` and then automatically resumes the session that run persisted (`kimi -S <id>`), dropping you into the interactive continuation with the summary already in its history. If the seed run fails, nothing is resumed — the error is reported, and you pick up with `kimi -c`.
 
+For a continuous terminal conversation on a ZCode install without its TUI,
+run `cw chat zcode <session-id-or-prefix>`. Each line starts a headless turn
+in the same saved session and its original directory. `/quit`, `/exit`, or
+Ctrl-D exits; Ctrl-C at the prompt exits, while Ctrl-C during a turn interrupts
+that turn. Each turn starts ZCode again, so it has startup overhead.
+In `cw ui`, Enter automatically uses this loop when this install is already
+known to lack `@zcode/tui`; `/quit` returns to the session list.
+
+Read a saved conversation with `cw show 3` (a row from the last listing) or
+`cw show zcode <session-id-or-prefix>`. Terminal output opens in a pager
+(press `q` to quit); redirect it with `cw show 3 > session.md` to save Markdown.
+New session notes, topic notes, and wiki source lists include `cw show <tool>
+<session-id>` commands for checking the original conversation. Existing pages
+receive these when regenerated; no model call is needed to view the transcript.
+
+In `cw ui`, select a session and press `v` to view it; quit the pager to
+return directly to the same list position.
+This shows saved user and assistant text, without reasoning or tool calls/results.
+It starts no agent and does not modify the session. Remote rows must be viewed
+on the machine holding their transcript.
+
 A zcode row can be a handoff *source* like any other — `cw 3 claude` exports its conversation and continues in Claude Code, which is the way out when a session has grown past what its model can serve. As a *target* it needs the `zcode` CLI on PATH: the CLI seeds one headless `zcode -p` run and resumes the session it persisted (the kimi dance); with only the desktop app installed the command refuses, since the desktop starts no session from a prompt.
 
 WorkBuddy has no such other half: nothing but the app itself starts one of its sessions, so a workbuddy row is a handoff *source* (`cw 3 claude` exports its conversation and continues there — the only way to keep working on one from a terminal) and never a *target* (`cw 3 workbuddy` refuses, because there is no CLI to hand a prompt to).
