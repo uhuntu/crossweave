@@ -90,6 +90,7 @@ from .codex import (
     codex_index,
     codex_light_records,
     codex_fork_parent,
+    codex_is_subagent,
     codex_parent_thread_id,
     codex_resolve,
     codex_rollout_files,
@@ -1402,7 +1403,7 @@ def resolve_row(r):
 def is_tool_started_row(row):
     """True if a resolved row is a session a tool started for itself and
     that holds no request of its own -- see TOOL_STARTED_TITLES."""
-    return row[5] in TOOL_STARTED_TITLES
+    return (row[0] == "codex" and codex_is_subagent(row[1])) or row[5] in TOOL_STARTED_TITLES
 
 
 def session_turns(record):
@@ -1945,6 +1946,11 @@ def cmd_resume(args):
     if tool == "claude":
         exec_or_die(["claude", "--resume", full_id, *extra])
     elif tool == "codex":
+        if codex_is_subagent(full_id):
+            parent = codex_parent_thread_id(full_id)
+            print("cw resume: this Codex session is a subagent; resume its parent first"
+                  + (f" with `cw resume codex {parent}`" if parent else ""), file=sys.stderr)
+            return 1
         exec_or_die(["codex", "resume", full_id, *extra])
     elif tool == "step":
         # step takes a path or a partial id, and resumes that session directly

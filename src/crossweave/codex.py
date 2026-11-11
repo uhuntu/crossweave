@@ -462,6 +462,14 @@ def codex_parent_thread_id(sid):
     return parent if parent and parent != sid else None
 
 
+def codex_is_subagent(sid):
+    """Use provenance, not inherited or renamed titles, to identify agents."""
+    path = codex_rollout_path(sid)
+    meta = _codex_session_meta(path) if path else None
+    source = common.dict_field(meta, "payload").get("source") if meta else None
+    return isinstance(source, dict) and "subagent" in source
+
+
 def codex_fork_parent(sid):
     """The thread a codex rollout was forked from by the user, or None. A
     subagent thread (a Guardian review, say) records a parent too, but

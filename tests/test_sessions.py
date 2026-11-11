@@ -2050,6 +2050,35 @@ def test_cmd_resume_claude_chdirs_into_session_cwd_first(monkeypatch, tmp_path, 
     assert "switching there first" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("subagent", [False, True])
+def test_codex_subagent_provenance_controls_listing_and_resume(monkeypatch, tmp_path,
+                                                              capsys, subagent):
+    codex_home = tmp_path / ".codex"
+    sid = "019ffdbe-12ce-7e22-9a7f-30237f491124"
+    parent = "019ffdbe-12ce-7e22-9a7f-30237f491125"
+    path = write_codex_rollout(codex_home, sid, cwd=str(tmp_path),
+                               user_text="Describe the image", parent=parent)
+    lines = path.read_text().splitlines()
+    meta = json.loads(lines[0])
+    meta["payload"]["source"] = ({"subagent": {"thread_spawn": {
+        "parent_thread_id": parent, "depth": 1}}} if subagent else "cli")
+    lines[0] = json.dumps(meta)
+    path.write_text("\n".join(lines) + "\n")
+    monkeypatch.setattr(common, "CODEX_HOME", str(codex_home))
+    monkeypatch.chdir(tmp_path)
+    row = ("codex", sid, "now", sid, str(tmp_path), "Custom renamed title")
+    assert sessions.is_tool_started_row(row) is subagent
+    assert codex.codex_is_subagent(sid) is subagent
+    calls = []
+    monkeypatch.setattr(sessions, "exec_or_die", lambda argv: calls.append(argv))
+    result = sessions.cmd_resume(["codex", sid])
+    if subagent:
+        assert result == 1 and calls == []
+        assert f"cw resume codex {parent}" in capsys.readouterr().err
+    else:
+        assert calls == [["codex", "resume", sid]]
+
+
 def test_cmd_resume_codex_chdirs_into_session_cwd_first(monkeypatch, tmp_path, capsys):
     other_dir = tmp_path / "other-project"
     other_dir.mkdir()
