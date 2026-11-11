@@ -23,46 +23,78 @@ def source(monkeypatch, tmp_path):
     return project, state
 
 
-def test_snapshot_is_versioned_and_unchanged_runs_do_not_write(source):
+def test_snapshot_keeps_one_latest_file_per_session(source):
     project, state = source
     path, created = exporter.snapshot(project, 'zcode', 'saved')
     assert created
+    assert path == project / 'raw/sources/crossweave/zcode/saved/session.md'
     original = path.read_bytes()
     stamp = path.stat().st_mtime_ns
-    assert path.is_relative_to(project / 'raw' / 'sources' / 'crossweave')
     text = original.decode()
     assert 'source_session: "saved"' in text
     assert 'source_directory: "/project"' in text
     assert 'content_scope: "user_assistant_text"' in text
     assert 'view_command: "cw show zcode saved"' in text
     assert 'Original request' in text
-    assert path.stem in text
+    assert 'source_revision: "' in text
     assert exporter.snapshot(project, 'zcode', 'saved') == (path, False)
     assert path.stat().st_mtime_ns == stamp
     state['text'] += '\n## Assistant\n\nNew answer\n'
     newer, created = exporter.snapshot(project, 'zcode', 'saved')
-    assert created and newer != path
-    assert path.read_bytes() == original
-    assert 'New answer' in newer.read_text()
+    assert created and newer == path
+    assert 'New answer' in path.read_text()
+    assert list(path.parent.glob('*.md')) == [path]
+    history = list(exporter.history_root().glob('zcode/saved/*.md'))
+    assert len(history) == 1
+    assert history[0].read_bytes() == original
     assert not list(path.parent.glob('*.tmp'))
 
 
-def test_modified_snapshot_is_not_overwritten(source):
+def test_older_hash_revisions_are_moved_out_of_sources(source):
     project, _ = source
-    path, _ = exporter.snapshot(project, 'zcode', 'saved')
-    path.write_text('a human edited this file')
-    with pytest.raises(exporter.ExportError, match='modified'):
+    folder = project / 'raw/sources/crossweave/zcode/saved'
+    folder.mkdir(parents=True)
+    stale = folder / ('a' * 64 + '.md')
+    stale.write_text('---\nkind: "crossweave-session-snapshot"\n'
+                     'source_revision: "' + 'b' * 64 + '"\n---\nold\n')
+    exporter.snapshot(project, 'zcode', 'saved')
+    assert not stale.exists()
+    assert list(folder.glob('*.md')) == [folder / 'session.md']
+    assert (exporter.history_root() / 'zcode/saved' / ('b' * 64 + '.md')).is_file()
+
+
+def test_foreign_session_md_is_not_overwritten(source):
+    project, _ = source
+    folder = project / 'raw/sources/crossweave/zcode/saved'
+    folder.mkdir(parents=True)
+    target = folder / 'session.md'
+    target.write_text('notes a human wrote here')
+    with pytest.raises(exporter.ExportError, match='not a crossweave export'):
         exporter.snapshot(project, 'zcode', 'saved')
-    assert path.read_text() == 'a human edited this file'
+    assert target.read_text() == 'notes a human wrote here'
 
 
-def test_concurrent_exporters_publish_one_complete_snapshot(source):
+def test_hand_edited_snapshot_is_kept_in_history_before_replacement(source):
+    project, state = source
+    path, _ = exporter.snapshot(project, 'zcode', 'saved')
+    path.write_text(path.read_text().replace('Original request', 'hand edited'))
+    state['text'] += '\n## Assistant\n\nNew answer\n'
+    newer, created = exporter.snapshot(project, 'zcode', 'saved')
+    assert created and newer == path
+    assert 'New answer' in path.read_text()
+    archived = ''.join(p.read_text() for p in exporter.history_root().glob('zcode/saved/*.md'))
+    assert 'hand edited' in archived
+
+
+def test_concurrent_exporters_leave_one_complete_file(source):
     project, _ = source
     with ThreadPoolExecutor(max_workers=4) as pool:
         results = list(pool.map(lambda _: exporter.snapshot(project, 'zcode', 'saved'), range(4)))
-    assert sum(created for _, created in results) == 1
-    assert len({path for path, _ in results}) == 1
-    assert results[0][0].read_text().endswith('Original request\n')
+    assert {path for path, _ in results} == {project / 'raw/sources/crossweave/zcode/saved/session.md'}
+    target = results[0][0]
+    assert target.read_text().endswith('Original request\n')
+    assert list(target.parent.glob('*.md')) == [target]
+    assert not list(target.parent.glob('*.tmp'))
 
 
 def test_unknown_folder_is_not_created(tmp_path):
@@ -181,13 +213,14 @@ def test_client_does_not_forward_token_through_redirect(wiki_api):
     assert calls == [('GET', '/api/v1/redirect', 'Bearer private-token')]
 
 
-def test_snapshot_body_time_fields_are_not_ignored(source):
+def test_only_frontmatter_time_is_ignored(source):
     project, state = source
     state['text'] += 'exported_at: this is original conversation content\n'
     path, _ = exporter.snapshot(project, 'zcode', 'saved')
     path.write_text(path.read_text().replace('this is original conversation content', 'tampered'))
-    with pytest.raises(exporter.ExportError, match='modified'):
-        exporter.snapshot(project, 'zcode', 'saved')
+    newer, created = exporter.snapshot(project, 'zcode', 'saved')
+    assert created and newer == path
+    assert 'this is original conversation content' in newer.read_text()
 
 
 @pytest.mark.parametrize('token,code,expected', [

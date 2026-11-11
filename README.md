@@ -249,18 +249,31 @@ cw export 3 --llm-wiki ~/Documents/my-wiki
 cw export zcode <session-id> --llm-wiki ~/Documents/my-wiki
 ```
 
-The exporter saves Markdown under
-`raw/sources/crossweave/<tool>/<session>/<content-hash>.md`. Each snapshot carries
+The exporter keeps one file per session at
+`raw/sources/crossweave/<tool>/<session>/session.md`. Each snapshot carries
 its tool, session ID, source directory, content revision, export time, and the
 commands for viewing/resuming the original session. It contains saved user and
-assistant text, excluding reasoning and tool calls/results. Re-exporting the
-same content leaves the existing file untouched; changed content creates a new
-revision. Previously exported revisions remain available as evidence. Snapshots
-from one session are versions of that session, not independent sources.
+assistant text, excluding reasoning and tool calls/results.
 
-The export itself makes no model or API calls. If the app is watching sources,
-it may ingest the new file according to its own settings. To explicitly request
-a source rescan through its local API:
+Re-exporting the same content leaves the existing file untouched. When the
+conversation has changed, cw first copies the file it is about to replace into
+its own history under
+`~/.cache/crossweave/export-history/<tool>/<session>/<revision>.md`, then swaps
+the new content in atomically. That keeps one conversation as one source in
+LLM Wiki: earlier revisions never compete with the current one as independent
+evidence. Revisions written by older cw versions (`<content-hash>.md` beside
+`session.md`) are moved into that history on the next export, so they stop
+being ingested as separate sources.
+
+Do not hand-edit `session.md`: the next export archives your edit into the
+history and replaces the file. A `session.md` that cw did not write is left
+alone and the export fails instead.
+
+The export itself makes no model or API calls. A changed conversation keeps the
+same path, so the app has to re-read the file instead of waiting for a new
+source; `--rescan` is how cw asks for that. If the app only imports files it has
+not seen before, import the updated Markdown manually. To request a source
+rescan through its local API:
 
 ```bash
 # Enable the API in LLM Wiki Settings → API + MCP. If required, put its token

@@ -1,4 +1,4 @@
-"""Versioned local conversation snapshots for an LLM Wiki source folder."""
+"""One current conversation snapshot per session in an LLM Wiki source folder."""
 import argparse
 import datetime
 import hashlib
@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import sys
 import tempfile
 from urllib.error import HTTPError, URLError
@@ -16,6 +17,11 @@ from . import sessions
 
 API_URL = 'http://127.0.0.1:19828'
 TOKEN_ENV = 'LLM_WIKI_API_TOKEN'
+SNAPSHOT_NAME = 'session.md'
+# Predecessor exporters wrote one <content-hash>.md per revision next to each
+# other. Left in place, LLM Wiki would read one conversation as several
+# independent sources, which is the opposite of what it should conclude.
+OLD_REVISION_RE = re.compile(r'[0-9a-f]{64}\.md')
 
 
 class ExportError(Exception):
@@ -65,6 +71,76 @@ def _slug(sid):
     return slug
 
 
+def history_root():
+    """Where replaced snapshots go: cw's own state, never the wiki project."""
+    return Path(sessions.HANDOFF_DIR).parent / 'export-history'
+
+
+def _without_time(text):
+    header, separator, body = text.partition('\n---\n')
+    header = '\n'.join(line for line in header.splitlines()
+                       if not line.startswith('exported_at: '))
+    return header + separator + body
+
+
+def _is_snapshot(text):
+    head = text.partition('\n---\n')[0]
+    return head.startswith('---\n') and 'kind: "crossweave-session-snapshot"' in head.splitlines()
+
+
+def _revision_of(text):
+    head = text.partition('\n---\n')[0]
+    for line in head.splitlines():
+        if line.startswith('source_revision: '):
+            try:
+                value = json.loads(line.split(': ', 1)[1])
+            except ValueError:
+                return ''
+            return value if isinstance(value, str) else ''
+    return ''
+
+
+def _keep_revision(path, tool, slug):
+    """Copy a file cw is about to replace into its own history. Best effort:
+    a history copy failing must not block the export that matters."""
+    try:
+        text = path.read_text(encoding='utf-8')
+    except (OSError, UnicodeError):
+        return None
+    name = _revision_of(text)
+    if not re.fullmatch(r'[0-9a-f]{64}', name):
+        name = hashlib.sha256(text.encode('utf-8')).hexdigest()
+    folder = history_root() / tool / slug
+    dest = folder / f'{name}.md'
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        if dest.exists():
+            # A hand-edited file can carry the same revision marker as the
+            # version already archived; keep the edit rather than drop it.
+            if dest.read_bytes() == path.read_bytes():
+                return dest
+            dest = folder / f'{name}-{hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]}.md'
+            if dest.exists():
+                return dest
+        shutil.copyfile(path, dest)
+        return dest
+    except OSError:
+        return None
+
+
+def _clear_old_revisions(folder, tool, slug):
+    for old in folder.glob('*.md'):
+        if old.name == SNAPSHOT_NAME or not OLD_REVISION_RE.fullmatch(old.name):
+            continue
+        if old.is_symlink() or not old.is_file():
+            continue
+        _keep_revision(old, tool, slug)
+        try:
+            old.unlink()
+        except OSError:
+            pass
+
+
 def snapshot(project, tool, sid):
     project, root = source_root(project)
     details = sessions.session_handoff_details(tool, sid)
@@ -79,13 +155,15 @@ def snapshot(project, tool, sid):
     payload = dict(tool=tool, session=sid, cwd=cwd, title=title, transcript=transcript)
     revision = hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True,
                                          separators=(',', ':')).encode()).hexdigest()
-    folder = root / 'crossweave' / tool / _slug(sid)
+    slug = _slug(sid)
+    folder = root / 'crossweave' / tool / slug
     try:
         folder.resolve().relative_to(root)
     except ValueError:
         raise ExportError('export folder resolves outside raw/sources')
     folder.mkdir(parents=True, exist_ok=True)
-    target = folder / f'{revision}.md'
+    _clear_old_revisions(folder, tool, slug)
+    target = folder / SNAPSHOT_NAME
     fields = dict(kind='crossweave-session-snapshot', title=title,
                   source_tool=tool, source_session=sid, source_directory=cwd or '',
                   source_revision=revision, content_scope='user_assistant_text',
@@ -94,32 +172,29 @@ def snapshot(project, tool, sid):
                      for key, value in fields.items())
     exported_at = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds')
     body = (f'# {title}\n\n'
-            '> Immutable conversation snapshot: user and assistant text only; '
-            'reasoning and tool calls/results are excluded. '
-            '`cw show` reads the current session, which may have newer messages. '
-            'Snapshots sharing source_tool and source_session are revisions of one '
-            'conversation, not independent corroborating sources.\n\n'
+            '> Conversation snapshot: user and assistant text only; reasoning and '
+            'tool calls/results are excluded. cw replaces this file when the '
+            'conversation changes, so it is the current state of one session, not '
+            "independent evidence. Earlier revisions stay in cw's local history.\n\n"
             f'View current session: `cw show {tool} {sid}`\n\n'
             + transcript.split('\n', 1)[-1].lstrip())
     document = f'---\n{head}\nexported_at: "{exported_at}"\n---\n{body}'
 
-    def verify_existing():
-        if target.is_symlink() or not target.is_file():
-            raise ExportError('snapshot path already exists and is not a regular file')
+    if target.is_symlink():
+        raise ExportError('snapshot path is a symlink; refusing to replace it')
+    if target.exists():
+        if not target.is_file():
+            raise ExportError('snapshot path exists and is not a regular file')
         existing = target.read_text(encoding='utf-8')
-        def strip_time(text):
-            header, separator, body = text.partition('\n---\n')
-            header = '\n'.join(line for line in header.splitlines()
-                               if not line.startswith('exported_at: '))
-            return header + separator + body
-        if strip_time(existing) != strip_time(document):
-            raise ExportError('existing snapshot was modified; refusing to overwrite it')
-
-    if target.exists() or target.is_symlink():
-        verify_existing()
-        return target, False
-    # Publish a complete file without overwriting another exporter or a
-    # previous immutable revision. Interrupted temporary writes are not sources.
+        if not _is_snapshot(existing):
+            raise ExportError(f'{SNAPSHOT_NAME} exists and is not a crossweave export; '
+                              'refusing to overwrite it')
+        if _without_time(existing) == _without_time(document):
+            return target, False
+        _keep_revision(target, tool, slug)
+    # Write a complete file beside the snapshot, then swap it in. A reader
+    # (or a concurrent exporter) sees either the previous whole file or the
+    # new whole file, never a half-written one.
     temporary = None
     try:
         with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', suffix='.tmp',
@@ -128,16 +203,11 @@ def snapshot(project, tool, sid):
             fh.write(document)
             fh.flush()
             os.fsync(fh.fileno())
-        try:
-            os.link(temporary, target)
-            created = True
-        except FileExistsError:
-            verify_existing()
-            created = False
+        os.replace(temporary, target)
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
-    return target, created
+    return target, True
 
 
 class NoRedirect(HTTPRedirectHandler):
