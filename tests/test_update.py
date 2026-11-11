@@ -493,6 +493,63 @@ def test_update_tools_codex_proxy_retry_still_strips_no_proxy(monkeypatch):
 
 # ---------- opencode's timeout fallback ----------
 
+def test_update_tools_proxy_retry_skips_tools_with_an_installer_fallback(
+    monkeypatch
+):
+    """The implicit "one more attempt via the proxy" belongs to the command
+    that actually downloads.  opencode has an installer-script fallback and
+    gets the proxy retry there (fb_retries), so its own updater must not be
+    re-run first -- each attempt costs opencode's whole deadline."""
+    monkeypatch.setattr(update.shutil, "which", lambda tool: f"/usr/bin/{tool}")
+    monkeypatch.setattr(update, "_platform_name", lambda: "posix")
+    monkeypatch.setenv(update.UPDATE_PROXY_ENV, "http://127.0.0.1:7897")
+
+    class FakeResult:
+        def __init__(self, code, stdout=""):
+            self.returncode = code
+            self.stdout = stdout
+
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        if argv[0] == "opencode" and argv[1] == "upgrade":
+            return FakeResult(1, "Timed out\n")
+        return FakeResult(0, "Installing opencode version: 2.2.7\n")
+
+    monkeypatch.setattr(update.subprocess, "run", fake_run)
+
+    assert update.update_tools() == 0
+    assert [c for c in calls if c[0] == "opencode"] == [["opencode", "upgrade"]]
+    assert len([c for c in calls if c[0] == "bash"]) == 1
+
+
+def test_update_tools_codex_still_earns_the_implicit_proxy_retry(monkeypatch):
+    """codex has no installer-script fallback (its fallback is the Python
+    GitHub-Releases install), so the implicit proxy retry still applies."""
+    monkeypatch.setattr(update.shutil, "which", lambda tool: f"/usr/bin/{tool}")
+    monkeypatch.setenv(update.UPDATE_PROXY_ENV, "http://127.0.0.1:7897")
+    monkeypatch.setenv("no_proxy", "example.invalid")
+    monkeypatch.setenv("NO_PROXY", "example.invalid")
+
+    seen = []
+
+    class FakeResult:
+        def __init__(self, code):
+            self.returncode = code
+
+    def fake_run(argv, **kwargs):
+        seen.append((argv[0], kwargs.get("env")))
+        if argv[0] == "codex" and len([s for s in seen if s[0] == "codex"]) == 1:
+            return FakeResult(1)
+        return FakeResult(0)
+
+    monkeypatch.setattr(update.subprocess, "run", fake_run)
+
+    assert update.update_tools() == 0
+    assert len([s for s in seen if s[0] == "codex"]) == 2
+
+
 def test_update_tools_falls_back_to_install_script_when_opencode_times_out(
     monkeypatch, capsys
 ):
@@ -520,7 +577,9 @@ def test_update_tools_falls_back_to_install_script_when_opencode_times_out(
     monkeypatch.setattr(update.subprocess, "run", fake_run)
 
     assert update.update_tools() == 0
-    assert ["opencode", "upgrade"] in calls
+    # exactly one attempt of its own updater, then the fallback: opencode's
+    # deadline is the expensive part, so retrying it only delays the installer
+    assert [c for c in calls if c[0] == "opencode"] == [["opencode", "upgrade"]]
     bash_calls = [c for c in calls if c[0] == "bash"]
     assert len(bash_calls) == 1
     assert bash_calls[0][:2] == ["bash", "-c"]
