@@ -154,12 +154,35 @@ TOOL_UPDATE_FALLBACK_MARKERS = {
 
 # Installer-script fallbacks, keyed by tool then platform: the tool's own
 # updater cannot handle this release, but its official installer can.
+# opencode's own updater gives up on its own deadline before a ~116MB GitHub
+# Releases asset can arrive: measured 2026-11-11, the direct route moved 9 MiB
+# in 60s, and even through the local proxy the transfer needs ~3.5min because
+# the proxy core resets it mid-download -- longer than opencode waits, so
+# `opencode upgrade --method curl` reports "Timed out" every time.  Its official
+# install script downloads the same release from npm with a plain `curl -# -L`
+# (no --max-time, no deadline) and mv's it into ~/.opencode/bin, so a timeout
+# routes there instead -- same shape as step's ETXTBSY fallback above.
+#
+# The URL matters: opencode.ai/install is the *OpenCode 1* installer and
+# refuses (or silently downgrades to) 1.x -- running it on an OpenCode 2 box
+# installed 1.19.5 over 2.2.6, live 2026-11-11.  OpenCode 2 lives at
+# opencode.ai/v2/install, which resolves the version from opencode.ai's update
+# API and pulls @opencode/cli-<target> from npm.
+TOOL_UPDATE_FALLBACK_MARKERS["opencode"] = ("Timed out", "installer failed")
+
 TOOL_UPDATE_FALLBACK_CMD = {
     "step": {
         "posix": ["bash", "-c",
                   "curl -fsSL https://static-openapi.stepfun.com/stepcode/install.sh | bash"],
         "nt": ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
                "irm https://static-openapi.stepfun.com/stepcode/install.ps1 | iex"],
+    },
+    # opencode ships one install script per major version; the v2 one detects
+    # its own platform, so no "nt" entry: on Windows the posix lookup simply
+    # misses and opencode keeps its own error and hint.
+    "opencode": {
+        "posix": ["bash", "-c",
+                  "curl -fsSL https://opencode.ai/v2/install | bash"],
     },
 }
 
@@ -175,6 +198,12 @@ TOOL_UPDATE_PY_FALLBACK = {
 # as codex's own updater, caught the same way.
 TOOL_UPDATE_FAILURE_MARKERS["step"] = ("curl: (",)
 TOOL_UPDATE_RECOVERY_MARKERS["step"] = ("installed StepCode",)
+# opencode's install script pipes nothing -- it curls to a temp file itself --
+# but the fallback that reaches it does (`curl -fsSL ... | bash`), and its own
+# progress line is the proof the download really started, the same way codex's
+# "==> Updating Codex CLI from" is.
+TOOL_UPDATE_FAILURE_MARKERS["opencode"] = ("curl: (",)
+TOOL_UPDATE_RECOVERY_MARKERS["opencode"] = ("Installing opencode version:",)
 
 
 # Release-host entries to drop from no_proxy for one specific tool.  codex's
@@ -188,8 +217,20 @@ TOOL_UPDATE_RECOVERY_MARKERS["step"] = ("installed StepCode",)
 # while every other host keeps the route the user configured (kimi, qoder,
 # volcengine, ... all stay bypassed, and the first attempt stays direct for
 # every other tool).
+#
+# opencode's curl installer is the same shape one size down: it fetches
+# opencode.ai/install (not in any bypass list, so already proxied) and then a
+# ~116MB opencode-linux-<target>.tar.gz from github.com/anomalyco/opencode's
+# releases -- measured 2026-11-11: 9 MiB in 60s direct vs 60 MiB in 22.5s
+# through the proxy, which is why `opencode upgrade --method curl` times out
+# on the direct route and why its retries only helped when a proxy was set.
+# Its npm method is a different route (registry.npmjs.org) and is left alone.
 TOOL_UPDATE_NOPROXY_DROP = {
     "codex": ("github.com", "githubusercontent.com", "openai.com"),
+    # opencode's fallback (below) installs OpenCode 2 from npm, so the registry
+    # has to be routable too -- direct stalls at zero bytes on tarballs that big.
+    "opencode": ("github.com", "githubusercontent.com", "openai.com",
+                 "registry.npmjs.org", ".npmjs.org", ".npmjs.com", ".yarnpkg.com"),
 }
 
 

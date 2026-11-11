@@ -410,6 +410,17 @@ def test_release_host_env_recognizes_a_wildcard_spelling(monkeypatch):
     assert env["no_proxy"] == "localhost"
 
 
+def test_release_host_env_drops_the_npm_registry_for_opencode(monkeypatch):
+    """opencode's fallback installs OpenCode 2 from npm, so the registry has to
+    be routable too -- codex never touches it and keeps those entries."""
+    monkeypatch.setenv("no_proxy", "localhost,github.com,registry.npmjs.org,.npmjs.org")
+    monkeypatch.setenv("NO_PROXY", "localhost,github.com,registry.npmjs.org,.npmjs.org")
+
+    assert update._release_host_env("opencode")["no_proxy"] == "localhost"
+    assert update._release_host_env("codex")["no_proxy"] == (
+        "localhost,registry.npmjs.org,.npmjs.org")
+
+
 def test_release_host_env_none_when_nothing_matches(monkeypatch):
     monkeypatch.setenv("no_proxy", "localhost,.kimi.com")
     monkeypatch.setenv("NO_PROXY", "localhost,.kimi.com")
@@ -439,11 +450,14 @@ def test_update_tools_codex_first_attempt_bypasses_release_hosts(monkeypatch):
     assert update.update_tools() == 0
 
     envs = dict(seen)
-    assert envs["codex"]["no_proxy"] == ".kimi.com,localhost,qoder.com.cn"
-    assert envs["codex"]["NO_PROXY"] == ".kimi.com,localhost,qoder.com.cn"
-    # every other tool inherits the environment untouched
-    for tool in ("claude", "kimi", "step", "pi", "opencode"):
-        assert envs[tool] is None
+    # every tool with a release-host entry gets the narrowed list, ...
+    for tool in update.TOOL_UPDATE_NOPROXY_DROP:
+        assert envs[tool]["no_proxy"] == ".kimi.com,localhost,qoder.com.cn"
+        assert envs[tool]["NO_PROXY"] == ".kimi.com,localhost,qoder.com.cn"
+    # ... and every other tool inherits the environment untouched
+    for tool, _argv in update.TOOL_UPDATE_CMD.items():
+        if tool not in update.TOOL_UPDATE_NOPROXY_DROP:
+            assert envs[tool] is None
 
 
 def test_update_tools_codex_proxy_retry_still_strips_no_proxy(monkeypatch):
@@ -475,6 +489,73 @@ def test_update_tools_codex_proxy_retry_still_strips_no_proxy(monkeypatch):
     assert retry["http_proxy"] == "http://127.0.0.1:7897"
     assert "no_proxy" not in retry
     assert "NO_PROXY" not in retry
+
+
+# ---------- opencode's timeout fallback ----------
+
+def test_update_tools_falls_back_to_install_script_when_opencode_times_out(
+    monkeypatch, capsys
+):
+    """opencode's own updater waits less long than a ~116MB GitHub Releases
+    asset needs on a throttled route (live 2026-11-11: "Timed out" on every
+    attempt, direct and through the proxy).  Its install script downloads the
+    same asset with no deadline, so a timeout routes there."""
+    monkeypatch.setattr(update.shutil, "which", lambda tool: f"/usr/bin/{tool}")
+    monkeypatch.setattr(update, "_platform_name", lambda: "posix")
+    monkeypatch.delenv(update.UPDATE_PROXY_ENV, raising=False)
+
+    class FakeResult:
+        def __init__(self, code, stdout=""):
+            self.returncode = code
+            self.stdout = stdout
+
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        if argv[0] == "opencode" and argv[1] == "upgrade":
+            return FakeResult(1, "The OpenCode installer failed\nTimed out\n")
+        return FakeResult(0, "Installing opencode version: 2.2.7\n")
+
+    monkeypatch.setattr(update.subprocess, "run", fake_run)
+
+    assert update.update_tools() == 0
+    assert ["opencode", "upgrade"] in calls
+    bash_calls = [c for c in calls if c[0] == "bash"]
+    assert len(bash_calls) == 1
+    assert bash_calls[0][:2] == ["bash", "-c"]
+    # the v2 installer: opencode.ai/install is OpenCode 1's and would downgrade
+    assert "opencode.ai/v2/install" in bash_calls[0][2]
+    out = capsys.readouterr().out
+    assert "install script" in out
+
+
+def test_update_tools_no_install_script_fallback_for_other_opencode_failures(
+    monkeypatch
+):
+    """A timeout is not every failure: an unrelated opencode error must not
+    trigger a ~116MB download through the installer."""
+    monkeypatch.setattr(update.shutil, "which", lambda tool: f"/usr/bin/{tool}")
+    monkeypatch.setattr(update, "_platform_name", lambda: "posix")
+    monkeypatch.delenv(update.UPDATE_PROXY_ENV, raising=False)
+
+    class FakeResult:
+        def __init__(self, code, stdout=""):
+            self.returncode = code
+            self.stdout = stdout
+
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        if argv[0] == "opencode":
+            return FakeResult(1, "Upgrade failed: permission denied\n")
+        return FakeResult(0)
+
+    monkeypatch.setattr(update.subprocess, "run", fake_run)
+
+    assert update.update_tools() != 0
+    assert [c for c in calls if c[0] == "bash"] == []
 
 
 def test_update_tools_no_hint_when_kimi_fails(monkeypatch, capsys):
