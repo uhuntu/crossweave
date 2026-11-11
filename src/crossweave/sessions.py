@@ -271,6 +271,29 @@ def _listing_age_warning():
               "if sessions have changed since, re-run `cw` first", file=sys.stderr)
 
 
+def _codex_without_daemon(argv):
+    """Avoid inaccessible shared daemon processes when resuming on Windows.
+
+    Older Codex releases have no daemon flag, so check the installed CLI
+    before adding it. Only the help probe is captured; the TUI must inherit
+    the terminal's handles.
+    """
+    if (len(argv) < 2 or argv[0] != "codex" or argv[1] not in ("resume", "fork")
+            or "--no-daemon" in argv or "--remote" in argv
+            or any(arg.startswith("--remote=") for arg in argv)):
+        return argv
+    try:
+        result = subprocess.run(
+            spawnable(["codex", "--help"]), stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, text=True, encoding="utf-8",
+            errors="replace", timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return argv
+    if result.returncode == 0 and "--no-daemon" in result.stdout:
+        return [argv[0], "--no-daemon", *argv[1:]]
+    return argv
+
+
 def exec_or_die(argv):
     """Run a tool in the current terminal, with a clean missing-tool error.
 
@@ -282,6 +305,7 @@ def exec_or_die(argv):
     """
     try:
         if os.name == "nt":
+            argv = _codex_without_daemon(argv)
             try:
                 sys.exit(subprocess.call(spawnable(argv)))
             except KeyboardInterrupt:
