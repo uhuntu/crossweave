@@ -1,4 +1,7 @@
-"""Reader for the CodeBuddy CLI's session store: one JSONL per session under
+"""Legacy reader retained for historical-format regression coverage.
+Not registered in the current supported tools.
+
+Reader for the CodeBuddy CLI's session store: one JSONL per session under
 ~/.codebuddy/projects/<slug>/ -- claude's layout, but codex-rs's record
 chain inside: a `message` record carries a top-level role and typed content
 blocks (input_text/output_text), while a call and its result are separate

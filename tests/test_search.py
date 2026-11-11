@@ -162,9 +162,9 @@ def test_gather_candidates_respects_tool_filter(monkeypatch):
     monkeypatch.setattr(sessions, "workbuddy_light_records",
                         lambda show_all=False: [{"tool": "workbuddy", "ts": 6}])
 
-    assert [r["tool"] for r in search.gather_candidates(None)] == ["workbuddy", "zcode", "step", "kimi", "codex", "claude", "codebuddy"]
+    assert [r["tool"] for r in search.gather_candidates(None)] == ["zcode", "step", "kimi", "codex", "claude"]
     assert [r["tool"] for r in search.gather_candidates("codex")] == ["codex"]
-    assert [r["tool"] for r in search.gather_candidates("workbuddy")] == ["workbuddy"]
+    assert search.gather_candidates("workbuddy") == []
 
 
 def test_gather_candidates_passes_all_through_to_the_stores(monkeypatch):
@@ -563,7 +563,7 @@ def test_cmd_search_codex_auth_failure_falls_back(monkeypatch, capsys):
         stdout = "none"
         stderr = ""
 
-    responses = [ExpiredClaude, ExpiredCodex, KimiSessionLimit, CodebuddySessionLimit, PiOK]
+    responses = [ExpiredClaude, ExpiredCodex, KimiSessionLimit, PiOK]
     calls = []
 
     def fake_run(*a, **kw):

@@ -182,8 +182,6 @@ CHECKS = (
     ("pi", _check_pi),
     ("opencode", _check_opencode),
     ("zcode", _check_zcode),
-    ("codebuddy", _check_codebuddy),
-    ("workbuddy", _check_workbuddy),
 )
 
 

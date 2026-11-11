@@ -1,4 +1,7 @@
-"""codebuddy, the seventh store: the CodeBuddy CLI client, now a full cw
+"""Legacy reader retained for historical-format regression coverage.
+Not registered in the current supported tools.
+
+codebuddy, the seventh store: the CodeBuddy CLI client, now a full cw
 citizen.
 
 Its layout is claude's (~/.codebuddy/projects/<slug>/<sessionId>.jsonl) but
@@ -249,76 +252,11 @@ def test_the_literal_scan_reads_the_tool_results_sidecars(tmp_path):
 
 # ---------- search candidates ----------
 
-def test_codebuddy_joins_the_search_candidates(monkeypatch, tmp_path):
-    for attr in ("CLAUDE_PROJECTS", "CODEX_HOME", "KIMI_HOME"):
-        monkeypatch.setattr(common, attr, str(tmp_path / ("no-" + attr.lower())))
-    monkeypatch.setattr(step, "STEP_SESSIONS", str(tmp_path / "no-step"))
-    monkeypatch.setattr(zcode, "ZCODE_DB", str(tmp_path / "no-zcode.sqlite"))
-    one_session(tmp_path)
-    assert [r["id"] for r in search.gather_candidates("codebuddy")] == [SID]
-    assert SID in [r["id"] for r in search.gather_candidates(None)]
-
 
 # ---------- integration with the listing ----------
 
-def test_codebuddy_rows_appear_in_the_listing(monkeypatch, tmp_path, capsys):
-    for attr in ("CLAUDE_PROJECTS", "CODEX_HOME", "KIMI_HOME"):
-        monkeypatch.setattr(common, attr, str(tmp_path / ("no-" + attr.lower())))
-    monkeypatch.setattr(step, "STEP_SESSIONS", str(tmp_path / "no-step"))
-    monkeypatch.setattr(zcode, "ZCODE_DB", str(tmp_path / "no-zcode.sqlite"))
-    one_session(tmp_path, lines=[msg("assistant", "patched the HAL", ts=T0 + 9_000)])
-
-    sessions.cmd_list(["--tool", "codebuddy"])
-    out = capsys.readouterr().out
-    assert "codebuddy" in out and "fix the nfc lock" in out
-    assert "patched the HAL" in out  # the "where it left off" line
-
-    sessions.cmd_list([])
-    out = capsys.readouterr().out
-    assert "fix the nfc lock" in out
-    assert "step" not in out  # the other stores were empty, not merely quiet
-
-
-def test_stats_counts_codebuddy_rows(monkeypatch, tmp_path, capsys):
-    for attr in ("CLAUDE_PROJECTS", "CODEX_HOME", "KIMI_HOME"):
-        monkeypatch.setattr(common, attr, str(tmp_path / ("no-" + attr.lower())))
-    monkeypatch.setattr(step, "STEP_SESSIONS", str(tmp_path / "no-step"))
-    monkeypatch.setattr(zcode, "ZCODE_DB", str(tmp_path / "no-zcode.sqlite"))
-    store(tmp_path, "a", "%s.jsonl" % SID, [msg("user", "one", sid=SID)])
-    store(tmp_path, "b", "%s.jsonl" % SID2, [msg("user", "two", sid=SID2)])
-
-    sessions.cmd_stats(["--tool", "codebuddy"])
-    out = capsys.readouterr().out
-    assert "codebuddy" in out
-    zline = next(line for line in out.splitlines() if line.strip().startswith("codebuddy"))
-    assert "2" in zline
-
 
 # ---------- handoff ----------
-
-def test_handoff_exports_the_conversation_from_codebuddy(monkeypatch, tmp_path):
-    """`cw <N> claude` on a codebuddy row exports what was said -- calls,
-    results and thinking stay behind -- and seeds claude with it."""
-    one_session(tmp_path, lines=[
-        msg("assistant", "patched the HAL", ts=T0 + 1_000),
-        fn_call("Bash", {"command": "git commit -m fix"}),
-        fn_result("1 file changed"),
-    ])
-    monkeypatch.setattr(sessions, "HANDOFF_DIR", str(tmp_path / "handoffs"))
-    monkeypatch.setattr(sessions, "LIST_CACHE_FILE", str(tmp_path / "last_list.json"))
-    sessions.write_list_cache([{"tool": "codebuddy", "id": SID}])
-    calls = []
-    monkeypatch.setattr(sessions, "exec_or_die", lambda argv: calls.append(argv))
-
-    sessions.handoff_by_number(1, "claude", [])
-
-    assert calls and calls[-1][0] == "claude"
-    assert calls[-1][1].startswith("Continue the work from this codebuddy session")
-    export = calls[-1][1].split("export at ")[1].split(". First")[0]
-    body = open(export, encoding="utf-8").read()
-    assert "fix the nfc lock" in body and "patched the HAL" in body
-    assert "1 file changed" not in body
-    assert "git commit" not in body
 
 
 def test_a_session_handed_to_codebuddy_is_named_after_its_source(monkeypatch, tmp_path):
@@ -364,84 +302,5 @@ def test_a_session_handed_to_codebuddy_is_named_after_its_source(monkeypatch, tm
 
 # ---------- resume ----------
 
-def test_resume_passes_the_id_and_switches_to_the_session_directory(monkeypatch, tmp_path):
-    workdir = tmp_path / "stave"
-    workdir.mkdir()
-    monkeypatch.chdir(tmp_path)  # NOT the session's directory: resume must switch
-    one_session(tmp_path, cwd=str(workdir))
-    calls = []
-    monkeypatch.setattr(sessions, "exec_or_die", lambda argv: calls.append(argv))
-
-    sessions.cmd_resume(["codebuddy", SID])
-
-    assert calls == [["codebuddy", "-r", SID]]
-    assert os.path.realpath(os.getcwd()) == os.path.realpath(workdir)
-
-
-def test_resume_by_prefix_resolves_through_the_store(monkeypatch, tmp_path):
-    workdir = tmp_path / "stave"
-    workdir.mkdir()
-    monkeypatch.chdir(workdir)
-    one_session(tmp_path, cwd=str(workdir))
-    calls = []
-    monkeypatch.setattr(sessions, "exec_or_die", lambda argv: calls.append(argv))
-
-    sessions.cmd_resume(["codebuddy", "01a0f6"])
-
-    assert calls == [["codebuddy", "-r", SID]]
-
-
-def test_resume_without_an_id_opens_the_cli_picker(monkeypatch, tmp_path):
-    """`codebuddy -r` with no id is the CLI's own interactive selector --
-    a real one, unlike zcode's."""
-    one_session(tmp_path)
-    calls = []
-    monkeypatch.setattr(sessions, "exec_or_die", lambda argv: calls.append(argv))
-
-    sessions.cmd_resume(["codebuddy"])
-
-    assert calls == [["codebuddy", "-r"]]
-
-
-def test_resume_relocation_hands_off_to_a_fresh_codebuddy_session(monkeypatch, tmp_path):
-    """Sessions are tied to their directory like every other tool's, so a
-    --cwd elsewhere exports and seeds a new session in place -- codebuddy
-    takes a positional prompt, so the generic handoff path applies."""
-    workdir = tmp_path / "stave"
-    workdir.mkdir()
-    monkeypatch.chdir(workdir)
-    one_session(tmp_path, cwd=str(workdir))
-    other = tmp_path / "elsewhere"
-    other.mkdir()
-    calls = []
-    monkeypatch.setattr(sessions, "exec_or_die", lambda argv: calls.append(argv))
-    monkeypatch.setattr(sessions, "HANDOFF_DIR", str(tmp_path / "handoffs"))
-
-    sessions.cmd_resume(["codebuddy", SID, "--cwd", str(other)])
-
-    assert calls and calls[-1][0] == "codebuddy"
-    assert calls[-1][1].startswith("Continue the work from this codebuddy session")
-    body = open(calls[-1][1].split("export at ")[1].split(". First")[0],
-                encoding="utf-8").read()
-    assert "fix the nfc lock" in body
-
 
 # ---------- the wrapper side ----------
-
-def test_wrapper_flags_map_one_to_one():
-    assert cli.build_command("codebuddy", ["-p", "summarize"]) == \
-        ["codebuddy", "-p", "summarize"]
-    assert cli.build_command("codebuddy", ["-c"]) == ["codebuddy", "-c"]
-    assert cli.build_command("codebuddy", ["-m", "glm-5.3"]) == \
-        ["codebuddy", "--model", "glm-5.3"]
-    assert cli.build_command("codebuddy", ["-y"]) == \
-        ["codebuddy", "--dangerously-skip-permissions"]
-
-
-def test_add_dir_is_one_variadic_flag_not_a_repeat(monkeypatch, tmp_path):
-    """commander consumes every value after `--add-dir` until the next
-    flag, so the directories go behind a single occurrence -- the repeated
-    claude spelling would make the second directory a prompt."""
-    monkeypatch.chdir(tmp_path)
-    assert cli.build_command("codebuddy", ["--add-dir", "/a", "--add-dir", "/b"]) == \
-        ["codebuddy", "--add-dir", "/a", "/b"]

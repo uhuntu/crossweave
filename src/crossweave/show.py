@@ -31,6 +31,9 @@ def cmd_show(args):
     else:
         print("Usage: cw show <N> | cw show <tool> <session-id-or-prefix>", file=sys.stderr)
         return 1
+    if tool not in sessions.TOOLS:
+        print(f"cw show: {tool} is no longer supported -- refresh the session list", file=sys.stderr)
+        return 1
     details = sessions.session_handoff_details(tool, sid)
     if details is None:
         print("cw show: session transcript unavailable", file=sys.stderr)

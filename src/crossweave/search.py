@@ -92,11 +92,6 @@ JUDGE_CMD = {
     # "Blocked run_command" where the matches should have been. Same pair
     # cli.py's --yolo attaches to step for the same reason.
     "step": ["step", "-p", "--no-session", "--non-interactive-approval", "allow"],
-    # --no-session-persistence: the same ephemeral-judge reason claude's
-    # flag carries, under codebuddy's own spelling (a claude-derivative
-    # CLI -- checked against `codebuddy --help`, and a one-shot PONG run
-    # confirmed -p reads the prompt on stdin).
-    "codebuddy": ["codebuddy", "-p", "--no-session-persistence"],
     # --no-session: pi's ephemeral run, for the reason claude's flag is
     # there. pi asks no approvals, so step's allow pair has no twin here.
     # Verified: `pi -p --no-session` reads the prompt on stdin (PONG).
@@ -227,10 +222,6 @@ def gather_candidates(tool_filter, show_all=False):
         light += sessions.opencode_light_records(show_all=show_all)
     if tool_filter in (None, "zcode"):
         light += sessions.zcode_light_records(show_all=show_all)
-    if tool_filter in (None, "codebuddy"):
-        light += sessions.codebuddy_light_records(show_all=show_all)
-    if tool_filter in (None, "workbuddy"):
-        light += sessions.workbuddy_light_records(show_all=show_all)
     light.sort(key=lambda r: r["ts"], reverse=True)
     return light
 

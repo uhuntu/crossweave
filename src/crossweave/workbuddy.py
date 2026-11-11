@@ -1,4 +1,7 @@
-"""Reader for WorkBuddy's session store: the CodeBuddy Code engine running
+"""Legacy reader retained for historical-format regression coverage.
+Not registered in the current supported tools.
+
+Reader for WorkBuddy's session store: the CodeBuddy Code engine running
 inside a desktop app, writing the JSONL chain that engine always writes --
 under its own root instead of CodeBuddy's.
 

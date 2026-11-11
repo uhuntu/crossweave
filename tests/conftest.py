@@ -13,7 +13,7 @@ the per-tool stores, the two listing caches, and the handoff export dir.
 
 import pytest
 
-from crossweave import cb, codebuddy, common, machines, opencode, pi, sessions, step, workbuddy, zcode
+from crossweave import codebuddy, common, machines, opencode, pi, sessions, step, workbuddy, zcode
 
 
 @pytest.fixture(autouse=True)
@@ -37,13 +37,6 @@ def _isolate_stores(monkeypatch, tmp_path):
     monkeypatch.setattr(sessions, "HANDOFF_DIR", str(nowhere / "handoffs"))
     # remembered ssh targets would send a --machines test out over ssh
     monkeypatch.setattr(machines, "KNOWN_TARGETS_FILE", str(nowhere / "ssh_targets.json"))
-    monkeypatch.setattr(cb, "CLI_ROOT", str(nowhere / "cb" / "projects"))
-    monkeypatch.setattr(cb, "VS_GENIE", str(nowhere / "cb" / "genie"))
-    monkeypatch.setattr(cb, "VS_QUEUE", str(nowhere / "cb" / "queue"))
-    monkeypatch.setattr(cb, "VS_TODOS", str(nowhere / "cb" / "todos"))
-    monkeypatch.setattr(cb, "VS_CHANGES", str(nowhere / "cb" / "changes"))
-    monkeypatch.setattr(cb, "DESKTOP_DB", str(nowhere / "cb" / "sessions.vscdb"))
-    monkeypatch.setattr(cb, "LIST_CACHE_FILE", str(nowhere / "cb_last_list.json"))
     # the machine's own npm launchers would rewrite argv[0] (pi -> node.exe)
     # under every test that fakes a subprocess; test_spawnable covers it
     monkeypatch.setattr(sessions, "spawnable", list)

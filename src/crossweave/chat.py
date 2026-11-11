@@ -6,7 +6,7 @@ import sys
 
 from . import sessions
 
-CHAT_TOOLS = ('claude', 'codex', 'kimi', 'step', 'pi', 'codebuddy', 'zcode')
+CHAT_TOOLS = ('claude', 'codex', 'kimi', 'step', 'pi', 'zcode')
 
 
 def available(tool):
@@ -23,8 +23,7 @@ def turn_command(tool, sid, text):
         return ['kimi', '-S', sid, '-p', text]
     if tool == 'codex':
         return ['codex', 'exec', 'resume', '--skip-git-repo-check', sid, '--', text]
-    flag = {'claude': '--resume', 'step': '--resume', 'pi': '--session',
-            'codebuddy': '-r'}.get(tool)
+    flag = {'claude': '--resume', 'step': '--resume', 'pi': '--session'}.get(tool)
     if flag:
         return [tool, flag, sid, '-p', '--', text]
     raise ValueError('该工具暂不支持连续聊天')

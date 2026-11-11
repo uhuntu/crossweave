@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "crossweave"
 version = "0.4.0"
-description = "Unified CLI wrapper + cross-tool session manager for Claude Code, Codex CLI, Kimi CLI, step, ZCode, and CodeBuddy"
+description = "Unified CLI wrapper + cross-tool session manager for Claude Code, Codex CLI, Kimi CLI, step, and ZCode"
 readme = "README.md"
 license = { file = "LICENSE" }
 authors = [{ name = "Hunt Lin", email = "uhuntu@gmail.com" }]
@@ -41,7 +41,6 @@ aim = "crossweave.cli:main"
 aimux = "crossweave.cli:main"
 clisweave = "crossweave.cli:main"
 ai-sessions = "crossweave.sessions:main"
-cb = "crossweave.cb:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -67,8 +67,8 @@ def test_codex_gets_them_as_developer_instructions(project, monkeypatch):
     assert "回归测试" in json.loads(value)
 
 
-@pytest.mark.parametrize("tool", ["step", "codebuddy"])
-def test_step_and_codebuddy_append_like_claude(project, monkeypatch, tool):
+@pytest.mark.parametrize("tool", ["step"])
+def test_step_appends_like_claude(project, monkeypatch, tool):
     launch(monkeypatch, tool)
     assert project[0][1] == "--append-system-prompt"
 

@@ -23,7 +23,7 @@ Names are validated against the union of every namespace they must
 survive: letters, digits, `.`, `_`, `-` only -- `#` dies as a PyPI name
 (PEP 503), as a repo name, and as shell comment syntax, which is
 exactly where a two-letter name lives. The installer's own commands
-(cw, cx, crossweave, cb) are refused: an alias on top of them could only
+(cw, cx, crossweave) are refused: an alias on top of them could only
 shadow, never add.
 """
 import json
@@ -53,7 +53,7 @@ NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*\Z")
 # shadow the thing it names, never add to it. Heritage links (aim, aimux,
 # clisweave) are allowed targets -- overwriting them changes nothing they
 # point at (bin/cw either way), and they are the user's to manage.
-PROTECTED = {"cw", "cx", "crossweave", "cb"}
+PROTECTED = {"cw", "cx", "crossweave"}
 
 # Windows device names are filenames that silently mean hardware.
 RESERVED = {"CON", "PRN", "AUX", "NUL"}

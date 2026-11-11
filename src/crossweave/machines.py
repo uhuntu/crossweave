@@ -34,7 +34,7 @@ import time
 import uuid
 
 from . import __version__
-from .common import HOME, read_json
+from .common import HOME, TOOLS, read_json
 
 # Where the per-machine index files meet. The user's transport decides how
 # they get there; crossweave only ever reads and writes this directory. It
@@ -135,8 +135,6 @@ def own_index():
         lambda: sessions.pi_light_records(False),
         lambda: sessions.opencode_light_records(False),
         lambda: sessions.zcode_light_records(False),
-        sessions.codebuddy_light_records,
-        sessions.workbuddy_light_records,
     ):
         light += gather()
     return _build_index(light)
@@ -150,7 +148,7 @@ def _build_index(light_records):
     by_key = {}
     for r in light_records:
         tool, sid = r.get("tool"), r.get("id")
-        if not (isinstance(tool, str) and tool and isinstance(sid, str) and sid):
+        if not (isinstance(tool, str) and tool in TOOLS and isinstance(sid, str) and sid):
             continue
         old = by_key.get((tool, sid))
         if old is None or (r.get("ts") or 0) >= (old.get("ts") or 0):
@@ -244,7 +242,7 @@ def _coerce_index(data, source, now, mine):
         if not isinstance(s, dict):
             continue
         tool, sid = s.get("tool"), s.get("id")
-        if not (isinstance(tool, str) and tool and isinstance(sid, str) and sid):
+        if not (isinstance(tool, str) and tool in TOOLS and isinstance(sid, str) and sid):
             continue
         title = s.get("title")
         cwd = s.get("cwd")

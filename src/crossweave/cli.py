@@ -1,10 +1,4 @@
-"""cw - unified wrapper for the claude / codex / kimi / step / pi /
-opencode / codebuddy CLIs, plus the zcode and workbuddy desktop apps' session stores. Normalizes a
-handful of common flags across the terminal tools and passes everything else
-straight through; zcode has no terminal interface, so `cw zcode` only opens
-the app, and workbuddy has no interface at all -- its sessions are listed,
-searched and resumed, with nothing to wrap.
-"""
+"""Unified wrapper and session manager for supported coding-agent CLIs."""
 import json
 import os
 import re
@@ -12,7 +6,7 @@ import sys
 
 from . import __version__, alias, chat, common, delete, doctor, machines, note, rename, search, sessions, show, ui, update, web, wiki
 
-TOOLS = ("claude", "codex", "kimi", "step", "pi", "opencode", "zcode", "codebuddy", "workbuddy")
+TOOLS = ("claude", "codex", "kimi", "step", "pi", "opencode", "zcode")
 
 # USAGE is an f-string built from TOOLS, search.JUDGE_CMD and
 # search.DEFAULT_JUDGE for the same reason SUBCOMMANDS exists below: the
@@ -73,7 +67,7 @@ full option set (pass `--cwd` there to scope the listing to the current
 directory). Set CW_LIMIT (a number or `all`) to change the row count.
 
 With a vault (CW_VAULT, else ~/.local/share/crossweave/notes once a note
-is written there), a fresh interactive `cw claude|codex|step|pi|codebuddy`
+is written there), a fresh interactive `cw claude|codex|step|pi`
 starts with this project's newest notes (what `cw context` prints) appended
 to the tool's system prompt -- background, no message sent. Not with -p or
 -c, nor before a subcommand; --no-context skips it once, CW_CONTEXT=off
@@ -86,9 +80,7 @@ Per-tool --yolo mapping:
   step      -> --approval-mode auto + --non-interactive-approval allow
   pi        -> (nothing to add: pi never asks before a tool call)
   opencode  -> --auto   (approves what isn't explicitly denied)
-  codebuddy -> -y, --dangerously-skip-permissions (HIGH/CRITICAL still ask)
   zcode     -> (desktop app; no flags apply)
-  workbuddy -> (desktop app, no CLI; no flags apply)
 
 Examples:
   cw claude -p "summarize this repo"
@@ -97,10 +89,8 @@ Examples:
   cw step -p "summarize this repo"
   cw pi -p "summarize this repo"
   cw opencode -p "summarize this repo"   # `opencode run`
-  cw codebuddy -p "summarize this repo"
   cw zcode            # open the ZCode app on this directory (its sessions
                       #   show in `cw sessions` too)
-  cw resume workbuddy 3f57c3fb   # open a WorkBuddy session in its app
   cw claude -- --agent reviewer "look at this diff"
   cw sessions --limit 10
   cw sessions --limit all   # same as `cw full`
@@ -261,26 +251,6 @@ def build_command(tool, rest):
             # back to --non-interactive-approval, which denies by default, so
             # -y has to cover both.
             cmd += ["--approval-mode", "auto", "--non-interactive-approval", "allow"]
-    elif tool == "codebuddy":
-        # codebuddy is a claude-code derivative and maps one-to-one, with
-        # two differences: its --add-dir is ONE variadic flag (commander
-        # consumes every value after it until the next flag, so the dirs go
-        # behind a single occurrence), and -p takes the prompt positionally
-        # like claude's does.
-        cmd = ["codebuddy"]
-        if print_:
-            cmd.append("-p")
-        if continue_session:
-            cmd.append("-c")
-        if model:
-            cmd += ["--model", model]
-        if add_dirs:
-            cmd.append("--add-dir")
-            cmd += add_dirs
-        if yolo:
-            # -y, --dangerously-skip-permissions: verified against
-            # `codebuddy --help` (2.161.4) -- the same flag claude takes.
-            cmd.append("--dangerously-skip-permissions")
     elif tool == "pi":
         cmd = ["pi"]
         if print_:
@@ -331,15 +301,6 @@ def build_command(tool, rest):
             cmd = ["zcode"]
         else:
             cmd = ["zcode", sessions.zcode_workspace_link(os.getcwd())]
-    elif tool == "workbuddy":
-        # A desktop app with no executable on PATH to hand a flag to, and no
-        # deep link that names a directory -- its scheme routes to a session
-        # or to the app's home, neither of which is "work in this directory".
-        # So there is no `cw workbuddy` that could mean anything, and saying
-        # what does exist beats an unknown-tool list of seven names.
-        raise UsageError(
-            "workbuddy is a desktop app with no CLI on PATH -- its sessions are in "
-            "`cw sessions --tool workbuddy`, and `cw resume workbuddy <id>` opens one")
     else:  # kimi
         cmd = ["kimi"]
         if print_:
@@ -372,7 +333,6 @@ def build_command(tool, rest):
 # take no flags -- none of them get it.
 CONTEXT_FLAGS = {
     "claude": lambda text: ["--append-system-prompt", text],
-    "codebuddy": lambda text: ["--append-system-prompt", text],
     "step": lambda text: ["--append-system-prompt", text],
     "pi": lambda text: ["--append-system-prompt", text],
     # -c values are TOML; a JSON string is a valid TOML basic string
@@ -440,7 +400,7 @@ DEFAULT_LIST_LIMIT = "15"
 # Tools a steer hint makes no sense for: neither opens a terminal session
 # (`cw zcode` only opens the app, `cw workbuddy` is refused earlier for the
 # same reason).
-NON_SESSION_TOOLS = ("zcode", "workbuddy")
+NON_SESSION_TOOLS = ("zcode",)
 
 
 def starts_session(tool, rest):

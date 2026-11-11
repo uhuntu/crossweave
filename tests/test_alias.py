@@ -202,7 +202,7 @@ def test_a_partial_list_never_half_applies(tmp_path, capsys):
 
 
 def test_the_installers_own_commands_are_protected(capsys):
-    for name in ("cw", "cx", "crossweave", "cb"):
+    for name in ("cw", "cx", "crossweave"):
         assert alias.cmd_alias(["add", name]) == 1
         assert "crossweave's own command" in capsys.readouterr().err
 

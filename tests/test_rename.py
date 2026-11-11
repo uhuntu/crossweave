@@ -411,7 +411,7 @@ def test_auto_renames_a_kimi_session(monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize("tool,row_id", [("codebuddy", "cb-1"), ("workbuddy", "wb-1")])
-def test_a_tool_without_a_rename_surface_is_refused(monkeypatch, tmp_path, capsys, tool, row_id):
+def test_a_retired_tool_row_is_refused(monkeypatch, tmp_path, capsys, tool, row_id):
     """codebuddy and workbuddy are the two tools with no rename surface cw
     knows: their titler writes the title field of its own record, and there
     is no record cw can append that their reader would keep. workbuddy's
@@ -422,7 +422,7 @@ def test_a_tool_without_a_rename_surface_is_refused(monkeypatch, tmp_path, capsy
     _cache(monkeypatch, [{"tool": tool, "id": row_id}])
 
     assert rename.cmd_rename(["1", "whatever"]) == 1
-    assert "no rename surface" in capsys.readouterr().err
+    assert "no longer" in capsys.readouterr().err
     # nothing was written anywhere -- the refusal is the whole outcome
 
 

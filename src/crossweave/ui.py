@@ -25,9 +25,8 @@ from .render import _clip, _display_width, TURNS_WIDTH
 KEYS_HELP = ("↑↓ move  →← unfold  / filter  Tab tool  . dir  Enter resume  "
              "v view  h handoff  n note  r rename  d delete  q quit")
 
-# The tools a session can be handed to: every one with a CLI to start.
-# workbuddy has none (perform_handoff refuses it), so it is never offered.
-HANDOFF_TARGETS = tuple(t for t in sessions.TOOLS if t != "workbuddy")
+# The supported tools with a CLI to seed a session.
+HANDOFF_TARGETS = sessions.TOOLS
 
 # Keys that leave the list to run a command on the highlighted row.
 ACTION_KEYS = {"n": "note", "d": "delete", "r": "rename", "v": "show"}
@@ -36,7 +35,7 @@ ACTION_KEYS = {"n": "note", "d": "delete", "r": "rename", "v": "show"}
 # escape codes, which curses cannot take.
 TOOL_COLORS = {
     "claude": "YELLOW", "codex": "GREEN", "kimi": "CYAN", "step": "MAGENTA",
-    "zcode": "BLUE", "codebuddy": "RED", "workbuddy": "WHITE",
+    "zcode": "BLUE",
     "pi": "YELLOW", "opencode": "WHITE",
 }
 

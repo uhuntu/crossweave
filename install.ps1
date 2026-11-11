@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-Installs Crossweave's commands (cw, cx, cb, plus compatibility aliases) as native
+Installs Crossweave's commands (cw, cx, plus compatibility aliases) as native
 .cmd launchers on PATH -- no Git Bash/WSL/Cygwin required.
 
 Run after cloning:
@@ -93,7 +93,7 @@ if (-not $Python) {
 }
 $PyArgsStr = ($Python.Args -join " ")
 
-# cw/cb are plain Python scripts with a `#!/usr/bin/env python3`
+# cw are plain Python scripts with a `#!/usr/bin/env python3`
 # shebang, which only Git Bash/WSL/msys know how to run. A .cmd launcher
 # runs natively from both cmd.exe and PowerShell (PATHEXT covers .cmd), and
 # always invokes the *current* file at $Target -- nothing is copied, so a
@@ -116,13 +116,7 @@ if (Test-Path $CwPath) {
 } else {
     Write-Launcher "cw" (Join-Path $ScriptDir "bin\cw")
 }
-$CbPath = Join-Path $BinDir "cb.cmd"
-if (Test-Path $CbPath) {
-    Write-Warning "$CbPath already exists; leaving it unchanged"
-} else {
-    Write-Launcher "cb" (Join-Path $ScriptDir "bin\cb")
-}
-# cx is the mark's own name (X is cross); same takeover guard as cw/cb
+# cx is the mark's own name (X is cross); same takeover guard as cw
 $CxPath = Join-Path $BinDir "cx.cmd"
 if (Test-Path $CxPath) {
     Write-Warning "$CxPath already exists; leaving it unchanged"

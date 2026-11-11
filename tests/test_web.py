@@ -101,7 +101,7 @@ def test_shutdown_terminates_running_children():
             proc.kill()
 
 
-@pytest.mark.parametrize('tool', ['claude', 'codex', 'kimi', 'step', 'pi', 'codebuddy'])
+@pytest.mark.parametrize('tool', ['claude', 'codex', 'kimi', 'step', 'pi'])
 def test_browser_chat_dispatches_selected_tool(workspace, monkeypatch, tool):
     calls = []
     def command(argv):

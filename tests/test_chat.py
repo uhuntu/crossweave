@@ -49,13 +49,12 @@ def test_missing_directory_stops_before_sending(monkeypatch, tmp_path):
     ('kimi', ['kimi', '-S', 'saved', '-p', '-hello']),
     ('step', ['step', '--resume', 'saved', '-p', '--', '-hello']),
     ('pi', ['pi', '--session', 'saved', '-p', '--', '-hello']),
-    ('codebuddy', ['codebuddy', '-r', 'saved', '-p', '--', '-hello']),
 ])
 def test_headless_continuation_arguments(tool, expected):
     assert chat.turn_command(tool, 'saved', '-hello') == expected
 
 
-@pytest.mark.parametrize('tool', ['workbuddy', 'opencode'])
+@pytest.mark.parametrize('tool', ['workbuddy', 'codebuddy', 'opencode'])
 def test_unsupported_tool_not_offered_for_chat(tool):
     assert not chat.available(tool)
     with pytest.raises(ValueError):

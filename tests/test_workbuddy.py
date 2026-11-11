@@ -1,4 +1,7 @@
-"""workbuddy, the eighth store: the CodeBuddy Code engine inside a desktop app.
+"""Legacy reader retained for historical-format regression coverage.
+Not registered in the current supported tools.
+
+workbuddy, the eighth store: the CodeBuddy Code engine inside a desktop app.
 
 `~/.workbuddy/projects/<slug>/<sessionId>.jsonl` is the chain codebuddy.py
 reads -- the app bundles `@genie/agent-cli`, the package the `codebuddy`
@@ -223,13 +226,6 @@ def test_resolve_matches_by_prefix_across_both_editions(tmp_path):
     assert workbuddy.workbuddy_resolve("zz") == []
 
 
-def test_an_id_prefix_finds_a_workbuddy_session_with_no_tool_named(tmp_path):
-    """`cw <id-prefix>` walks every store's resolver, so the new one has to be
-    in that walk or a WorkBuddy id from `cw search` is a dead end."""
-    one_session(tmp_path)
-    assert sessions.resolve_any_id(SID[:8]) == [("workbuddy", SID)]
-
-
 # ---------- the app's own record kinds ----------
 
 def test_the_header_and_rollback_records_do_not_disturb_the_row(tmp_path):
@@ -272,34 +268,6 @@ def test_the_siblings_of_a_transcript_are_not_transcripts(tmp_path):
         encoding="utf-8")
 
     assert [r["id"] for r in workbuddy.workbuddy_light_records(show_all=True)] == [SID]
-
-
-def test_a_subagent_transcript_is_a_session_only_under_all(tmp_path):
-    """A subagent is a session WorkBuddy started for itself, holding another
-    session's context rather than a request of anyone's -- step's
-    `subagent-<uuid>.jsonl` case, and the same answer: out of the way unless
-    --all asks for it."""
-    one_session(tmp_path)
-    subagent(tmp_path)
-
-    assert [r["id"] for r in workbuddy.workbuddy_light_records()] == [SID]
-    assert sorted(r["id"] for r in workbuddy.workbuddy_light_records(show_all=True)) == \
-        sorted([SID, SUB])
-    # its own id, so `cw resume workbuddy <sub-id>` can reach it
-    assert sessions._find_record("workbuddy", SUB)["id"] == SUB
-
-
-def test_the_listing_hides_subagents_until_all(monkeypatch, tmp_path, capsys):
-    one_session(tmp_path)
-    subagent(tmp_path)
-
-    sessions.cmd_list(["--tool", "workbuddy"])
-    out = capsys.readouterr().out
-    assert SID[:8] in out and SUB[:8] not in out
-
-    sessions.cmd_list(["--tool", "workbuddy", "--all"])
-    out = capsys.readouterr().out
-    assert SID[:8] in out and SUB[:8] in out
 
 
 # ---------- the shell's own message shape ----------
@@ -486,179 +454,10 @@ def _no_exec(monkeypatch):
                         lambda argv: pytest.fail("resume must not exec: %r" % (argv,)))
 
 
-def test_resume_opens_the_app_on_the_session(monkeypatch, tmp_path, capsys):
-    one_session(tmp_path)
-    monkeypatch.setattr(sys, "platform", "darwin")
-    _no_exec(monkeypatch)
-    launched = []
-    monkeypatch.setattr(sessions.subprocess, "Popen", lambda argv: launched.append(argv))
-
-    sessions.cmd_resume(["workbuddy", "4e7afc"])
-
-    assert launched == [["open", "workbuddy://chat/" + SID]]
-    err = capsys.readouterr().err
-    assert CWD in err                      # where the work lives, since we stay here
-    assert "workbuddy://chat/" + SID in err
-
-
-def test_resume_by_number_opens_the_app_too(monkeypatch, tmp_path):
-    """`cw <N>` and `cw <N> workbuddy` both end up here: the row cache carries
-    no scheme, so the record is looked up again rather than trusted."""
-    one_session(tmp_path)
-    sessions.write_list_cache([{"tool": "workbuddy", "id": SID}])
-    monkeypatch.setattr(sys, "platform", "darwin")
-    _no_exec(monkeypatch)
-    launched = []
-    monkeypatch.setattr(sessions.subprocess, "Popen", lambda argv: launched.append(argv))
-
-    sessions.cmd_resume(["1", "workbuddy"])
-
-    assert launched == [["open", "workbuddy://chat/" + SID]]
-
-
-def test_resume_refuses_words_after_the_id(monkeypatch, tmp_path, capsys):
-    """A GUI takes no instruction from a terminal. The refusal names the route
-    that does work rather than leaving the words to vanish."""
-    one_session(tmp_path)
-    monkeypatch.setattr(sessions.subprocess, "Popen",
-                        lambda argv: pytest.fail("nothing should launch"))
-
-    with pytest.raises(SystemExit):
-        sessions.cmd_resume(["workbuddy", SID, "now", "run", "the", "tests"])
-
-    err = capsys.readouterr().err
-    assert "takes no instruction" in err and "cw <N> claude" in err
-
-
-def test_resume_refuses_a_cwd_override(monkeypatch, tmp_path, capsys):
-    """Every other tool relocates by exporting and seeding a fresh session;
-    WorkBuddy has nothing to seed, so the honest answer is no."""
-    one_session(tmp_path)
-    other = tmp_path / "elsewhere"
-    other.mkdir()
-    monkeypatch.setattr(sessions.subprocess, "Popen",
-                        lambda argv: pytest.fail("nothing should launch"))
-
-    with pytest.raises(SystemExit):
-        sessions.cmd_resume(["workbuddy", SID, "--cwd", str(other)])
-
-    assert "can't be relocated" in capsys.readouterr().err
-
-
-def test_resume_of_an_id_this_machine_does_not_have_says_where_it_might_be(monkeypatch,
-                                                                            tmp_path, capsys):
-    """The two real causes are another machine and a conversation the app keeps
-    in the cloud, which stores no transcript here -- naming them beats a bare
-    "not found"."""
-    use_roots(tmp_path)
-    with pytest.raises(SystemExit):
-        sessions.cmd_resume(["workbuddy", "deadbeef-0000"])
-
-    err = capsys.readouterr().err
-    assert "no workbuddy session" in err and "cloud" in err
-
-
-def test_resume_with_no_way_to_open_a_link_says_so(monkeypatch, tmp_path, capsys):
-    one_session(tmp_path)
-    monkeypatch.setattr(sys, "platform", "linux")
-    monkeypatch.setattr(os, "name", "posix")
-    monkeypatch.setattr(workbuddy.shutil, "which", lambda _cmd: None)
-    monkeypatch.setattr(sessions.subprocess, "Popen",
-                        lambda argv: pytest.fail("nothing should launch"))
-
-    with pytest.raises(SystemExit):
-        sessions.cmd_resume(["workbuddy", SID])
-
-    assert "nothing here can open a workbuddy:// link" in capsys.readouterr().err
-
-
-def test_resume_without_an_id_points_at_the_listing(monkeypatch, tmp_path, capsys):
-    """No CLI, so no picker to open -- and no silence either."""
-    one_session(tmp_path)
-    _no_exec(monkeypatch)
-    monkeypatch.setattr(sessions.subprocess, "Popen",
-                        lambda argv: pytest.fail("nothing should launch"))
-
-    sessions.cmd_resume(["workbuddy"])
-
-    err = capsys.readouterr().err
-    assert "no CLI to pick a session with" in err
-    assert "cw sessions --tool workbuddy" in err
-
-
 # ---------- handoff ----------
-
-def test_a_row_handed_to_a_terminal_tool_exports_the_conversation(monkeypatch, tmp_path):
-    """Handoff *from* WorkBuddy is the route that works: the transcript is
-    there to read, and a terminal tool takes a seed. Speech only -- calls and
-    results stay behind, the line every other exporter holds."""
-    one_session(tmp_path, lines=[
-        msg("assistant", "patched the HAL", ts=T0 + 1_000),
-        fn_call("Bash", {"command": "git commit -m fix"}),
-        fn_result("1 file changed"),
-    ])
-    sessions.write_list_cache([{"tool": "workbuddy", "id": SID}])
-    calls = []
-    monkeypatch.setattr(sessions, "exec_or_die", lambda argv: calls.append(argv))
-
-    sessions.handoff_by_number(1, "claude", [])
-
-    assert calls and calls[-1][0] == "claude"
-    assert calls[-1][1].startswith("Continue the work from this workbuddy session")
-    body = open(calls[-1][1].split("export at ")[1].split(". First")[0],
-                encoding="utf-8").read()
-    assert "fix the nfc lock" in body and "patched the HAL" in body
-    assert "1 file changed" not in body
-    assert "git commit" not in body
-
-
-def test_nothing_can_seed_a_workbuddy_session(monkeypatch, tmp_path, capsys):
-    """...and handoff *to* it is refused unconditionally, not left to fail
-    with an export nobody reads. The message names the tools that can."""
-    sessions.write_list_cache([{"tool": "claude", "id": "c1"}])
-    monkeypatch.setattr(sessions, "exec_or_die",
-                        lambda argv: pytest.fail("nothing should run"))
-
-    with pytest.raises(SystemExit):
-        sessions.handoff_by_number(1, "workbuddy", [])
-
-    err = capsys.readouterr().err
-    assert "starts no session from a prompt" in err and "codebuddy" in err
 
 
 # ---------- listing, search, stats ----------
-
-def test_workbuddy_rows_appear_in_the_listing(tmp_path, capsys):
-    one_session(tmp_path, lines=[msg("assistant", "patched the HAL", ts=T0 + 9_000)])
-
-    sessions.cmd_list(["--tool", "workbuddy"])
-    out = capsys.readouterr().out
-    assert "workbuddy" in out and "fix the nfc lock" in out
-    assert "patched the HAL" in out  # the "where it left off" line
-
-    sessions.cmd_list([])
-    out = capsys.readouterr().out
-    assert "fix the nfc lock" in out
-    assert "codebuddy" not in out  # the other stores were empty, not merely quiet
-
-
-def test_stats_counts_workbuddy_rows(tmp_path, capsys):
-    use_roots(tmp_path)
-    store(tmp_path, "workbuddy", "a", "%s.jsonl" % SID, [msg("user", "one", sid=SID)])
-    store(tmp_path, "workbuddy-ai", "b", "%s.jsonl" % SID2,
-          [msg("user", "two", sid=SID2)])
-
-    sessions.cmd_stats(["--tool", "workbuddy"])
-    out = capsys.readouterr().out
-    assert "Total sessions: 2" in out
-    line = next(line for line in out.splitlines() if line.strip().startswith("workbuddy"))
-    assert "2" in line
-
-
-def test_workbuddy_joins_the_search_candidates(tmp_path):
-    one_session(tmp_path)
-    assert [r["id"] for r in search.gather_candidates("workbuddy")] == [SID]
-    assert SID in [r["id"] for r in search.gather_candidates(None)]
 
 
 def test_the_snippet_spans_speech_and_calls(tmp_path):
@@ -704,47 +503,5 @@ def test_the_last_message_is_the_last_thing_anyone_said(tmp_path):
 
 # ---------- doctor ----------
 
-def test_doctor_names_the_editions_it_found(tmp_path, capsys):
-    use_roots(tmp_path)
-    store(tmp_path, "workbuddy", "a", "%s.jsonl" % SID, [msg("user", "one", sid=SID)])
-    store(tmp_path, "workbuddy-ai", "b", "%s.jsonl" % SID2,
-          [msg("user", "two", sid=SID2)])
-
-    assert doctor.cmd_doctor(["--tool", "workbuddy"]) == 0
-    out = capsys.readouterr().out
-    assert "ok" in out and "2 sessions" in out
-    assert "desktop app only (workbuddy + workbuddy-ai)" in out
-
-
-def test_doctor_reports_a_missing_store(tmp_path, capsys):
-    """Neither edition installed is the ordinary case, not a failure."""
-    use_roots(tmp_path)
-    assert doctor.cmd_doctor(["--tool", "workbuddy"]) == 0
-    assert "missing" in capsys.readouterr().out
-
-
-def test_doctor_calls_a_store_it_cannot_see_into_broken(tmp_path, capsys):
-    """Transcript files that resolve to no sessions: the shape a format change
-    takes before it takes everything, and the reason doctor exists."""
-    use_roots(tmp_path)
-    store(tmp_path, "workbuddy", SLUG, "session-without-an-id.jsonl",
-          [{"type": "message", "role": "user", "timestamp": T0,
-            "content": [{"type": "input_text", "text": "hi"}]}])
-
-    assert doctor.cmd_doctor(["--tool", "workbuddy"]) == 1
-    out = capsys.readouterr().out
-    assert "broken" in out and "1 transcript file(s)" in out
-
 
 # ---------- the wrapper side ----------
-
-def test_cw_workbuddy_is_refused_with_the_route_that_works():
-    """No executable on PATH and no bundled CLI that runs outside Electron, so
-    there is nothing to pass flags to -- the error says where the sessions are
-    instead of dying on a spawn."""
-    with pytest.raises(cli.UsageError) as exc:
-        cli.build_command("workbuddy", ["-p", "summarize"])
-    assert "cw sessions --tool workbuddy" in str(exc.value)
-
-    with pytest.raises(cli.UsageError):
-        cli.build_command("workbuddy", [])

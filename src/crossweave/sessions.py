@@ -358,6 +358,8 @@ def literal_matches(candidates, topic):
 
 def session_handoff_details(tool, sid):
     """Return (cwd, complete textual transcript as Markdown)."""
+    if tool not in TOOLS:
+        return None
     if tool == "claude":
         record = next((r for r in claude_light_records() if r["id"] == sid), None)
         if not record:
@@ -538,6 +540,9 @@ def perform_handoff(source_tool, source_id, target_tool, extra, forced_cwd=None,
     purpose. Either way a plain `--resume`/`-S` from elsewhere never becomes
     visible to that directory's own resume picker. A fresh, seeded session
     does."""
+    if source_tool not in TOOLS or target_tool not in TOOLS:
+        print("cw handoff: unsupported source or target tool", file=sys.stderr)
+        sys.exit(1)
     if target_tool == "zcode" and not zcode_cli_on_path():
         # Without the CLI there is nothing to seed: the desktop app starts
         # no session from a prompt, so the export would land in a cache
@@ -666,6 +671,9 @@ def handoff_by_number(n, target_tool, extra, forced_cwd=None):
         sys.exit(1)
 
     entry = cache[n - 1]
+    if entry["tool"] not in TOOLS:
+        print(f"cw: {entry['tool']} is no longer supported -- run `cw sessions` to refresh", file=sys.stderr)
+        sys.exit(1)
     if entry.get("machine"):
         # Same refusal as resume_by_number: the transcript to export lives
         # on another machine.
@@ -688,8 +696,6 @@ def _all_light_records():
     light += pi_light_records(False)
     light += opencode_light_records(False)
     light += zcode_light_records(False)
-    light += codebuddy_light_records(False)
-    light += workbuddy_light_records(False)
     return light
 
 
@@ -756,8 +762,6 @@ def cmd_list(args):
         ("pi", lambda: pi_light_records(show_all)),
         ("opencode", lambda: opencode_light_records(show_all)),
         ("zcode", lambda: zcode_light_records(show_all)),
-        ("codebuddy", lambda: codebuddy_light_records(show_all)),
-        ("workbuddy", lambda: workbuddy_light_records(show_all)),
     ):
         if publish or tool_filter in (None, tool):
             light += gather()
@@ -925,10 +929,6 @@ def cmd_stats(args):
         light += opencode_light_records(True)
     if tool_filter in (None, "zcode"):
         light += zcode_light_records(True)
-    if tool_filter in (None, "codebuddy"):
-        light += codebuddy_light_records(True)
-    if tool_filter in (None, "workbuddy"):
-        light += workbuddy_light_records(True)
 
     total = len(light)
     if total == 0:
@@ -1262,6 +1262,8 @@ def _transcript_path(r):
 
 def _find_record(tool, sid):
     """The light record for a session by (tool, id), or None if it is gone."""
+    if tool not in TOOLS:
+        return None
     if tool == "claude":
         return next((r for r in claude_light_records() if r["id"] == sid), None)
     if tool == "codex":
@@ -1644,6 +1646,12 @@ def resume_by_number(n, extra, forced_cwd=None):
         print(f"cw resume: {n} is out of range (last listing had {len(cache)} rows)", file=sys.stderr)
         sys.exit(1)
     entry = cache[n - 1]
+    if entry["tool"] not in TOOLS:
+        print(f"cw: {entry['tool']} is no longer supported -- run `cw sessions` to refresh", file=sys.stderr)
+        sys.exit(1)
+    if extra and extra[0] in ("codebuddy", "workbuddy"):
+        print(f"cw: {extra[0]} is no longer supported", file=sys.stderr)
+        sys.exit(1)
     if entry.get("machine"):
         # A row from another machine's index: its transcript never left
         # that machine, so it is resumed there, over ssh, in this terminal.
@@ -1727,8 +1735,7 @@ def _zcode_next_instruction(extra):
 ID_RESOLVERS = {
     "claude": claude_resolve, "codex": codex_resolve, "kimi": kimi_resolve,
     "step": step_resolve, "pi": pi_resolve, "opencode": opencode_resolve,
-    "zcode": zcode_resolve, "codebuddy": codebuddy_resolve,
-    "workbuddy": workbuddy_resolve,
+    "zcode": zcode_resolve,
 }
 
 
