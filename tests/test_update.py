@@ -1,3 +1,5 @@
+import os
+
 import pytest
 
 from crossweave import update
@@ -320,10 +322,15 @@ def test_update_tools_retries_kimi(monkeypatch):
 def test_update_tools_first_attempt_is_direct_retry_goes_via_proxy(monkeypatch):
     """With CROSSWEAVE_UPDATE_PROXY set, a failed codex update retries through
     the proxy (and succeeds): this network severs codex's ~146MB direct
-    transfer at ~60MB every time, while the proxy path completes in a minute."""
+    transfer at ~60MB every time, while the proxy path completes in a minute.
+
+    no_proxy here lists no release host, so codex's first attempt is a plain
+    inherited one -- see test_update_tools_codex_proxy_retry_still_strips_no_proxy
+    for the shape where it does."""
     monkeypatch.setattr(update.shutil, "which", lambda tool: f"/usr/bin/{tool}")
     monkeypatch.setenv(update.UPDATE_PROXY_ENV, "http://127.0.0.1:7897")
     monkeypatch.setenv("no_proxy", "example.invalid")
+    monkeypatch.setenv("NO_PROXY", "example.invalid")
 
     seen = []
 
@@ -353,8 +360,12 @@ def test_update_tools_first_attempt_is_direct_retry_goes_via_proxy(monkeypatch):
 
 
 def test_update_tools_retry_stays_direct_when_no_proxy_configured(monkeypatch):
+    """No proxy configured, and no release host to drop either, so every tool
+    inherits the environment exactly as it is."""
     monkeypatch.setattr(update.shutil, "which", lambda tool: f"/usr/bin/{tool}")
     monkeypatch.delenv(update.UPDATE_PROXY_ENV, raising=False)
+    monkeypatch.setenv("no_proxy", "localhost,.kimi.com")
+    monkeypatch.setenv("NO_PROXY", "localhost,.kimi.com")
 
     class FakeResult:
         returncode = 0
@@ -369,6 +380,101 @@ def test_update_tools_retry_stays_direct_when_no_proxy_configured(monkeypatch):
 
     assert update.update_tools() == 0
     assert envs and all(env is None for env in envs)
+
+
+def test_release_host_env_none_without_a_drop_entry():
+    assert update._release_host_env("claude") is None
+    assert update._release_host_env("no-such-tool") is None
+
+
+def test_release_host_env_drops_only_the_release_hosts(monkeypatch):
+    monkeypatch.setenv("no_proxy",
+                       ".kimi.com,localhost,github.com,githubusercontent.com,"
+                       ".openai.com,qoder.com.cn,.volcengine.com")
+    monkeypatch.setenv("NO_PROXY", os.environ["no_proxy"])
+
+    env = update._release_host_env("codex")
+
+    assert env is not None
+    assert env["no_proxy"] == env["NO_PROXY"] == (
+        ".kimi.com,localhost,qoder.com.cn,.volcengine.com")
+    # the process environment is left alone for the next tool
+    assert os.environ["no_proxy"].split(",")[2] == "github.com"
+
+
+def test_release_host_env_recognizes_a_wildcard_spelling(monkeypatch):
+    monkeypatch.setenv("no_proxy", "localhost,*.github.com")
+
+    env = update._release_host_env("codex")
+
+    assert env["no_proxy"] == "localhost"
+
+
+def test_release_host_env_none_when_nothing_matches(monkeypatch):
+    monkeypatch.setenv("no_proxy", "localhost,.kimi.com")
+    monkeypatch.setenv("NO_PROXY", "localhost,.kimi.com")
+
+    assert update._release_host_env("codex") is None
+
+
+def test_update_tools_codex_first_attempt_bypasses_release_hosts(monkeypatch):
+    """codex's ~190MB GitHub Releases asset is what a throttled direct route
+    kills, so its first attempt drops just the release hosts from no_proxy and
+    keeps the rest of the user's bypass list (kimi, qoder, ...) intact."""
+    monkeypatch.setattr(update.shutil, "which", lambda tool: f"/usr/bin/{tool}")
+    monkeypatch.setenv("no_proxy",
+                       ".kimi.com,localhost,github.com,githubusercontent.com,"
+                       ".openai.com,qoder.com.cn")
+    monkeypatch.setenv("NO_PROXY", os.environ["no_proxy"])
+
+    seen = []
+
+    class FakeResult:
+        returncode = 0
+
+    monkeypatch.setattr(update.subprocess, "run",
+                        lambda argv, **kw: seen.append((argv[0], kw.get("env")))
+                        or FakeResult())
+
+    assert update.update_tools() == 0
+
+    envs = dict(seen)
+    assert envs["codex"]["no_proxy"] == ".kimi.com,localhost,qoder.com.cn"
+    assert envs["codex"]["NO_PROXY"] == ".kimi.com,localhost,qoder.com.cn"
+    # every other tool inherits the environment untouched
+    for tool in ("claude", "kimi", "step", "pi", "opencode"):
+        assert envs[tool] is None
+
+
+def test_update_tools_codex_proxy_retry_still_strips_no_proxy(monkeypatch):
+    """The narrowed first attempt does not weaken the proxy retry: it still
+    forces the proxy and strips every exemption."""
+    monkeypatch.setattr(update.shutil, "which", lambda tool: f"/usr/bin/{tool}")
+    monkeypatch.setenv(update.UPDATE_PROXY_ENV, "http://127.0.0.1:7897")
+    monkeypatch.setenv("no_proxy", "localhost,github.com,.kimi.com")
+    monkeypatch.setenv("NO_PROXY", "localhost,github.com,.kimi.com")
+
+    seen = []
+
+    class FakeResult:
+        def __init__(self, code):
+            self.returncode = code
+
+    def fake_run(argv, **kwargs):
+        seen.append((argv[0], kwargs.get("env")))
+        if argv[0] == "codex" and len([s for s in seen if s[0] == "codex"]) == 1:
+            return FakeResult(1)
+        return FakeResult(0)
+
+    monkeypatch.setattr(update.subprocess, "run", fake_run)
+
+    assert update.update_tools() == 0
+
+    first, retry = [env for tool, env in seen if tool == "codex"]
+    assert first["no_proxy"] == "localhost,.kimi.com"
+    assert retry["http_proxy"] == "http://127.0.0.1:7897"
+    assert "no_proxy" not in retry
+    assert "NO_PROXY" not in retry
 
 
 def test_update_tools_no_hint_when_kimi_fails(monkeypatch, capsys):

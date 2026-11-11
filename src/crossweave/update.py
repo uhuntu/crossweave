@@ -177,6 +177,49 @@ TOOL_UPDATE_FAILURE_MARKERS["step"] = ("curl: (",)
 TOOL_UPDATE_RECOVERY_MARKERS["step"] = ("installed StepCode",)
 
 
+# Release-host entries to drop from no_proxy for one specific tool.  codex's
+# updater pulls a ~190MB asset from GitHub Releases, and where the direct
+# route to GitHub is throttled (measured 2026-11-11: 27 MiB in 180s direct vs
+# 100 MiB in 43.7s through the local proxy) that download exceeds the
+# installer's own deadline and fails every time -- yet the ambient no_proxy
+# lists github.com/githubusercontent.com, so it never reaches the proxy and
+# CROSSWEAVE_UPDATE_PROXY only helps on a retry that may never come.  Dropping
+# just the release-host entries routes that one download through the proxy
+# while every other host keeps the route the user configured (kimi, qoder,
+# volcengine, ... all stay bypassed, and the first attempt stays direct for
+# every other tool).
+TOOL_UPDATE_NOPROXY_DROP = {
+    "codex": ("github.com", "githubusercontent.com", "openai.com"),
+}
+
+
+def _release_host_env(tool):
+    """os.environ minus the release-host no_proxy entries for `tool`, or None
+    when there is nothing to drop -- the caller then inherits the environment
+    untouched, which is what every tool without an entry above gets.
+
+    Only the listed entries are removed; the rest of the bypass list keeps its
+    route, so this cannot change how a host the updater never contacts
+    behaves.  Entries are compared with any leading `*.` / `.` stripped, so a
+    `*.github.com` spelling is recognized too.  Both spellings of the variable
+    are rewritten, since tools are split on which one they read."""
+    drop = {name.lstrip(".") for name in TOOL_UPDATE_NOPROXY_DROP.get(tool, ())}
+    if not drop:
+        return None
+    env = dict(os.environ)
+    changed = False
+    for key in ("no_proxy", "NO_PROXY"):
+        value = env.get(key)
+        if not value:
+            continue
+        entries = [e.strip() for e in value.split(",") if e.strip()]
+        kept = [e for e in entries if e.lstrip("*.") not in drop]
+        if len(kept) != len(entries):
+            env[key] = ",".join(kept)
+            changed = True
+    return env if changed else None
+
+
 def _platform_name():
     """Small seam for testing platform-specific updater commands."""
     return os.name
@@ -246,33 +289,37 @@ def run_update_command(argv, env=None, failure_markers=(), recovery_markers=(),
 
 
 def run_with_retries(argv, retries, proxy, failure_markers=(), give_up_markers=(),
-                     recovery_markers=(), capture=False):
+                     recovery_markers=(), capture=False, env=None):
     """Run one updater, retrying up to `retries` times. Returns
     (exit code, gave_up, output) -- `gave_up` marks a failure that a retry
     cannot fix, so callers don't dress it up as something a proxy would help
     with; `output` is the captured stdout (empty unless `capture`, or unless
     give_up_markers need it).
 
-    The first attempt is always direct, so a proxy is only ever a fallback --
-    the loop below forces it for retries by stripping no_proxy exemptions, the
-    same way the tool updaters have always done."""
+    `env` is the environment for the *first* attempt (None inherits it as-is);
+    a per-tool no_proxy adjustment (TOOL_UPDATE_NOPROXY_DROP) travels with it,
+    so the narrowed list is what the updater's first try sees too.
+
+    The first attempt is otherwise always direct, so a proxy is only ever a
+    fallback -- the loop below forces it for retries by stripping no_proxy
+    exemptions, the same way the tool updaters have always done."""
     last_code = 0
     output = ""
     for attempt in range(1 + retries):
-        env = None
+        attempt_env = env
         if attempt:
             label = f"retry {attempt}/{retries}"
             if proxy:
                 # Force the proxy even where no_proxy would exempt things;
                 # a failure already proved the direct path is broken.
-                env = dict(os.environ)
-                env["http_proxy"] = env["https_proxy"] = proxy
-                env.pop("no_proxy", None)
-                env.pop("NO_PROXY", None)
+                attempt_env = dict(os.environ)
+                attempt_env["http_proxy"] = attempt_env["https_proxy"] = proxy
+                attempt_env.pop("no_proxy", None)
+                attempt_env.pop("NO_PROXY", None)
                 label += f" via {proxy}"
             print(f"  {label} ...", flush=True)
         last_code, output = run_update_command(
-            argv, env=env, failure_markers=failure_markers,
+            argv, env=attempt_env, failure_markers=failure_markers,
             recovery_markers=recovery_markers,
             capture=capture or bool(give_up_markers),
         )
@@ -322,7 +369,10 @@ def update_tools():
 
     A failed update is retried (per-tool counts in TOOL_UPDATE_RETRIES), and
     when UPDATE_PROXY_ENV is set the retries go through that proxy -- the
-    first attempt is always direct, so a proxy is only ever a fallback.  A
+    first attempt is otherwise direct, so a proxy is only ever a fallback.  A
+    tool listed in TOOL_UPDATE_NOPROXY_DROP also has its release hosts lifted
+    out of no_proxy for the first attempt, so a throttled direct route cannot
+    starve a download the proxy would have carried (codex's ~190MB asset).  A
     self-updater whose failure matches a marker in TOOL_UPDATE_FALLBACK_MARKERS
     is routed onward: step gets its official install script
     (TOOL_UPDATE_FALLBACK_CMD), codex gets a direct GitHub Releases install
@@ -344,11 +394,13 @@ def update_tools():
         # retry policy, so known updater defects can be routed to the official
         # platform installer.
         fallback_markers = TOOL_UPDATE_FALLBACK_MARKERS.get(tool, ())
+        env = _release_host_env(tool)
         last_code, _gave_up, output = run_with_retries(
             argv, retries, proxy,
             failure_markers=TOOL_UPDATE_FAILURE_MARKERS.get(tool, ()),
             recovery_markers=TOOL_UPDATE_RECOVERY_MARKERS.get(tool, ()),
             capture=bool(fallback_markers),
+            env=env,
         )
 
         fallback_cmd = TOOL_UPDATE_FALLBACK_CMD.get(tool, {}).get(_platform_name())
@@ -364,6 +416,7 @@ def update_tools():
                 fallback_cmd, fb_retries, proxy,
                 failure_markers=TOOL_UPDATE_FAILURE_MARKERS.get(tool, ()),
                 recovery_markers=TOOL_UPDATE_RECOVERY_MARKERS.get(tool, ()),
+                env=env,
             )
 
         py_fallback = TOOL_UPDATE_PY_FALLBACK.get(tool)
