@@ -46,8 +46,23 @@ def _literal_texts(tool, entry):
             return [content]
         if not isinstance(content, list):
             return []
-        return [common.block_text(block) for block in content
-                if isinstance(block, dict) and block.get("type") in ("text", "thinking")]
+        texts = []
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            btype = block.get("type")
+            if btype in ("text", "thinking"):
+                texts.append(common.block_text(block))
+            elif btype == "tool_use":
+                texts.append(str(block.get("name", "")) + " "
+                             + json.dumps(block.get("input", {}), ensure_ascii=False))
+            elif btype == "tool_result":
+                output = block.get("content")
+                if isinstance(output, str):
+                    texts.append(output)
+                elif isinstance(output, list):
+                    texts.extend(common._all_text_blocks(output, ("text",)))
+        return texts
     if tool == "codex" and kind == "response_item":
         payload = common.dict_field(entry, "payload")
         ptype = payload.get("type")

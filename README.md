@@ -141,7 +141,7 @@ cw 327e2ad9-210f-48cd-b     # an id where the row number goes -- the same resume
 
 cw search "the nfc frequency lock issue"   # find sessions relevant to a topic
 cw search "katago" --tool claude           # restrict the candidates to one tool
-cw search "..." --judge kimi               # use a different model to judge relevance
+cw search "..." --judge pi               # use a different model to judge relevance
 cw search "..." --judge step                # ... or step
 cw search "..." --why                      # print each hit's reason in full, on its own line
 cw search "..." --all                      # list every hit, not just the strongest 10
@@ -257,7 +257,28 @@ The topic is named at the moment another session is about to start beside it, wi
 
 1. **Exact pre-pass** — a case-insensitive scan of conversation text, tool calls, results, and kimi background-task output logs. It ignores session metadata and injected instructions. Short alphabetic queries such as `cra` match whole words, so they do not match `craft` or `crash`; longer queries retain substring matching. Results print under `exact matches` with zero LLM cost.
 
-2. **Semantic pass** — the LLM judge. Titles alone miss a lot — plenty of sessions are titled "hi" or "(no title)", and the relevant sessions may never use your exact words. So each candidate's tool, cwd, title, and a short content snippet go into one prompt, and an LLM (`step -p` by default — which judge leads is a per-machine setting; `--judge claude`, `--judge codex` or `--judge kimi` pick another) picks out the relevant ones. One batched call, not one call per session — with 100+ sessions, calling an LLM separately for each would be far too slow and far too expensive. That also means it costs one real LLM call (tokens, however your `claude`/`codex`/`kimi`/`step` account bills them) every time you run it, and if a judge runs out of session limit or its login expires mid-search, the remaining judges are tried in order. Results print under `semantic matches`.
+2. **Semantic pass** — a text-only LLM judge evaluates each candidate's tool,
+working directory, title, and a query-focused excerpt (or a fresh note summary). The
+default is Step; `--judge claude` or `--judge pi` selects another backend. Each
+batch makes a real model call, and retries or fallback can add more calls.
+Results print under `semantic matches`.
+
+For each conversation, cw first looks locally for the query phrase and its
+identifier/Chinese term fragments. It selects up to two matching windows with
+adjacent text, including matches deep inside long tool output, within an
+800-character excerpt budget. Fresh notes use the same query-focused selection
+within 600 characters; if a note omits the query detail, cw checks the original
+conversation before falling back to the note digest. With no lexical clue,
+the existing evenly sampled snippet remains available for paraphrase searches.
+File scans retain the existing 20,000-record bound. These are selected excerpts,
+not entire JSONL files sent to the judge; the local selection itself uses no model.
+
+All judge processes run in a temporary empty directory with tools disabled,
+including extension/MCP tools where available. They cannot inspect the current
+repository or use tools to act on instructions embedded in historical messages. Codex and
+Kimi remain available as session/chat tools, but are not judge backends until an
+equivalent tool-free mode is verified. The same judge configuration is shared by
+`cw note`, `cw wiki`, and automatic title suggestions.
 
 The exact pass exists because the semantic pass reasons over small *sampled* snippets, and a term that only appears in unsampled messages, tool calls, or past the snippet scan cap is invisible to the judge — a real `aria2c` search missed 4 sessions that grepping found immediately. The two passes union (a session listed as exact is not repeated under semantic), and both count for `cw resume <N>`.
 
@@ -265,7 +286,9 @@ Search skips Codex approval-review sessions whose prompts quote another agent's 
 
 The judge reasons about more than just keyword overlap — e.g. searching "katago" correctly pulled in sessions with generic titles like "hi" or "(no title)" that were run inside the `katago` project directory, which plain text search would have missed entirely.
 
-It is also asked to name its strongest hit first, and that order is what gets printed — recency only breaks ties. Ranking by how recently a session ran put the one session actually about the topic below older ones that merely mentioned it. Only the strongest 10 are listed (`--all` shows the rest), since the tail is the weakest of them and a long list is what made a broad search hard to scan.
+The judge orders matches within each batch. Those batch lists are currently
+concatenated in batch order; this is not a global relevance ranking. The first
+10 semantic matches are displayed by default (`--all` shows the rest).
 
 It must also point at something concrete — a file, command, error, or version — rather than count a session whose only link is the directory it ran in. Asked for that, the same search still returns `Hello` and `Yes go` rows from `android-vts`, but now with the specific commit behind each (`A13 VTS NFC HAL OpenAfterOpen fix`), which is what makes them worth keeping.
 
