@@ -189,11 +189,34 @@ To switch agents, put the target tool after the row number: `cw 3 codex`. Crossw
 
 One exception: kimi cannot open an interactive session with an initial prompt (a bare prompt parses as a subcommand name), so a handoff to it runs the seed as a one-shot `kimi -p` and then automatically resumes the session that run persisted (`kimi -S <id>`), dropping you into the interactive continuation with the summary already in its history. If the seed run fails, nothing is resumed — the error is reported, and you pick up with `kimi -c`.
 
-For a continuous terminal conversation on a ZCode install without its TUI,
-run `cw chat zcode <session-id-or-prefix>`. Each line starts a headless turn
+### Local browser workspace
+
+Run `cw web` to start the local GUI and open it in your browser. It listens only
+on `http://127.0.0.1:8765`; `cw web --port 9000 --no-open` changes the port and
+leaves opening the browser to you. Stop it with Ctrl-C.
+
+Search and filter sessions on the left, select one to read its saved text, or
+export it as Markdown. Sessions from Claude Code, Codex, Kimi, Step, Pi,
+CodeBuddy, and ZCode have a message box when their CLI is installed:
+each message continues the same saved session in its original directory.
+Responses appear as the CLI produces output. Sending can invoke tools and modify
+files, just as `cw chat` does. Native permission defaults are preserved; the web
+UI cannot answer interactive permission prompts, so operations requiring approval
+may be denied. WorkBuddy and OpenCode remain read-only. OpenCode’s local smoke
+test did not persist a discoverable session, so it is not offered for chat yet.
+Notes and wiki remain available
+through their CLI commands.
+
+The GUI uses the Python standard library and bundled HTML/CSS/JavaScript; no
+frontend installation or build is required. Nothing is uploaded for browsing.
+Chat uses each tool’s existing provider configuration. Closing the server stops
+its running CLI processes. Keep the server terminal open while using the page.
+
+For a continuous terminal conversation, run `cw chat <tool> <session-id-or-prefix>`
+with any of the seven chat-capable tools above. Each line starts a headless turn
 in the same saved session and its original directory. `/quit`, `/exit`, or
 Ctrl-D exits; Ctrl-C at the prompt exits, while Ctrl-C during a turn interrupts
-that turn. Each turn starts ZCode again, so it has startup overhead.
+that turn. Each turn starts the tool again, so it has startup overhead.
 In `cw ui`, Enter automatically uses this loop when this install is already
 known to lack `@zcode/tui`; `/quit` returns to the session list.
 

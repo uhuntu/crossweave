@@ -46,6 +46,9 @@ cb = "crossweave.cb:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+crossweave = ["web_assets/*.html", "web_assets/*.js", "web_assets/*.css"]
+
 [tool.ruff]
 # The codebase was written before ruff existed, and the tolerant readers
 # (read_jsonl, the openclaw-unwrap, the case-folder line scanner, etc.)
