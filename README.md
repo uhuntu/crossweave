@@ -237,6 +237,54 @@ on the machine holding their transcript.
 
 A zcode row can be a handoff *source* like any other — `cw 3 claude` exports its conversation and continues in Claude Code, which is the way out when a session has grown past what its model can serve. As a *target* it needs the `zcode` CLI on PATH: the CLI seeds one headless `zcode -p` run and resumes the session it persisted (the kimi dance); with only the desktop app installed the command refuses, since the desktop starts no session from a prompt.
 
+### Export a conversation to LLM Wiki
+
+An LLM Wiki project is a local knowledge-base folder created in the
+[LLM Wiki app](https://github.com/nashsu/llm_wiki), containing `raw/sources/`
+and `wiki/`. It is not the app's source-code checkout. Create a project in the
+app first, then use its folder as `--llm-wiki`:
+
+```bash
+cw export 3 --llm-wiki ~/Documents/my-wiki
+cw export zcode <session-id> --llm-wiki ~/Documents/my-wiki
+```
+
+The exporter saves Markdown under
+`raw/sources/crossweave/<tool>/<session>/<content-hash>.md`. Each snapshot carries
+its tool, session ID, source directory, content revision, export time, and the
+commands for viewing/resuming the original session. It contains saved user and
+assistant text, excluding reasoning and tool calls/results. Re-exporting the
+same content leaves the existing file untouched; changed content creates a new
+revision. Previously exported revisions remain available as evidence. Snapshots
+from one session are versions of that session, not independent sources.
+
+The export itself makes no model or API calls. If the app is watching sources,
+it may ingest the new file according to its own settings. To explicitly request
+a source rescan through its local API:
+
+```bash
+# Enable the API in LLM Wiki Settings → API + MCP. If required, put its token
+# in the LLM_WIKI_API_TOKEN environment variable; cw never saves the token.
+cw export 3 --llm-wiki ~/Documents/my-wiki --rescan
+```
+
+`--api-url` defaults to `http://127.0.0.1:19828` and accepts only loopback
+endpoints. Before requesting the rescan, cw matches the selected folder against
+`GET /api/v1/projects`; `--project-id` can disambiguate an API project ID. It
+then calls `POST /api/v1/projects/<id>/sources/rescan`, following the app's
+[local API contract](https://github.com/nashsu/llm_wiki#local-http-api--mcp-server--ai-agent-skill).
+An accepted rescan is not confirmation that knowledge pages have finished
+generating: check progress in LLM Wiki. If the API is unavailable, the exported
+snapshot is retained and the command exits nonzero; retry with `--rescan` after
+fixing the connection. No source history is automatically exported in bulk.
+
+The token must match the service at `--api-url`. A separately deployed headless
+service can use its startup `LLM_WIKI_API_TOKEN` rather than the desktop app's
+stored token. A 401 with a token already supplied means that service rejected it.
+Some headless versions do not implement the project-list/source-rescan routes;
+a 404 on these routes requires a compatible API or manual import of the saved
+Markdown, rather than repeated token changes.
+
 ### The same topic, again
 
 A request that keeps coming back gets a fresh session every time, and nine sessions on one question used to look like nine unrelated rows. Two things name the repetition now.

@@ -4,7 +4,7 @@ import os
 import re
 import sys
 
-from . import __version__, alias, chat, common, delete, doctor, machines, note, rename, search, sessions, show, ui, update, web, wiki
+from . import __version__, alias, chat, common, delete, doctor, exporter, machines, note, rename, search, sessions, show, ui, update, web, wiki
 
 TOOLS = ("claude", "codex", "kimi", "step", "pi", "opencode", "zcode")
 
@@ -21,6 +21,7 @@ USAGE = f"""Usage: cw <{'|'.join(TOOLS)}> [common-options] [prompt] [-- extra na
        cw search <topic> [--tool {'|'.join(TOOLS)}] [--judge {'|'.join(search.JUDGE_CMD)}] [--why] [--all]
        cw resume <{'|'.join(TOOLS)}|N> [session-id-or-prefix] [--cwd <dir>]
        cw show <N> | cw show <tool> <session-id-or-prefix>
+       cw export <N|tool session-id> --llm-wiki DIR [--rescan]
        cw chat <tool> <session-id-or-prefix>
        cw web [--port 8765] [--no-open]   # local browser workspace
        cw <N> <{'|'.join(TOOLS)}> [native-options]
@@ -136,7 +137,7 @@ Examples:
 # this list, and the test asserts it matches what main() actually dispatches,
 # so adding a subcommand cannot leave the message stale the way it was when
 # `stats` and `step` were both missing from it.
-SUBCOMMANDS = ("sessions", "full", "search", "resume", "show", "chat", "web", "update", "stats", "doctor", "alias", "machines", "rename", "delete", "note", "context", "wiki", "ui")
+SUBCOMMANDS = ("sessions", "full", "search", "resume", "show", "export", "chat", "web", "update", "stats", "doctor", "alias", "machines", "rename", "delete", "note", "context", "wiki", "ui")
 
 
 def usage(name="cw"):
@@ -509,6 +510,8 @@ def main():
         return
     if tool == "show":
         sys.exit(show.cmd_show(rest))
+    if tool == "export":
+        sys.exit(exporter.cmd_export(rest))
     if tool == "chat":
         sys.exit(chat.cmd_chat(rest))
     if tool == "web":
