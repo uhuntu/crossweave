@@ -168,6 +168,32 @@ def test_a_wikilink_span_is_never_wrapped_again(monkeypatch, tmp_path):
     assert text.count("[[SBOM]]") == 3
 
 
+def test_a_page_name_inside_code_is_left_alone(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path, _found(judged=[1]))
+    wiki.build("SBOM", str(tmp_path), "step")
+    _setup(monkeypatch, tmp_path, _found(judged=[1]),
+           reply="## 概要\n- `grype sbom:<SBOM>` 与\n```\nSBOM 在块里\n```\n"
+                 "外加正文里的 SBOM [S1]")
+    path = wiki.build("SCA", str(tmp_path), "step")
+    text = open(path, encoding="utf-8").read()
+    # the commands stay copyable; only the prose mention becomes a link
+    assert "`grype sbom:<SBOM>`" in text
+    assert "SBOM 在块里" in text
+    assert "正文里的 [[SBOM]]" in text
+
+
+def test_one_source_reads_as_a_session_not_sessions(monkeypatch, tmp_path, capsys):
+    _setup(monkeypatch, tmp_path, _found(judged=[1]))
+    monkeypatch.setenv("CW_VAULT", str(tmp_path))
+    assert wiki.cmd_wiki(["SBOM"]) == 0
+    index = (tmp_path / "_wiki" / note.INDEX_NAME).read_text(encoding="utf-8")
+    assert "1 session ·" in index and "1 sessions" not in index
+    capsys.readouterr()
+    assert wiki.cmd_wiki([]) == 0
+    out = capsys.readouterr().out
+    assert "(1 session, built" in out and "(1 sessions" not in out
+
+
 def test_wiki_index_maps_cited_sessions_to_pages(monkeypatch, tmp_path):
     _setup(monkeypatch, tmp_path, _found(judged=[1]))
     wiki.build("SBOM", str(tmp_path), "step")

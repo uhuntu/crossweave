@@ -54,6 +54,9 @@ OWN_DEFAULT = "## 我的补充\n\n"
 RELATED_HEADING = "## 相关 / Related pages"
 _CITE_RE = re.compile(r"\[S(\d+)\]")
 _WIKILINK = re.compile(r"(\[\[[^\]]*\]\])")
+# Fenced blocks and inline code spans, delimiters kept, so a walk over the
+# split can tell code from prose.
+_CODE = re.compile(r"(```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`)")
 # `built:` keeps the minute, so a minute's grace keeps a just-built page
 # fresh -- the same grace a note's staleness keeps.
 STALE_GRACE = 60
@@ -190,17 +193,25 @@ def _related(vault, this_path, this_sources):
 
 def _crosslink(body, stems):
     """Another page's name appearing in this page becomes a link to it --
-    outside the citations' own [[...]] spans, which stay untouched."""
+    in prose only: the citations' own [[...]] spans and anything inside code
+    stay untouched, so a command like `grype sbom:<file>` keeps working."""
     if not stems:
         return body
     parts = _WIKILINK.split(body)
     for i, part in enumerate(parts):
         if part.startswith("[["):
             continue
-        for stem in stems:
-            part = re.sub(rf"(?<![\w\[]){re.escape(stem)}(?![\w\]])",
-                          f"[[{stem}]]", part)
-        parts[i] = part
+        # Code is split out first and put back as-is: a page's commands are
+        # meant to be copied, and a link inside one breaks it.
+        chunks = _CODE.split(part)
+        for j, chunk in enumerate(chunks):
+            if chunk.startswith("`") or chunk.startswith("```"):
+                continue
+            for stem in stems:
+                chunk = re.sub(rf"(?<![\w\[]){re.escape(stem)}(?![\w\]])",
+                               f"[[{stem}]]", chunk)
+            chunks[j] = chunk
+        parts[i] = "".join(chunks)
     return "".join(parts)
 
 
@@ -253,7 +264,8 @@ def write_index(vault):
         when = (datetime.datetime.fromtimestamp(built).strftime("%Y-%m-%d %H:%M")
                 if built else "?")
         mark = " · stale -- `cw wiki --rebuild`" if path in stale else ""
-        out.append(f"- [[{stem}]] · {topic} · {len(sources)} sessions · "
+        out.append(f"- [[{stem}]] · {topic} · {len(sources)} "
+                   f"{'session' if len(sources) == 1 else 'sessions'} · "
                    f"built {when}{mark}")
     path = os.path.join(vault, WIKI_DIR, INDEX_NAME)
     tmp = f"{path}.{os.getpid()}.tmp"
@@ -450,7 +462,8 @@ def list_pages(vault):
                 if built else "?")
         mark = ", stale" if path in stale else ""
         print(f"  {os.path.splitext(os.path.basename(path))[0]}  "
-              f"({len(sources)} sessions, built {when}{mark})")
+              f"({len(sources)} {'session' if len(sources) == 1 else 'sessions'}, "
+              f"built {when}{mark})")
 
 
 # ---------- --discover: topics proposed from the notes ----------
