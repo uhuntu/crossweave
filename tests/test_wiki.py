@@ -1,5 +1,6 @@
 import datetime
 import os
+import re
 
 from crossweave import note, search, wiki
 
@@ -223,20 +224,49 @@ def test_the_listing_marks_sessions_a_page_cites(monkeypatch, tmp_path, capsys):
 
 # ---------- staleness ----------
 
+def _age_build(path, minutes):
+    """Move a page's `built:` back, as if it had been written then -- a
+    page built this minute cannot be stale, by design."""
+    when = datetime.datetime.now() - datetime.timedelta(minutes=minutes)
+    text = open(path, encoding="utf-8").read()
+    text = re.sub(r"^built: .*$", f"built: {when:%Y-%m-%dT%H:%M}", text,
+                  count=1, flags=re.M)
+    open(path, "w", encoding="utf-8").write(text)
+
+
+def _settled(seconds=60):
+    """A session's newest write, old enough to count (`LIVE_WINDOW`)."""
+    return datetime.datetime.now().timestamp() - wiki.LIVE_WINDOW - seconds
+
+
 def test_a_page_a_source_moved_on_since_is_stale(monkeypatch, tmp_path):
     _setup(monkeypatch, tmp_path, _found(judged=[1]))
     path = wiki.build("SBOM", str(tmp_path), "step")
     assert wiki.stale_pages(str(tmp_path)) == {}
+    _age_build(path, 60)
     # id-1's session moved on after the build; id-2's did not
-    now = datetime.datetime.now().timestamp() + 120
     monkeypatch.setattr(search, "gather_candidates",
-                        _gather({"id-1": now, "id-2": 1}))
+                        _gather({"id-1": _settled(), "id-2": 1}))
     assert wiki.stale_pages(str(tmp_path)) == {path: ["codex id-1"]}
     _setup(monkeypatch, tmp_path, _found(judged=[1, 2]))
     wiki.build("SBOM", str(tmp_path), "step")  # rebuild clears it
     monkeypatch.setattr(search, "gather_candidates",
-                        _gather({"id-1": 1, "id-2": 1}))
+                        _gather({"id-1": _settled(), "id-2": _settled()}))
     assert wiki.stale_pages(str(tmp_path)) == {}
+
+
+def test_a_session_still_being_written_does_not_make_its_page_stale(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path, _found(judged=[1]))
+    path = wiki.build("SBOM", str(tmp_path), "step")
+    _age_build(path, 60)
+    # written to a minute ago: a conversation still going, the page is not
+    # behind on it -- it was built from the session as it is
+    live = datetime.datetime.now().timestamp() - 60
+    monkeypatch.setattr(search, "gather_candidates", _gather({"id-1": live}))
+    assert wiki.stale_pages(str(tmp_path)) == {}
+    # once the session goes quiet, the page is behind it after all
+    monkeypatch.setattr(search, "gather_candidates", _gather({"id-1": _settled()}))
+    assert wiki.stale_pages(str(tmp_path)) == {path: ["codex id-1"]}
 
 
 def test_cmd_wiki_stale_and_rebuild_touch_only_the_stale_page(monkeypatch, tmp_path, capsys):
@@ -245,8 +275,11 @@ def test_cmd_wiki_stale_and_rebuild_touch_only_the_stale_page(monkeypatch, tmp_p
     prompts = _setup(monkeypatch, tmp_path, _found(judged=[2]))
     wiki.build("SCA", str(tmp_path), "step")
     assert len(prompts) == 1
-    now = datetime.datetime.now().timestamp() + 120
-    monkeypatch.setattr(search, "gather_candidates", _gather({"id-1": now, "id-2": 1}))
+    # both pages were built minutes ago, and id-1 has settled since
+    for name in ("SBOM.md", "SCA.md"):
+        _age_build(tmp_path / "_wiki" / name, 60)
+    monkeypatch.setattr(search, "gather_candidates",
+                        _gather({"id-1": _settled(), "id-2": 1}))
     monkeypatch.setenv("CW_VAULT", str(tmp_path))
     assert wiki.cmd_wiki(["--stale"]) == 0
     out = capsys.readouterr().out

@@ -60,6 +60,12 @@ _CODE = re.compile(r"(```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`)")
 # `built:` keeps the minute, so a minute's grace keeps a just-built page
 # fresh -- the same grace a note's staleness keeps.
 STALE_GRACE = 60
+# A session written to within this long is a conversation still going. Its
+# page is not behind on it -- the page was written from the session as it
+# is -- so it waits for the session to go quiet: otherwise a page written
+# in the middle of a conversation turns stale minutes after the build and
+# stays that way for as long as the conversation runs.
+LIVE_WINDOW = 10 * 60
 
 
 def _usage():
@@ -141,9 +147,11 @@ def all_pages(vault):
 
 def stale_pages(vault):
     """{path: sources} for the pages a source session has moved on since --
-    the session's newest write is later than the page's build. Sessions the
-    stores no longer hold say nothing (they may be archived; the page still
-    stands), and a store that will not scan takes no listing down."""
+    the session's newest write is later than the page's build, and has
+    settled (`LIVE_WINDOW`), a conversation still going not counting as
+    news the page is behind on. Sessions the stores no longer hold say
+    nothing (they may be archived; the page still stands), and a store that
+    will not scan takes no listing down."""
     pages = all_pages(vault)
     if not pages:
         return {}
@@ -162,12 +170,14 @@ def stale_pages(vault):
             ts_of[(r["tool"], r["id"])] = ts
     except Exception:
         return {}
+    now = datetime.datetime.now().timestamp()
     stale = {}
     for path, _topic, built, sources in pages:
         if built is None:
             continue
         for s in sources:
-            if ts_of.get(tuple(s.split(" ", 1)), 0) > built + STALE_GRACE:
+            ts = ts_of.get(tuple(s.split(" ", 1)), 0)
+            if built + STALE_GRACE < ts <= now - LIVE_WINDOW:
                 stale[path] = sources
                 break
     return stale
