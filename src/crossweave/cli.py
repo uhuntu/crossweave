@@ -73,7 +73,8 @@ is written there), a fresh interactive `cw claude|codex|step|pi`
 starts with this project's newest notes (what `cw context` prints) appended
 to the tool's system prompt -- background, no message sent. Not with -p or
 -c, nor before a subcommand; --no-context skips it once, CW_CONTEXT=off
-for good. kimi and opencode have no way to take it.
+for good. kimi and opencode have no way to take it. With CW_LLM_WIKI
+set to an LLM Wiki project folder, its pages about the project follow.
 
 Per-tool --yolo mapping:
   claude    -> --dangerously-skip-permissions
@@ -387,13 +388,24 @@ def wants_context(tool, rest):
 def attach_context(tool, cmd):
     """cmd with the project's notes as background, plus one stderr line
     saying so; cmd unchanged when there are none."""
+    from . import llmwiki
+
     got = note.project_context(os.getcwd())
-    if got is None:
+    wiki = llmwiki.project_wiki_context(os.getcwd())
+    if got is None and wiki is None:
         return cmd
-    project, count, text = got
-    print(f"cw: {count} note{'s' if count != 1 else ''} from {project} attached as "
+    what, texts = [], []
+    if got is not None:
+        project, count, text = got
+        what.append(f"{count} note{'s' if count != 1 else ''} from {project}")
+        texts.append(text)
+    if wiki is not None:
+        count, text = wiki
+        what.append(f"{count} LLM Wiki page{'s' if count != 1 else ''}")
+        texts.append(text)
+    print(f"cw: {' and '.join(what)} attached as "
           "background (--no-context skips, CW_CONTEXT=off for good)", file=sys.stderr)
-    return [cmd[0], *CONTEXT_FLAGS[tool](text), *cmd[1:]]
+    return [cmd[0], *CONTEXT_FLAGS[tool]("\n".join(texts)), *cmd[1:]]
 
 
 DEFAULT_LIST_LIMIT = "15"

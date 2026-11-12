@@ -45,3 +45,7 @@ def _isolate_stores(monkeypatch, tmp_path):
     # ...and so would the default one, when CW_VAULT is unset
     from crossweave import note
     monkeypatch.setattr(note, "DEFAULT_VAULT", str(nowhere / "default-vault"))
+    # the developer's own LLM Wiki would attach its pages to every launch
+    # test, and its token would reach a test's fake API
+    for name in ("CW_LLM_WIKI", "CW_LLM_WIKI_API", "LLM_WIKI_API_TOKEN"):
+        monkeypatch.delenv(name, raising=False)

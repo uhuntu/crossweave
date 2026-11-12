@@ -460,6 +460,18 @@ A topic gets one note of its own. `cw note <N>` on a folded row (the `⧉ N` row
 
 You rarely need to type it: with a vault, a fresh interactive `cw claude`, `cw codex`, `cw step`, or `cw pi` starts with those same notes already in hand — appended to the tool's system prompt (`--append-system-prompt`; codex's `developer_instructions`), so the session knows where the project stands without a message being sent or a turn spent. One stderr line says how many notes went in. It stays out of a `-p` run (a script's output should not change with the vault), a `-c` continuation (that session already knows), a subcommand (`cw claude doctor`), and a launch that passes its own system prompt; `--no-context` skips it once and `CW_CONTEXT=off` for good. kimi is left out: its only option, `--agent-file`, replaces the whole agent rather than adding to it. So is opencode, which has no system-prompt flag.
 
+#### Pages from an LLM Wiki
+
+`cw export` sends sessions into an [LLM Wiki](#export-a-conversation-to-llm-wiki); `CW_LLM_WIKI` brings what it built back. Point it at the wiki project folder and `cw context`, and with it every fresh `cw claude|codex|step|pi`, carries up to three of the wiki's pages about the project after the notes:
+
+```bash
+export CW_LLM_WIKI=~/Documents/my-wiki
+cw context                         # notes, then "# From the LLM Wiki at ..."
+cw context --llm-wiki ~/work/dg3sw  # another wiki, this once
+```
+
+The project is the directory's name, as for notes (the home folder has none, so it gets no pages). The app's local API is asked first — `POST /api/v1/projects/<id>/search`, the hybrid keyword and vector search its own chat uses, with `LLM_WIKI_API_TOKEN` and `CW_LLM_WIKI_API` (default `http://127.0.0.1:19828`) as for `--rescan`. A launch waits on it for two seconds at most. When it does not answer — the app closed, no token, a 401 — the pages are matched by name in the folder itself: a page named for the project first, then one with it in its title, then by how often it says it; the header then says `matched by name`. The app's own `index.md`, `log.md`, `overview.md` and media are never among them, and each page is cut near 1500 characters. They are LLM Wiki's summaries, not the sessions: the header says they are background and can be behind what they were built from. The launch line counts them (`cw: 1 note from crossweave and 3 LLM Wiki pages attached as background`); `--no-context` and `CW_CONTEXT=off` keep them out with the notes.
+
 ### Topic pages: `cw wiki`
 
 A note is one session; a wiki page is one topic, across every session and every tool that touched it:

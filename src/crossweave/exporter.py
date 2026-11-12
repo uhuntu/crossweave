@@ -410,13 +410,17 @@ class WikiClient:
         self.token = token.strip()
         self.opener = build_opener(ProxyHandler({}), NoRedirect())
 
-    def request(self, method, path):
+    def request(self, method, path, body=None, timeout=15):
         headers = {'Accept': 'application/json'}
         if self.token:
             headers['Authorization'] = 'Bearer ' + self.token
-        request = Request(self.base + path, headers=headers, method=method)
+        data = None
+        if body is not None:
+            data = json.dumps(body, ensure_ascii=False).encode('utf-8')
+            headers['Content-Type'] = 'application/json'
+        request = Request(self.base + path, data=data, headers=headers, method=method)
         try:
-            with self.opener.open(request, timeout=15) as response:
+            with self.opener.open(request, timeout=timeout) as response:
                 raw = response.read(2_000_001)
             if len(raw) > 2_000_000:
                 raise ExportError('LLM Wiki API response is too large')
@@ -426,10 +430,10 @@ class WikiClient:
             if exc.code in (401, 403):
                 if self.token:
                     hint = ('; the supplied token was rejected. Use the token for the '
-                            'service listening at --api-url; a headless service may use '
+                            f'service at {self.base}; a headless service may use '
                             'a different token from the desktop settings')
                 else:
-                    hint = f'; set {TOKEN_ENV} for the service listening at --api-url'
+                    hint = f'; set {TOKEN_ENV} for the service at {self.base}'
             elif exc.code == 404:
                 hint = (f'; this service does not expose {method} {path}. '
                         'Some headless versions lack the project/rescan API; '
@@ -443,9 +447,10 @@ class WikiClient:
             raise ExportError('LLM Wiki API did not report success')
         return data
 
-    def rescan(self, project, project_id=None):
+    def project_id(self, project, project_id=None, timeout=15):
+        """The API's id for the project folder, which must match exactly one."""
         root = Path(project).expanduser().resolve()
-        entries = self.request('GET', '/projects').get('projects', [])
+        entries = self.request('GET', '/projects', timeout=timeout).get('projects', [])
         if not isinstance(entries, list):
             raise ExportError('LLM Wiki API returned an invalid project list')
         matching = [p for p in entries if isinstance(p, dict)
@@ -457,7 +462,19 @@ class WikiClient:
         if len(matching) != 1:
             raise ExportError('selected folder does not uniquely match an API project; '
                               'open it in LLM Wiki and check --project-id')
-        return self.request('POST', '/projects/' + quote(matching[0]['id'], safe='') + '/sources/rescan')
+        return matching[0]['id']
+
+    def rescan(self, project, project_id=None):
+        pid = self.project_id(project, project_id)
+        return self.request('POST', '/projects/' + quote(pid, safe='') + '/sources/rescan')
+
+    def search(self, project, query, top_k, timeout):
+        pid = self.project_id(project, timeout=timeout)
+        data = self.request('POST', '/projects/' + quote(pid, safe='') + '/search',
+                            body=dict(query=query, topK=top_k, includeContent=True),
+                            timeout=timeout)
+        results = data.get('results')
+        return results if isinstance(results, list) else []
 
 
 def _under(path, root):

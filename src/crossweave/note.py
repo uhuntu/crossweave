@@ -695,10 +695,12 @@ CONTEXT_LIMIT = 3
 
 
 def _context_usage():
-    print("Usage: cw context [DIR] [--limit N] [--vault DIR]\n"
+    print("Usage: cw context [DIR] [--limit N] [--vault DIR] [--llm-wiki DIR]\n"
           "  Prints the newest notes `cw note` wrote for DIR's project (the\n"
           "  current directory by default), ready to hand a new session:\n"
-          "    cw claude \"$(cw context) 接着做还剩什么里的第一项\"",
+          "    cw claude \"$(cw context) 接着做还剩什么里的第一项\"\n"
+          "  With --llm-wiki or CW_LLM_WIKI, the LLM Wiki pages about the\n"
+          "  project follow the notes.",
           file=sys.stderr)
     return 2
 
@@ -763,16 +765,24 @@ def render_context(project, notes):
 
 
 def cmd_context(args):
-    vault_flag, where, limit = None, None, CONTEXT_LIMIT
+    from . import llmwiki
+
+    vault_flag, wiki_flag, where, limit = None, None, None, CONTEXT_LIMIT
     i = 0
     while i < len(args):
         a = args[i]
-        if a in ("--vault", "--limit"):
+        if a in ("--vault", "--limit", "--llm-wiki"):
             if i + 1 >= len(args):
                 print(f"cw context: {a} requires a value", file=sys.stderr)
                 return 2
             if a == "--vault":
                 vault_flag = args[i + 1]
+            elif a == "--llm-wiki":
+                wiki_flag = args[i + 1]
+                if llmwiki.wiki_dir(wiki_flag) is None:
+                    print(f"cw context: {wiki_flag} is not an LLM Wiki project "
+                          "(no wiki/ folder in it)", file=sys.stderr)
+                    return 2
             elif args[i + 1].isdigit() and int(args[i + 1]) > 0:
                 limit = int(args[i + 1])
             else:
@@ -793,11 +803,17 @@ def cmd_context(args):
     cwd = os.path.abspath(os.path.expanduser(where or os.getcwd()))
     project = _project(cwd)
     notes = context_notes(vault, project, limit)
-    if not notes:
+    wiki = llmwiki.project_wiki_context(cwd, wiki_flag, asked=True)
+    if not notes and not wiki:
         print(f"cw context: no notes for {project} in {vault} yet -- "
               "`cw note <N>` writes one", file=sys.stderr)
         return 1
-    sys.stdout.write(render_context(project, notes))
+    parts = []
+    if notes:
+        parts.append(render_context(project, notes))
+    if wiki:
+        parts.append(wiki[1])
+    sys.stdout.write("\n".join(parts))
     return 0
 
 
