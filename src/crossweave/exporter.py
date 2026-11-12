@@ -569,7 +569,7 @@ def pick_sessions(since_seconds=None, under=None):
 
     cutoff = time.time() - since_seconds if since_seconds else 0
     root = Path(under).expanduser().resolve() if under else None
-    picked, skipped = [], {'live': 0, 'short': 0, 'tool': 0}
+    picked, empty, skipped = [], [], {'live': 0, 'short': 0, 'tool': 0, 'empty': 0}
     for group in _groups(search.gather_candidates(None)):
         if cutoff and not any(not _ts(r) or _ts(r) >= cutoff for r in group):
             continue
@@ -589,9 +589,62 @@ def pick_sessions(since_seconds=None, under=None):
         if len(known) == len(unit['turns']) and sum(known) < note.MIN_TURNS:
             skipped['short'] += len(unit['members'])
             continue
+        # The turn count can see what the transcript cannot: a kimi
+        # session of tool calls alone has turns but not a word of text, and
+        # LLM Wiki wrote a page about it anyway -- out of nothing.
+        hollow = [r for r in unit['members'] if not _has_text(r)]
+        if hollow:
+            skipped['empty'] += len(hollow)
+            empty += hollow
+            members = [r for r in unit['members'] if r not in hollow]
+            if not members:
+                continue
+            unit = dict(unit, members=members, title=_topic_title(members))
         picked.append(unit)
     picked.sort(key=lambda u: max(_ts(r) for r in u['members']), reverse=True)
-    return picked, skipped
+    return picked, skipped, empty
+
+
+_ROLE_RE = re.compile(r'^## (User|Assistant)$', re.M)
+
+
+def _has_text(r):
+    """Whether a session's transcript holds any user or assistant text."""
+    try:
+        details = sessions.session_handoff_details(r['tool'], r['id'])
+    except Exception:
+        return True  # unreadable is the export's to report, not a skip
+    return details is None or bool(_ROLE_RE.search(details[1]))
+
+
+def retire_sessions(project, records):
+    """Take cw's own single-session snapshots of `records` out of
+    raw/sources, into the history. [paths retired]"""
+    _, root = source_root(project)
+    retired = []
+    for r in records:
+        slug = _slug(r['id'])
+        path = _folder(root, r['tool'], slug) / SNAPSHOT_NAME
+        if path.is_symlink() or not path.is_file():
+            continue
+        try:
+            with open(path, encoding='utf-8', newline='') as fh:
+                text = fh.read()
+        except (OSError, UnicodeError):
+            continue
+        if not _is_snapshot(text.replace('\r\n', '\n')):
+            continue
+        _keep_revision(path, r['tool'], slug)
+        try:
+            path.unlink()
+        except OSError:
+            continue
+        retired.append(path)
+        try:
+            path.parent.rmdir()
+        except OSError:
+            pass
+    return retired
 
 
 def topic_of(tool, sid):
@@ -638,7 +691,7 @@ def _export_all(opts, client):
         if since is None:
             raise ExportError('--since takes a span like 30m, 12h, 7d or 2w')
     source_root(opts.llm_wiki)  # a wrong folder fails before the scan, not after
-    picked, skipped = pick_sessions(since, opts.cwd)
+    picked, skipped, empty = pick_sessions(since, opts.cwd)
     window = f' from the last {opts.since}' if since else ''
     scope = f' under {opts.cwd}' if opts.cwd else ''
     sessions_in = sum(len(u['members']) for u in picked)
@@ -646,12 +699,12 @@ def _export_all(opts, client):
     merged = f', {topics} of them topics merging several sessions' if topics else ''
     print(f'cw export: {len(picked)} sources from {sessions_in} sessions{window}{scope}{merged} '
           f'(skipping {skipped["live"]} live, {skipped["short"]} under {note.MIN_TURNS} turns, '
-          f'{skipped["tool"]} tool-started)', file=sys.stderr)
+          f'{skipped["tool"]} tool-started, {skipped["empty"]} with no text)', file=sys.stderr)
     if opts.dry_run:
         for unit in picked:
             print(_describe(unit))
         return 0
-    if not picked:
+    if not picked and not empty:
         return 0
     # The export is local and free; what it sets off is not: every new or
     # changed source is one ingest in the app, on the app's model.
@@ -677,6 +730,16 @@ def _export_all(opts, client):
             print(f'exported: {target}', flush=True)
         else:
             counts['unchanged'] += 1
+    # A session with no text that went in before this check: its source
+    # comes out, so the app stops holding a page made of nothing.
+    try:
+        hollow = retire_sessions(opts.llm_wiki, empty)
+    except (ExportError, OSError) as exc:
+        hollow = []
+        print(f'cw export: sources of sessions with no text left in place: {exc}', file=sys.stderr)
+    for path in hollow:
+        print(f'retired: {path}', flush=True)
+    counts['retired'] += len(hollow)
     retired = f', {counts["retired"]} superseded sources retired' if counts['retired'] else ''
     print(f'cw export: {counts["exported"]} exported, {counts["unchanged"]} unchanged, '
           f'{counts["failed"]} failed{retired}', file=sys.stderr)

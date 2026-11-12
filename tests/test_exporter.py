@@ -317,7 +317,7 @@ def test_all_exports_what_a_wiki_should_ingest(many, capsys):
     assert names == ['here', 'there']
     assert seen == []  # the scanned record is passed through, not looked up again
     err = capsys.readouterr().err
-    assert '2 sources from 2 sessions (skipping 1 live, 1 under 3 turns, 1 tool-started)' in err
+    assert '2 sources from 2 sessions (skipping 1 live, 1 under 3 turns, 1 tool-started, 0 with no text)' in err
     assert '2 exported, 0 unchanged, 0 failed' in err
     assert exporter.cmd_export(['--all', '-y', '--llm-wiki', str(project)]) == 0
     assert '0 exported, 2 unchanged' in capsys.readouterr().err
@@ -516,3 +516,26 @@ def test_a_snapshot_an_older_cw_wrote_with_crlf_is_still_recognised(source):
 def test_a_windows_long_path_prefix_is_not_read_as_outside(monkeypatch, tmp_path):
     monkeypatch.setattr(exporter.Path, 'resolve', lambda self: Path('\\\\?\\C:\\wiki\\raw'))
     assert str(exporter._real(tmp_path)) == str(Path('C:\\wiki\\raw'))
+
+
+NO_TEXT = ('# Crossweave handoff from kimi\n\nSource session: `{sid}`\n\n'
+           '_No textual user or assistant messages were found._\n')
+
+
+def test_a_session_with_no_text_is_skipped_and_its_old_source_retired(chain, monkeypatch, capsys):
+    project, records, parents, texts, _ = chain
+    exporter.snapshot(project, 'step', 'd')  # went in before the check existed
+    old = project / 'raw/sources/crossweave/step/d/session.md'
+    assert old.exists()
+    real = exporter.sessions.session_handoff_details
+    monkeypatch.setattr(exporter.sessions, 'session_handoff_details', lambda tool, sid: (
+        (None, NO_TEXT.format(sid=sid)) if sid in ('d', 'b') else real(tool, sid)))
+    assert exporter.cmd_export(['--all', '-y', '--llm-wiki', str(project)]) == 0
+    err = capsys.readouterr().err
+    assert '2 with no text' in err
+    assert not old.exists()
+    assert list(exporter.history_root().glob('step/d/*.md'))
+    # b drops out of its topic; a and c still go in together.
+    assert _sources(project) == ['topic/claude-a/topic.md']
+    text = (project / 'raw/sources/crossweave/topic/claude-a/topic.md').read_text(encoding='utf-8')
+    assert 'source_sessions: ["claude:a", "claude:c"]' in text

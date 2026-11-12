@@ -321,7 +321,11 @@ Topics go in as one source each, as above. A topic with a session still live
 (written to within the last five minutes) waits until it is quiet; a session
 of fewer than three turns that nothing continues is skipped, and so is one a
 tool started for itself — a judge run, an approval prompt, a codex review
-subagent. `--since` keeps what was active within a span (`30m`, `12h`, `7d`,
+subagent — and one with no user or assistant text at all (a kimi session of
+tool calls alone counts turns but has nothing to say; LLM Wiki still wrote a
+page about each). A session with no text drops out of its topic, and if it
+went in before this check, its source is moved out of `raw/sources` into the
+history. `--since` keeps what was active within a span (`30m`, `12h`, `7d`,
 `2w`); `--cwd` keeps what was started in a directory or below it, the current
 one when no directory is given. Both take a topic whole when any of its
 sessions qualifies. A source whose content has not changed is left as it is,
