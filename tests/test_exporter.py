@@ -1,6 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import os
 from pathlib import Path
 import threading
 
@@ -238,3 +239,38 @@ def test_api_errors_distinguish_missing_token_rejected_token_and_incompatible_se
         client.request('GET', '/projects')
     assert expected in str(exc.value)
     assert 'private-token' not in str(exc.value)
+
+
+def test_replace_rides_out_a_windows_sharing_violation(monkeypatch, tmp_path):
+    """Windows CI: concurrent exporters failed with WinError 5 swapping in
+    session.md while another one held it open. The swap retries there."""
+    calls = []
+    real_replace = os.replace
+
+    def flaky(src, dst):
+        calls.append(src)
+        if len(calls) < 3:
+            raise PermissionError(5, 'Access is denied')
+        real_replace(src, dst)
+
+    monkeypatch.setattr(exporter.os, 'name', 'nt')
+    monkeypatch.setattr(exporter.os, 'replace', flaky)
+    monkeypatch.setattr(exporter.time, 'sleep', lambda _: None)
+    src, dst = tmp_path / 'a.tmp', tmp_path / 'session.md'
+    src.write_text('new')
+    exporter._replace(src, dst)
+    assert dst.read_text() == 'new' and len(calls) == 3
+
+
+def test_replace_does_not_retry_a_posix_permission_error(monkeypatch, tmp_path):
+    calls = []
+
+    def denied(src, dst):
+        calls.append(src)
+        raise PermissionError(13, 'Permission denied')
+
+    monkeypatch.setattr(exporter.os, 'name', 'posix')
+    monkeypatch.setattr(exporter.os, 'replace', denied)
+    with pytest.raises(PermissionError):
+        exporter._replace(tmp_path / 'a', tmp_path / 'b')
+    assert len(calls) == 1

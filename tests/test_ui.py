@@ -1,4 +1,7 @@
 """cw ui: the picker's filter and key handling, without a terminal."""
+import sys
+import types
+
 from crossweave import ui
 from crossweave.render import _display_width
 
@@ -228,8 +231,14 @@ def test_a_topic_counts_its_turns_across_sessions(monkeypatch):
     assert p.topic_turns("dev-3") == 120
 
 
+def _fake_curses(monkeypatch, actions):
+    """Stand in for curses: cmd_ui only calls curses.wrapper, and stock
+    Windows Python has no curses at all, so these tests must not need it."""
+    fake = types.SimpleNamespace(wrapper=lambda *args: next(actions))
+    monkeypatch.setitem(sys.modules, "curses", fake)
+
+
 def test_view_returns_to_picker_without_pause(monkeypatch):
-    import curses
     monkeypatch.setattr(ui.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(ui.sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr(ui, "gather", lambda: list(ITEMS))
@@ -237,7 +246,7 @@ def test_view_returns_to_picker_without_pause(monkeypatch):
     monkeypatch.setattr(ui.note, "topic_noted_index", lambda: [])
     monkeypatch.setattr(ui.sessions, "session_parents", lambda record: [])
     actions = iter(["show", None])
-    monkeypatch.setattr(curses, "wrapper", lambda *args: next(actions))
+    _fake_curses(monkeypatch, actions)
     calls = []
     monkeypatch.setattr(ui.show, "cmd_show", lambda args: calls.append(args) or 0)
     monkeypatch.setattr(ui, "pause", lambda: (_ for _ in ()).throw(AssertionError("extra pause")))
@@ -246,7 +255,6 @@ def test_view_returns_to_picker_without_pause(monkeypatch):
 
 
 def test_zcode_without_tui_enters_chat(monkeypatch):
-    import curses
     monkeypatch.setattr(ui.sys.stdin, 'isatty', lambda: True)
     monkeypatch.setattr(ui.sys.stdout, 'isatty', lambda: True)
     items = [(row('zcode', 'sess_saved', '/w', 'saved'), {'id': 'sess_saved'})]
@@ -257,7 +265,7 @@ def test_zcode_without_tui_enters_chat(monkeypatch):
     monkeypatch.setattr(ui.sessions, 'zcode_cli_on_path', lambda: True)
     monkeypatch.setattr(ui.sessions, 'zcode_tui_known_missing', lambda: True)
     actions = iter(['resume', None])
-    monkeypatch.setattr(curses, 'wrapper', lambda *args: next(actions))
+    _fake_curses(monkeypatch, actions)
     calls = []
     monkeypatch.setattr(ui, 'run_cw_command', lambda args: calls.append(args) or 0)
     monkeypatch.setattr(ui, 'pause', lambda: (_ for _ in ()).throw(AssertionError('extra pause')))

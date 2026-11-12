@@ -9,6 +9,7 @@ import re
 import shutil
 import sys
 import tempfile
+import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
@@ -203,11 +204,30 @@ def snapshot(project, tool, sid):
             fh.write(document)
             fh.flush()
             os.fsync(fh.fileno())
-        os.replace(temporary, target)
+        _replace(temporary, target)
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
     return target, True
+
+
+def _replace(source, target, attempts=20):
+    """os.replace, retried briefly on Windows.
+
+    Windows refuses to replace a file while any other handle has it open --
+    a concurrent exporter reading the old snapshot, or swapping in its own
+    copy, is enough -- and reports it as PermissionError (WinError 5). The
+    handle closes within milliseconds, so a short retry rides it out. On
+    POSIX a rename never collides that way and PermissionError is a real
+    permissions problem, so it is raised at once."""
+    for attempt in range(attempts):
+        try:
+            os.replace(source, target)
+            return
+        except PermissionError:
+            if os.name != 'nt' or attempt == attempts - 1:
+                raise
+            time.sleep(0.01 * (attempt + 1))
 
 
 class NoRedirect(HTTPRedirectHandler):

@@ -387,6 +387,12 @@ def test_release_host_env_none_without_a_drop_entry():
     assert update._release_host_env("no-such-tool") is None
 
 
+def _no_proxy(env):
+    """env's no_proxy value. Windows folds environment names to upper case,
+    so a copy of os.environ there holds only NO_PROXY."""
+    return env["no_proxy"] if "no_proxy" in env else env["NO_PROXY"]
+
+
 def test_release_host_env_drops_only_the_release_hosts(monkeypatch):
     monkeypatch.setenv("no_proxy",
                        ".kimi.com,localhost,github.com,githubusercontent.com,"
@@ -396,7 +402,7 @@ def test_release_host_env_drops_only_the_release_hosts(monkeypatch):
     env = update._release_host_env("codex")
 
     assert env is not None
-    assert env["no_proxy"] == env["NO_PROXY"] == (
+    assert _no_proxy(env) == env["NO_PROXY"] == (
         ".kimi.com,localhost,qoder.com.cn,.volcengine.com")
     # the process environment is left alone for the next tool
     assert os.environ["no_proxy"].split(",")[2] == "github.com"
@@ -407,7 +413,7 @@ def test_release_host_env_recognizes_a_wildcard_spelling(monkeypatch):
 
     env = update._release_host_env("codex")
 
-    assert env["no_proxy"] == "localhost"
+    assert _no_proxy(env) == "localhost"
 
 
 def test_release_host_env_drops_the_npm_registry_for_opencode(monkeypatch):
@@ -416,8 +422,8 @@ def test_release_host_env_drops_the_npm_registry_for_opencode(monkeypatch):
     monkeypatch.setenv("no_proxy", "localhost,github.com,registry.npmjs.org,.npmjs.org")
     monkeypatch.setenv("NO_PROXY", "localhost,github.com,registry.npmjs.org,.npmjs.org")
 
-    assert update._release_host_env("opencode")["no_proxy"] == "localhost"
-    assert update._release_host_env("codex")["no_proxy"] == (
+    assert _no_proxy(update._release_host_env("opencode")) == "localhost"
+    assert _no_proxy(update._release_host_env("codex")) == (
         "localhost,registry.npmjs.org,.npmjs.org")
 
 
@@ -452,7 +458,7 @@ def test_update_tools_codex_first_attempt_bypasses_release_hosts(monkeypatch):
     envs = dict(seen)
     # every tool with a release-host entry gets the narrowed list, ...
     for tool in update.TOOL_UPDATE_NOPROXY_DROP:
-        assert envs[tool]["no_proxy"] == ".kimi.com,localhost,qoder.com.cn"
+        assert _no_proxy(envs[tool]) == ".kimi.com,localhost,qoder.com.cn"
         assert envs[tool]["NO_PROXY"] == ".kimi.com,localhost,qoder.com.cn"
     # ... and every other tool inherits the environment untouched
     for tool, _argv in update.TOOL_UPDATE_CMD.items():
@@ -485,7 +491,7 @@ def test_update_tools_codex_proxy_retry_still_strips_no_proxy(monkeypatch):
     assert update.update_tools() == 0
 
     first, retry = [env for tool, env in seen if tool == "codex"]
-    assert first["no_proxy"] == "localhost,.kimi.com"
+    assert _no_proxy(first) == "localhost,.kimi.com"
     assert retry["http_proxy"] == "http://127.0.0.1:7897"
     assert "no_proxy" not in retry
     assert "NO_PROXY" not in retry
