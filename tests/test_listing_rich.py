@@ -613,3 +613,20 @@ def test_render_rows_prints_the_whole_note_when_asked(capsys):
     lines = capsys.readouterr().out.splitlines()
     assert lines[2].strip().startswith("why: upgrades IDC from A13")
     assert "why:" not in lines[3]
+
+
+def test_step_title_skips_prompt_less_npm_paste(tmp_path):
+    """Regression test: a real step session held two pastes -- a shell
+    transcript opening on a zsh prompt, then npm's allow-scripts warning
+    with no prompt line -- and the listing titled it "npm warn
+    allow-scripts 1 package has install scripts not yet covered b". The
+    prompt-less paste is noise too, so a later real request wins."""
+    from crossweave import step
+    path = write_step(tmp_path, "s1", [
+        {"type": "session", "id": "s1"},
+        step_user("(hunt@hunt-OptiPlex-7071)-[~]\n$ arkcli update\nchanged 2 packages in 3m"),
+        step_user("npm warn allow-scripts 1 package has install scripts not yet covered by allowScripts:\n"
+                  "  npm warn allow-scripts   @volcengine/ark-cli@1.0.49"),
+        step_user("why does arkcli update keep warning about postinstall?"),
+    ])
+    assert step.step_title(str(path)) == "why does arkcli update keep warning about postinstall?"

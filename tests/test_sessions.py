@@ -438,6 +438,9 @@ def test_codex_rollout_title_skips_pasted_shell_transcript(monkeypatch, tmp_path
     "drwxrwxr-x 36 1001 1001 4096 Aug 14 15:25 mt8390_android13_sdk\ndrwxrwxr-x 2 1001 1001 4096 Aug 14 15:26 kernel-5.15",
     "/home/hunt/EDLA/A13/android-gts/tools",
     "~/work/linux",
+    "npm warn allow-scripts 1 package has install scripts not yet covered by allowScripts:\n"
+    "  npm warn allow-scripts   @volcengine/ark-cli@1.0.49 (postinstall: node scripts/postinstall.js)",
+    "npm ERR! code EACCES\nnpm ERR! syscall mkdir",
 ])
 def test_codex_rollout_title_skips_pasted_output_with_no_prompt(monkeypatch, tmp_path, pasted):
     """Regression test: pasted terminal output doesn't always carry a prompt

@@ -1108,6 +1108,7 @@ NOISE_TITLES = (
     # pasted output with no prompt line at all
     "drwxrwxr-x 36 1001 1001 4096 Aug 14 15:25 mt8390_android13_sdk d",
     "/home/hunt/EDLA/A13/android-gts/tools",
+    "npm warn allow-scripts 1 package has install scripts not yet covered b",
     # a bare link dropped in for context
     "https://platform.stepfun.com/docs/zh/step-plan/integrations/pi",
     "https://stepfun.ai/",

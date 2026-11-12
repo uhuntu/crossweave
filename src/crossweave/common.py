@@ -525,6 +525,15 @@ BARE_PROMPT_RE = re.compile(r"^\s*\$\s+\S")
 LS_OUTPUT_RE = re.compile(r"^[-dlbcps][-rwxXsStT]{9}\s")
 PATH_ONLY_RE = re.compile(r"^~?/[^\s]*$")
 
+# A package manager's own log line, pasted without the prompt that ran it --
+# npm prefixes every line of its output with the tool name and a level. A
+# real step session's only prompt-less turn was a paste of
+# `npm warn allow-scripts 1 package has install scripts not yet covered by
+# allowScripts:` and that became its title. Nobody types a question that
+# opens "npm warn" or "npm ERR!", so the tool-name-plus-level shape is safe.
+PKG_LOG_RE = re.compile(r"^(?:npm|pnpm|yarn)\s+(?:warn|warning|err!|error|notice|info|verb|http)(?=[\s:]|$)",
+                        re.IGNORECASE)
+
 # How many transcript lines to look at for a genuine title. Bigger than the
 # old 40/60 because skipping a scheduled-task reminder (and any further
 # injected records behind it) has to reach past it; still bounded, and the
@@ -556,7 +565,7 @@ def _is_injected_or_pasted(text):
     # Only the opening line: a real request can be followed by pasted output,
     # and that paste shouldn't reject the question in front of it.
     head = stripped.split("\n", 1)[0].strip()
-    return bool(LS_OUTPUT_RE.match(head) or PATH_ONLY_RE.match(head))
+    return bool(LS_OUTPUT_RE.match(head) or PATH_ONLY_RE.match(head) or PKG_LOG_RE.match(head))
 
 
 # Shapes a *title* takes that name no work, beyond the pastes
