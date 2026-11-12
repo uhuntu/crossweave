@@ -269,6 +269,23 @@ Do not hand-edit `session.md`: the next export archives your edit into the
 history and replaces the file. A `session.md` that cw did not write is left
 alone and the export fails instead.
 
+A session that belongs to a topic — the sessions you carried on from one
+another, joined exactly as [`cw` folds them](#the-same-topic-again) — is not
+exported on its own. The whole topic goes in as one source,
+`raw/sources/crossweave/topic/<oldest-session>/topic.md`: every member
+oldest first, each under its own heading with its `cw show` command, and the
+handoff seed that opens a continued session reduced to one line naming the
+session above it. Four DevGetter sessions handed between claude and kimi are
+one line of work; as four sources the wiki would read them as four witnesses
+agreeing with one another. The topic is named by the title most of its
+sessions carry (a handoff inherits its source's), so a `/clear` that moved on
+to something next to it does not rename the work. `cw export 3` on any member
+exports the topic and says so. When a topic is written, every other cw source
+for its sessions — one exported alone before it was handed off, or the same
+topic filed under a root that is no longer its oldest session — is moved into
+the history and out of `raw/sources`. A topic is one file, so a new handoff
+re-ingests the whole of it; LLM Wiki splits a long source into chunks for that.
+
 The export itself makes no model or API calls. A changed conversation keeps the
 same path, so the app has to re-read the file instead of waiting for a new
 source; `--rescan` is how cw asks for that. If the app only imports files it has
@@ -300,14 +317,16 @@ cw export --all --since 7d --llm-wiki ~/Documents/my-wiki --rescan    # export, 
 cw export --all --cwd ~/work/dg3sw --llm-wiki ~/work/dg3sw -y         # one project's sessions only
 ```
 
-It skips a session that is still live (written to within the last five
-minutes; it goes in once it is quiet), one of fewer than three turns, and one
-a tool started for itself — a judge run, an approval prompt, a codex review
-subagent. `--since` keeps sessions active within a span (`30m`, `12h`, `7d`,
-`2w`); `--cwd` keeps those started in a directory or below it, the current
-one when no directory is given. A session whose content has not changed is
-left as it is, so running the same command again writes nothing, and
-`--rescan` is requested once at the end, only when something was exported.
+Topics go in as one source each, as above. A topic with a session still live
+(written to within the last five minutes) waits until it is quiet; a session
+of fewer than three turns that nothing continues is skipped, and so is one a
+tool started for itself — a judge run, an approval prompt, a codex review
+subagent. `--since` keeps what was active within a span (`30m`, `12h`, `7d`,
+`2w`); `--cwd` keeps what was started in a directory or below it, the current
+one when no directory is given. Both take a topic whole when any of its
+sessions qualifies. A source whose content has not changed is left as it is,
+so running the same command again writes nothing, and `--rescan` is requested
+once at the end, only when something was exported or retired.
 
 The export is local and free, but each new or changed source is one ingest
 on LLM Wiki's model, so `--all` asks before writing. `-y` skips the question;

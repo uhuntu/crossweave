@@ -21,6 +21,8 @@ def source(monkeypatch, tmp_path):
     monkeypatch.setattr(sessions, 'session_handoff_details', lambda tool, sid: ('/project', state['text']))
     monkeypatch.setattr(sessions, '_find_record', lambda tool, sid: {'tool': tool, 'id': sid})
     monkeypatch.setattr(sessions, '_resolve_title_and_cwd', lambda record: (state['title'], '/project'))
+    from crossweave import search
+    monkeypatch.setattr(search, 'gather_candidates', lambda tool: [])  # never the real stores
     return project, state
 
 
@@ -300,6 +302,7 @@ def many(source, monkeypatch, tmp_path):
     monkeypatch.setattr(sessions, 'codex_is_subagent', lambda sid: False)
     monkeypatch.setattr(sessions, 'session_turns', lambda r: r['turns'])
     monkeypatch.setattr(rename, '_is_live', lambda r: r['id'] == 'live')
+    monkeypatch.setattr(sessions, 'session_parents', lambda r: [])
     monkeypatch.setattr(sessions, 'session_handoff_details',
                         lambda tool, sid: (state.get('cwd'), state['text'] + sid + '\n'))
     seen = []
@@ -314,7 +317,7 @@ def test_all_exports_what_a_wiki_should_ingest(many, capsys):
     assert names == ['here', 'there']
     assert seen == []  # the scanned record is passed through, not looked up again
     err = capsys.readouterr().err
-    assert '2 sessions (skipping 1 live, 1 under 3 turns, 1 tool-started)' in err
+    assert '2 sources from 2 sessions (skipping 1 live, 1 under 3 turns, 1 tool-started)' in err
     assert '2 exported, 0 unchanged, 0 failed' in err
     assert exporter.cmd_export(['--all', '-y', '--llm-wiki', str(project)]) == 0
     assert '0 exported, 2 unchanged' in capsys.readouterr().err
@@ -363,3 +366,117 @@ def test_all_rejects_a_bad_span(many, capsys):
     project, _, _ = many
     assert exporter.cmd_export(['--all', '--since', 'week', '--llm-wiki', str(project)]) == 1
     assert '--since takes a span' in capsys.readouterr().err
+
+
+SEED = ('Continue the work from this {tool} session ({sid}). Read the complete '
+        'conversation export at /tmp/x.md. First briefly summarize.')
+
+
+@pytest.fixture
+def chain(source, monkeypatch, tmp_path):
+    """A handoff chain a (claude) -> b (kimi) -> c (claude), plus d on its own."""
+    from crossweave import rename, search
+
+    project, _ = source
+    now = __import__('time').time()
+    records = {
+        'a': {'tool': 'claude', 'id': 'a', 'ts': now - 3 * 86400, 'title': 'DevGetter 上架'},
+        'b': {'tool': 'kimi', 'id': 'b', 'ts': now - 2 * 86400, 'title': '(handoff) DevGetter 上架'},
+        'c': {'tool': 'claude', 'id': 'c', 'ts': now - 3600, 'title': 'OEMConfig 静态IP'},
+        'd': {'tool': 'step', 'id': 'd', 'ts': now - 3600, 'title': 'alone'},
+    }
+    parents = {'b': [('claude', 'a')], 'c': [('kimi', 'b')]}
+    texts = {
+        'a': '## User\n\nship it\n\n## Assistant\n\nfirst answer\n',
+        'b': '## User\n\n' + SEED.format(tool='claude', sid='a') + '\n\n## Assistant\n\nsecond answer\n',
+        'c': '## User\n\nnext step\n\n## Assistant\n\nthird answer\n',
+        'd': '## User\n\nalone question\n\n## Assistant\n\nalone answer\n',
+    }
+    live = set()
+    monkeypatch.setattr(search, 'gather_candidates',
+                        lambda tool: sorted(records.values(), key=lambda r: -r['ts']))
+    monkeypatch.setattr(sessions, 'session_parents', lambda r: parents.get(r['id'], []))
+    monkeypatch.setattr(sessions, '_resolve_title_and_cwd', lambda r: (r['title'], str(tmp_path)))
+    monkeypatch.setattr(sessions, 'codex_is_subagent', lambda sid: False)
+    monkeypatch.setattr(sessions, 'session_turns', lambda r: 5)
+    monkeypatch.setattr(rename, '_is_live', lambda r: r['id'] in live)
+    monkeypatch.setattr(sessions, 'session_handoff_details', lambda tool, sid: (
+        str(tmp_path), f'# Crossweave handoff from {tool}\n\nSource session: `{sid}`\n\n' + texts[sid]))
+    monkeypatch.setattr(sessions, '_find_record', lambda tool, sid: records.get(sid))
+    monkeypatch.setitem(sessions.ID_RESOLVERS, 'kimi', lambda prefix: [prefix])
+    return project, records, parents, texts, live
+
+
+def _sources(project):
+    return sorted(str(p.relative_to(project / 'raw/sources/crossweave'))
+                  for p in project.glob('raw/sources/crossweave/**/*.md'))
+
+
+def test_a_handoff_chain_goes_in_as_one_source(chain, capsys):
+    project, *_ = chain
+    assert exporter.cmd_export(['--all', '-y', '--llm-wiki', str(project)]) == 0
+    assert _sources(project) == ['step/d/session.md', 'topic/claude-a/topic.md']
+    text = (project / 'raw/sources/crossweave/topic/claude-a/topic.md').read_text()
+    assert 'kind: "crossweave-topic-snapshot"' in text
+    assert 'source_sessions: ["claude:a", "kimi:b", "claude:c"]' in text
+    # Named by the title the chain kept, not by the newest session's.
+    assert 'title: "DevGetter 上架"' in text
+    assert 'resume_command: "cw resume claude c"' in text
+    assert text.index('first answer') < text.index('second answer') < text.index('third answer')
+    assert 'Read the complete conversation export' not in text
+    assert '_(cw handoff: continues the claude session `a` above)_\n\n### Assistant' in text
+    assert '\n## User' not in text and '\n### User' in text
+    assert '2 sources from 4 sessions, 1 of them topics' in capsys.readouterr().err
+    assert exporter.cmd_export(['--all', '-y', '--llm-wiki', str(project)]) == 0
+    assert '0 exported, 2 unchanged' in capsys.readouterr().err
+
+
+def test_a_session_exported_alone_is_retired_once_its_topic_is_exported(chain, capsys):
+    project, records, *_ = chain
+    exporter.snapshot(project, 'claude', 'a')
+    alone = project / 'raw/sources/crossweave/claude/a/session.md'
+    before = alone.read_bytes()
+    assert exporter.cmd_export(['--all', '-y', '--llm-wiki', str(project)]) == 0
+    assert not alone.exists() and not alone.parent.exists()
+    assert 'claude/a/session.md' not in _sources(project)
+    assert [p.read_bytes() for p in exporter.history_root().glob('claude/a/*.md')] == [before]
+    assert '1 superseded sources retired' in capsys.readouterr().err
+
+
+def test_a_topic_whose_oldest_session_changes_leaves_no_second_copy(chain, capsys):
+    project, records, parents, texts, _ = chain
+    assert exporter.cmd_export(['--all', '-y', '--llm-wiki', str(project)]) == 0
+    now = __import__('time').time()
+    records['z'] = {'tool': 'claude', 'id': 'z', 'ts': now - 9 * 86400, 'title': 'DevGetter 上架'}
+    texts['z'] = '## User\n\nearliest\n\n## Assistant\n\nzero answer\n'
+    parents['a'] = [('claude', 'z')]
+    assert exporter.cmd_export(['--all', '-y', '--llm-wiki', str(project)]) == 0
+    assert _sources(project) == ['step/d/session.md', 'topic/claude-z/topic.md']
+
+
+def test_a_topic_with_a_live_session_waits_and_counts_its_window_by_any_member(chain, capsys):
+    project, records, parents, texts, live = chain
+    assert exporter.cmd_export(['--all', '--since', '1d', '--dry-run', '--llm-wiki', str(project)]) == 0
+    out = capsys.readouterr().out
+    assert 'topic    3 sessions  DevGetter 上架  (claude a, kimi b, claude c)' in out
+    live.add('b')
+    assert exporter.cmd_export(['--all', '--dry-run', '--llm-wiki', str(project)]) == 0
+    captured = capsys.readouterr()
+    assert 'topic' not in captured.out and 'skipping 3 live' in captured.err
+
+
+def test_selecting_one_session_of_a_topic_exports_the_topic(chain, capsys):
+    project, *_ = chain
+    assert exporter.cmd_export(['kimi', 'b', '--llm-wiki', str(project)]) == 0
+    assert _sources(project) == ['topic/claude-a/topic.md']
+    assert 'exporting the topic "DevGetter 上架" as one source' in capsys.readouterr().err
+
+
+def test_a_topic_file_cw_did_not_write_is_left_alone(chain, capsys):
+    project, *_ = chain
+    folder = project / 'raw/sources/crossweave/topic/claude-a'
+    folder.mkdir(parents=True)
+    (folder / 'topic.md').write_text('my own notes\n')
+    assert exporter.cmd_export(['--all', '-y', '--llm-wiki', str(project)]) == 1
+    assert (folder / 'topic.md').read_text() == 'my own notes\n'
+    assert 'not a crossweave export' in capsys.readouterr().err

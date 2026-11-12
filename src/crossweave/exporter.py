@@ -15,11 +15,14 @@ from urllib.parse import quote, urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 from . import sessions
-from .common import TOOL_STARTED_TITLES
+from .common import HANDOFF_PROMPT_PREFIX, TOOL_STARTED_TITLES
 
 API_URL = 'http://127.0.0.1:19828'
 TOKEN_ENV = 'LLM_WIKI_API_TOKEN'
 SNAPSHOT_NAME = 'session.md'
+TOPIC_NAME = 'topic.md'
+SESSION_KIND = 'crossweave-session-snapshot'
+TOPIC_KIND = 'crossweave-topic-snapshot'
 # Predecessor exporters wrote one <content-hash>.md per revision next to each
 # other. Left in place, LLM Wiki would read one conversation as several
 # independent sources, which is the opposite of what it should conclude.
@@ -87,7 +90,9 @@ def _without_time(text):
 
 def _is_snapshot(text):
     head = text.partition('\n---\n')[0]
-    return head.startswith('---\n') and 'kind: "crossweave-session-snapshot"' in head.splitlines()
+    lines = head.splitlines()
+    return head.startswith('---\n') and any(f'kind: "{kind}"' in lines
+                                            for kind in (SESSION_KIND, TOPIC_KIND))
 
 
 def _revision_of(text):
@@ -143,8 +148,8 @@ def _clear_old_revisions(folder, tool, slug):
             pass
 
 
-def snapshot(project, tool, sid, record=None):
-    project, root = source_root(project)
+def _session(tool, sid, record=None):
+    """(record, cwd, title, transcript) for one session, or ExportError."""
     details = sessions.session_handoff_details(tool, sid)
     if details is None:
         raise ExportError('session transcript unavailable')
@@ -155,34 +160,34 @@ def snapshot(project, tool, sid, record=None):
         raise ExportError('session no longer exists')
     title = sessions._resolve_title_and_cwd(record)[0]
     title = ' '.join((title or sid).split())
-    payload = dict(tool=tool, session=sid, cwd=cwd, title=title, transcript=transcript)
-    revision = hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True,
-                                         separators=(',', ':')).encode()).hexdigest()
-    slug = _slug(sid)
-    folder = root / 'crossweave' / tool / slug
+    return record, cwd, title, transcript
+
+
+def _revision(payload):
+    return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True,
+                                     separators=(',', ':')).encode()).hexdigest()
+
+
+def _folder(root, *parts):
+    folder = root.joinpath('crossweave', *parts)
     try:
         folder.resolve().relative_to(root)
     except ValueError:
         raise ExportError('export folder resolves outside raw/sources')
-    folder.mkdir(parents=True, exist_ok=True)
-    _clear_old_revisions(folder, tool, slug)
-    target = folder / SNAPSHOT_NAME
-    fields = dict(kind='crossweave-session-snapshot', title=title,
-                  source_tool=tool, source_session=sid, source_directory=cwd or '',
-                  source_revision=revision, content_scope='user_assistant_text',
-                  view_command=f'cw show {tool} {sid}', resume_command=f'cw resume {tool} {sid}')
+    return folder
+
+
+def _document(fields, body):
     head = '\n'.join(f'{key}: {json.dumps(value, ensure_ascii=False)}'
                      for key, value in fields.items())
     exported_at = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds')
-    body = (f'# {title}\n\n'
-            '> Conversation snapshot: user and assistant text only; reasoning and '
-            'tool calls/results are excluded. cw replaces this file when the '
-            'conversation changes, so it is the current state of one session, not '
-            "independent evidence. Earlier revisions stay in cw's local history.\n\n"
-            f'View current session: `cw show {tool} {sid}`\n\n'
-            + transcript.split('\n', 1)[-1].lstrip())
-    document = f'---\n{head}\nexported_at: "{exported_at}"\n---\n{body}'
+    return f'---\n{head}\nexported_at: "{exported_at}"\n---\n{body}'
 
+
+def _write(folder, name, document, tool, slug):
+    """Swap `document` in as folder/name; False when it is already there."""
+    folder.mkdir(parents=True, exist_ok=True)
+    target = folder / name
     if target.is_symlink():
         raise ExportError('snapshot path is a symlink; refusing to replace it')
     if target.exists():
@@ -190,7 +195,7 @@ def snapshot(project, tool, sid, record=None):
             raise ExportError('snapshot path exists and is not a regular file')
         existing = target.read_text(encoding='utf-8')
         if not _is_snapshot(existing):
-            raise ExportError(f'{SNAPSHOT_NAME} exists and is not a crossweave export; '
+            raise ExportError(f'{name} exists and is not a crossweave export; '
                               'refusing to overwrite it')
         if _without_time(existing) == _without_time(document):
             return target, False
@@ -211,6 +216,139 @@ def snapshot(project, tool, sid, record=None):
         if temporary is not None:
             temporary.unlink(missing_ok=True)
     return target, True
+
+
+def snapshot(project, tool, sid, record=None):
+    project, root = source_root(project)
+    _record, cwd, title, transcript = _session(tool, sid, record)
+    revision = _revision(dict(tool=tool, session=sid, cwd=cwd, title=title, transcript=transcript))
+    slug = _slug(sid)
+    folder = _folder(root, tool, slug)
+    folder.mkdir(parents=True, exist_ok=True)
+    _clear_old_revisions(folder, tool, slug)
+    fields = dict(kind=SESSION_KIND, title=title,
+                  source_tool=tool, source_session=sid, source_directory=cwd or '',
+                  source_revision=revision, content_scope='user_assistant_text',
+                  view_command=f'cw show {tool} {sid}', resume_command=f'cw resume {tool} {sid}')
+    body = (f'# {title}\n\n'
+            '> Conversation snapshot: user and assistant text only; reasoning and '
+            'tool calls/results are excluded. cw replaces this file when the '
+            'conversation changes, so it is the current state of one session, not '
+            "independent evidence. Earlier revisions stay in cw's local history.\n\n"
+            f'View current session: `cw show {tool} {sid}`\n\n'
+            + transcript.split('\n', 1)[-1].lstrip())
+    return _write(folder, SNAPSHOT_NAME, _document(fields, body), tool, slug)
+
+
+# A handoff target opens with cw's seed -- a pointer to the export file,
+# not a request. In a topic the session it points at is the one just above.
+_SEED_SECTION_RE = re.compile(r'(## User\n\n)' + re.escape(HANDOFF_PROMPT_PREFIX)
+                              + r'(\w+) session \(([^)\s]+)\)[^\n]*(?:\n(?!## )[^\n]*)*')
+
+
+def _topic_part(transcript):
+    """A member's transcript as part of a topic page: its own header
+    dropped, roles one level down under the member's heading, the handoff
+    seed reduced to what it says."""
+    text = transcript.split('\n', 1)[-1].lstrip()
+    text = _SEED_SECTION_RE.sub(
+        lambda m: f'{m[1]}_(cw handoff: continues the {m[2]} session `{m[3]}` above)_\n', text)
+    return re.sub(r'^## (User|Assistant)$', r'### \1', text, flags=re.M)
+
+
+def topic_key(members):
+    """The folder a topic is filed under: its oldest member. A handoff adds
+    a newer session, so the root stays put as the topic grows; when it does
+    move (an older session joins), _retire() clears the old folder."""
+    first = members[0]
+    return f"{first['tool']}-{_slug(first['id'])}"
+
+
+def topic_snapshot(project, members, title):
+    """One source for sessions that continue one another, oldest first.
+    `members` are light records. Returns (path, written, retired paths)."""
+    project, root = source_root(project)
+    parts = [_session(r['tool'], r['id'], r) for r in members]
+    ids = [f"{r['tool']}:{r['id']}" for r, *_ in parts]
+    revision = _revision(dict(title=title, sessions=[
+        dict(tool=r['tool'], session=r['id'], cwd=cwd, title=t, transcript=tx)
+        for r, cwd, t, tx in parts]))
+    key = topic_key(members)
+    folder = _folder(root, 'topic', key)
+    newest = members[-1]
+    dirs = sorted({cwd for _, cwd, _, _ in parts if cwd})
+    fields = dict(kind=TOPIC_KIND, title=title, source_sessions=ids,
+                  source_directories=dirs, source_revision=revision,
+                  content_scope='user_assistant_text',
+                  resume_command=f"cw resume {newest['tool']} {newest['id']}")
+    lines = [f'# {title}\n',
+             f'> Topic snapshot: {len(parts)} sessions that continue one another '
+             '(cw handoffs, Claude /clear, codex forks), oldest first. They are one '
+             'line of work merged into one source, not independent evidence: a later '
+             'session restates and revises the earlier ones. User and assistant text '
+             'only; reasoning and tool calls/results are excluded. cw replaces this '
+             'file when any of them changes.\n',
+             f"Continue the newest: `cw resume {newest['tool']} {newest['id']}`\n",
+             '## Sessions\n']
+    for n, (r, cwd, t, _) in enumerate(parts, 1):
+        lines.append(f"{n}. {r['tool']} `{r['id']}` — {t}" + (f' — `{cwd}`' if cwd else ''))
+    for n, (r, _, t, tx) in enumerate(parts, 1):
+        lines.append(f"\n## Session {n}/{len(parts)} · {r['tool']} · {t}\n\n"
+                     f"View: `cw show {r['tool']} {r['id']}`\n\n{_topic_part(tx).rstrip()}")
+    target, written = _write(folder, TOPIC_NAME, _document(fields, '\n'.join(lines) + '\n'),
+                             'topic', key)
+    retired = _retire(root, members, keep=target)
+    return target, written, retired
+
+
+def _members_of(text):
+    head = text.partition('\n---\n')[0]
+    for line in head.splitlines():
+        if line.startswith('source_sessions: '):
+            try:
+                value = json.loads(line.split(': ', 1)[1])
+            except ValueError:
+                return set()
+            return set(value) if isinstance(value, list) else set()
+    return set()
+
+
+def _retire(root, members, keep):
+    """Take every other cw source for these sessions out of raw/sources --
+    a member exported on its own before it was handed off, a topic filed
+    under a root that is no longer the oldest -- into cw's history, so the
+    wiki holds the work once. Only files cw wrote are touched."""
+    ids = {f"{r['tool']}:{r['id']}" for r in members}
+    found = [(_folder(root, r['tool'], _slug(r['id'])) / SNAPSHOT_NAME, r['tool'], _slug(r['id']))
+             for r in members]
+    topics = root / 'crossweave' / 'topic'
+    if topics.is_dir():
+        for path in topics.glob(f'*/{TOPIC_NAME}'):
+            if path != keep:
+                found.append((path, 'topic', path.parent.name))
+    retired = []
+    for path, tool, slug in found:
+        if path.is_symlink() or not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding='utf-8')
+        except (OSError, UnicodeError):
+            continue
+        if not _is_snapshot(text):
+            continue
+        if tool == 'topic' and not (_members_of(text) & ids):
+            continue
+        _keep_revision(path, tool, slug)
+        try:
+            path.unlink()
+        except OSError:
+            continue
+        retired.append(path)
+        try:
+            path.parent.rmdir()
+        except OSError:
+            pass
+    return retired
 
 
 def _replace(source, target, attempts=20):
@@ -313,45 +451,146 @@ def _under(path, root):
         return False
 
 
+def _tool_started(r, title):
+    # A judge run, an approval prompt, a codex review subagent: the tool's
+    # own bookkeeping, holding no request of the user's.
+    return ((r['tool'] == 'codex' and sessions.codex_is_subagent(r['id']))
+            or title in TOOL_STARTED_TITLES)
+
+
+def _turns(r):
+    try:
+        return sessions.session_turns(r)
+    except Exception:  # a store that cannot be counted is still offered
+        return None
+
+
+def _resolved(r):
+    try:
+        title, cwd = sessions._resolve_title_and_cwd(r)
+    except Exception:
+        title, cwd = None, None
+    return ' '.join((title or '').split()), cwd
+
+
+def _unit(group, skipped=None):
+    """{members (oldest first), title, cwds, turns} for one topic's records,
+    without the members a tool started for itself or that hold nothing --
+    or None when nothing is left."""
+    members, cwds, turns = [], [], []
+    for r in sorted(group, key=lambda r: _ts(r)):
+        title, cwd = _resolved(r)
+        if _tool_started(r, title):
+            if skipped is not None:
+                skipped['tool'] += 1
+            continue
+        n = _turns(r)
+        if n == 0 and len(group) > 1:
+            continue  # an empty session between two real ones adds nothing
+        members.append(dict(r, _title=title or r['id']))
+        cwds.append(cwd)
+        turns.append(n)
+    if not members:
+        return None
+    return dict(members=members, title=_topic_title(members), cwds=cwds, turns=turns)
+
+
+def _topic_title(members):
+    """The title most of a topic's sessions carry, marks dropped -- a
+    handoff inherits its source's, so that is the name the work kept; the
+    newest member's breaks a tie. The newest alone can be a /clear that
+    started on something next to it."""
+    titles = [sessions._without_inherited_mark(r['_title']) for r in members]
+    known = [t for t in titles if t and t != '(no title)'] or titles
+    return max(reversed(known), key=known.count)
+
+
+def _ts(r):
+    from . import note
+    return note._ts(r)
+
+
+def _groups(records):
+    group = sessions.link_groups(records)
+    out = {}
+    for r in records:
+        out.setdefault(group[(r['tool'], r['id'])], []).append(r)
+    return list(out.values())
+
+
 def pick_sessions(since_seconds=None, under=None):
-    """([(record, title)] to export, skip counts): the local sessions --all takes,
-    newest first. The same cut as `cw note --all`: a live conversation is
-    left until it goes quiet -- exported now, it changes again within
-    minutes and the app re-ingests it for nothing -- and a session of one
-    or two turns is a quick question, noise in a knowledge base. Unchanged
-    sessions are not skipped here; snapshot() finds those without a write."""
+    """([unit], skip counts): what --all exports, newest first. A unit is a
+    topic -- the sessions that continue one another, joined the way the
+    listing folds them -- and goes in as one source; a session nothing
+    continues is a topic of one. The same cut as `cw note --all`: a topic
+    with a live session is left until it goes quiet (exported now, it
+    changes within minutes and the app re-ingests it for nothing), and one
+    of one or two turns in all is a quick question, noise in a knowledge
+    base. A topic is in the window, or under the directory, when any of its
+    sessions is -- and then all of them go. Unchanged sources are not
+    skipped here; the writers find those without a write."""
     from . import note, rename, search
 
     cutoff = time.time() - since_seconds if since_seconds else 0
     root = Path(under).expanduser().resolve() if under else None
     picked, skipped = [], {'live': 0, 'short': 0, 'tool': 0}
-    for r in search.gather_candidates(None):
-        if cutoff and note._ts(r) and note._ts(r) < cutoff:
+    for group in _groups(search.gather_candidates(None)):
+        if cutoff and not any(not _ts(r) or _ts(r) >= cutoff for r in group):
             continue
-        try:
-            title, cwd = sessions._resolve_title_and_cwd(r)
-        except Exception:
-            title, cwd = None, None
-        if root is not None and not _under(cwd, root):
+        started = {'tool': 0}
+        unit = _unit(group, started)
+        if unit is None:
+            if root is None:  # with --cwd, whether they were in scope is unknown
+                skipped['tool'] += started['tool']
             continue
-        # A judge run, an approval prompt, a codex review subagent: the
-        # tool's own bookkeeping, holding no request of the user's.
-        if ((r['tool'] == 'codex' and sessions.codex_is_subagent(r['id']))
-                or title in TOOL_STARTED_TITLES):
-            skipped['tool'] += 1
+        if root is not None and not any(_under(cwd, root) for cwd in unit['cwds']):
             continue
-        if rename._is_live(r):
-            skipped['live'] += 1
+        skipped['tool'] += started['tool']
+        if any(rename._is_live(r) for r in unit['members']):
+            skipped['live'] += len(unit['members'])
             continue
-        try:
-            turns = sessions.session_turns(r)
-        except Exception:  # a store that cannot be counted is still offered
-            turns = None
-        if turns is not None and turns < note.MIN_TURNS:
-            skipped['short'] += 1
+        known = [n for n in unit['turns'] if n is not None]
+        if len(known) == len(unit['turns']) and sum(known) < note.MIN_TURNS:
+            skipped['short'] += len(unit['members'])
             continue
-        picked.append((r, ' '.join((title or '').split()) or r['id']))
+        picked.append(unit)
+    picked.sort(key=lambda u: max(_ts(r) for r in u['members']), reverse=True)
     return picked, skipped
+
+
+def topic_of(tool, sid):
+    """The unit a selected session belongs to: its whole topic when other
+    sessions continue it or it continues them, else the session alone."""
+    from . import search
+
+    records = search.gather_candidates(None)
+    for group in _groups(records):
+        if any(r['tool'] == tool and r['id'] == sid for r in group):
+            unit = _unit(group)
+            if unit and any(r['tool'] == tool and r['id'] == sid for r in unit['members']):
+                return unit
+    return None
+
+
+def export_unit(project, unit):
+    """(path, written, retired) for a unit: a topic of several sessions as
+    one topic source, a single session as its session snapshot."""
+    members = unit['members']
+    if len(members) > 1:
+        return topic_snapshot(project, members, unit['title'])
+    r = members[0]
+    target, written = snapshot(project, r['tool'], r['id'], record=r)
+    return target, written, []
+
+
+def _describe(unit):
+    members = unit['members']
+    if len(members) == 1:
+        r = members[0]
+        return f'{r["tool"]:<8} {r["id"]}  {unit["title"]}'
+    tools = ', '.join(f'{r["tool"]} {re.sub(r"^(session|sess|ses)_", "", r["id"])[:8]}'
+                      for r in members)
+    return f'{"topic":<8} {len(members)} sessions  {unit["title"]}  ({tools})'
 
 
 def _export_all(opts, client):
@@ -366,45 +605,53 @@ def _export_all(opts, client):
     picked, skipped = pick_sessions(since, opts.cwd)
     window = f' from the last {opts.since}' if since else ''
     scope = f' under {opts.cwd}' if opts.cwd else ''
-    print(f'cw export: {len(picked)} sessions{window}{scope} '
+    sessions_in = sum(len(u['members']) for u in picked)
+    topics = sum(1 for u in picked if len(u['members']) > 1)
+    merged = f', {topics} of them topics merging several sessions' if topics else ''
+    print(f'cw export: {len(picked)} sources from {sessions_in} sessions{window}{scope}{merged} '
           f'(skipping {skipped["live"]} live, {skipped["short"]} under {note.MIN_TURNS} turns, '
           f'{skipped["tool"]} tool-started)', file=sys.stderr)
     if opts.dry_run:
-        for r, title in picked:
-            print(f'{r["tool"]:<8} {r["id"]}  {title}')
+        for unit in picked:
+            print(_describe(unit))
         return 0
     if not picked:
         return 0
     # The export is local and free; what it sets off is not: every new or
     # changed source is one ingest in the app, on the app's model.
     if not opts.yes and not note._confirm(
-            f'Export up to {len(picked)} sessions into {opts.llm_wiki}? '
+            f'Export up to {len(picked)} sources into {opts.llm_wiki}? '
             'Each new or changed one is an LLM Wiki ingest. [y/N] '):
         print('cw export: nothing exported (pass -y to skip this question)', file=sys.stderr)
         return 1
-    counts = {'exported': 0, 'unchanged': 0, 'failed': 0}
-    for r, _ in picked:
+    counts = {'exported': 0, 'unchanged': 0, 'failed': 0, 'retired': 0}
+    for unit in picked:
         try:
-            target, created = snapshot(opts.llm_wiki, r['tool'], r['id'], record=r)
+            target, written, retired = export_unit(opts.llm_wiki, unit)
         except (ExportError, OSError) as exc:
             counts['failed'] += 1
+            r = unit['members'][-1]
             print(f'cw export: {r["tool"]} {r["id"]}: {exc}', file=sys.stderr)
             continue
-        if created:
+        for path in retired:
+            print(f'retired: {path}', flush=True)
+        counts['retired'] += len(retired)
+        if written:
             counts['exported'] += 1
             print(f'exported: {target}', flush=True)
         else:
             counts['unchanged'] += 1
+    retired = f', {counts["retired"]} superseded sources retired' if counts['retired'] else ''
     print(f'cw export: {counts["exported"]} exported, {counts["unchanged"]} unchanged, '
-          f'{counts["failed"]} failed', file=sys.stderr)
+          f'{counts["failed"]} failed{retired}', file=sys.stderr)
     if client:
-        if counts['exported']:
+        if counts['exported'] or counts['retired']:
             try:
                 client.rescan(opts.llm_wiki, opts.project_id)
             except ExportError as exc:
                 print(f'cw export: {exc}', file=sys.stderr)
                 print('The snapshots are saved. Retry with --rescan once the API answers; '
-                      'unchanged sessions are skipped, so only the rescan is repeated.',
+                      'unchanged sources are skipped, so only the rescan is repeated.',
                       file=sys.stderr)
                 return 1
             print('LLM Wiki source rescan accepted; check the app for ingest progress. '
@@ -453,7 +700,16 @@ def cmd_export(args):
         tool, sid = resolve_selection(opts.selection)
         # Validate the endpoint before exporting if an API action was requested.
         client = WikiClient(opts.api_url, os.environ.get(TOKEN_ENV, '')) if opts.rescan else None
-        target, created = snapshot(opts.llm_wiki, tool, sid)
+        unit = topic_of(tool, sid)
+        if unit and len(unit['members']) > 1:
+            print(f'cw export: {tool} {sid} continues or is continued by '
+                  f'{len(unit["members"]) - 1} other sessions; exporting the topic '
+                  f'"{unit["title"]}" as one source', file=sys.stderr)
+            target, created, retired = export_unit(opts.llm_wiki, unit)
+            for path in retired:
+                print(f'retired: {path}')
+        else:
+            target, created = snapshot(opts.llm_wiki, tool, sid)
         print(f'{"exported" if created else "unchanged"}: {target}')
         if client:
             client.rescan(opts.llm_wiki, opts.project_id)
