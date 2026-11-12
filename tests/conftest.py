@@ -49,3 +49,6 @@ def _isolate_stores(monkeypatch, tmp_path):
     # test, and its token would reach a test's fake API
     for name in ("CW_LLM_WIKI", "CW_LLM_WIKI_API", "LLM_WIKI_API_TOKEN"):
         monkeypatch.delenv(name, raising=False)
+    # A test that sets CW_LLM_WIKI to launch a tool would start a real
+    # background export, outside this isolation; test_autoexport opts back in.
+    monkeypatch.setenv("CW_LLM_WIKI_EXPORT", "off")

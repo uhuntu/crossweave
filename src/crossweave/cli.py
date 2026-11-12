@@ -4,7 +4,7 @@ import os
 import re
 import sys
 
-from . import __version__, alias, chat, common, delete, doctor, exporter, machines, note, rename, search, sessions, show, ui, update, web, wiki
+from . import __version__, alias, autoexport, chat, common, delete, doctor, exporter, machines, note, rename, search, sessions, show, ui, update, web, wiki
 
 TOOLS = ("claude", "codex", "kimi", "step", "pi", "opencode", "zcode")
 
@@ -74,7 +74,9 @@ starts with this project's newest notes (what `cw context` prints) appended
 to the tool's system prompt -- background, no message sent. Not with -p or
 -c, nor before a subcommand; --no-context skips it once, CW_CONTEXT=off
 for good. kimi and opencode have no way to take it. With CW_LLM_WIKI
-set to an LLM Wiki project folder, its pages about the project follow.
+set to an LLM Wiki project folder, its pages about the project follow,
+and once a day a listing or a launch exports quiet sessions to it in the
+background (CW_LLM_WIKI_EXPORT=off stops that, =12h changes the interval).
 
 Per-tool --yolo mapping:
   claude    -> --dangerously-skip-permissions
@@ -507,16 +509,19 @@ def main():
         # directory scoping was dropped at its owner's request; `cw sessions
         # --cwd` is still there for the per-directory question.
         sessions.cmd_list(["--limit", default_list_limit()])
+        autoexport.maybe_start()
         return
 
     tool, rest = argv[0], argv[1:]
 
     if tool == "sessions":
         sessions.cmd_list(rest)
+        autoexport.maybe_start()
         return
     if tool == "full":
         # `cw full` is shorthand for `cw sessions --limit all`.
         sessions.cmd_list(["--limit", "all", *rest])
+        autoexport.maybe_start()
         return
     if tool == "resume":
         sessions.cmd_resume(rest)
@@ -623,6 +628,7 @@ def main():
         cmd = attach_context(tool, cmd)
     if starts_session(tool, rest):
         steer_hint()
+        autoexport.maybe_start()
     sessions.exec_or_die(cmd)
 
 

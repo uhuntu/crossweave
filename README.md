@@ -344,6 +344,16 @@ without a terminal it cannot be asked, and the command stops unless `-y` is
 given. As with a single export, earlier revisions stay in cw's local history
 and never reach the wiki as separate sources.
 
+#### Keeping the wiki fed by itself
+
+With `CW_LLM_WIKI` set, nothing else is needed: an ordinary `cw` — a listing (`cw`, `cw sessions`, `cw full`) or a fresh session (`cw claude`, …) — checks one small state file, and once a day starts
+
+```bash
+cw export --all --since <as far back as needed> --older-than 1d -y --llm-wiki "$CW_LLM_WIKI" --rescan
+```
+
+in the background and goes on at once; one stderr line says it started and where its log is (`~/.cache/crossweave/llm-wiki-export.log`). No daemon, no cron: the export rides on the use you make of cw anyway, so a machine where cw is not used is not exported from. The window reaches back to the last successful run, with the day a topic needs to go quiet on top (seven days the first time, ninety at most), so a fortnight away loses nothing. It runs in the environment of the command that started it, so the `LLM_WIKI_API_TOKEN` the shell loaded reaches it. A run that failed — the app closed, the token missing — is named once on the next listing, with its reason and the log, and tried again within the hour. `CW_LLM_WIKI_EXPORT=12h` changes the interval, `CW_LLM_WIKI_EXPORT=off` stops it; reading pages back ([Pages from an LLM Wiki](#pages-from-an-llm-wiki)) does not depend on it.
+
 The token must match the service at `--api-url`. A separately deployed headless
 service can use its startup `LLM_WIKI_API_TOKEN` rather than the desktop app's
 stored token. A 401 with a token already supplied means that service rejected it.
