@@ -416,7 +416,7 @@ def test_a_handoff_chain_goes_in_as_one_source(chain, capsys):
     project, *_ = chain
     assert exporter.cmd_export(['--all', '-y', '--llm-wiki', str(project)]) == 0
     assert _sources(project) == ['step/d/session.md', 'topic/claude-a/topic.md']
-    text = (project / 'raw/sources/crossweave/topic/claude-a/topic.md').read_text()
+    text = (project / 'raw/sources/crossweave/topic/claude-a/topic.md').read_text(encoding='utf-8')
     assert 'kind: "crossweave-topic-snapshot"' in text
     assert 'source_sessions: ["claude:a", "kimi:b", "claude:c"]' in text
     # Named by the title the chain kept, not by the newest session's.
@@ -476,7 +476,7 @@ def test_a_topic_file_cw_did_not_write_is_left_alone(chain, capsys):
     project, *_ = chain
     folder = project / 'raw/sources/crossweave/topic/claude-a'
     folder.mkdir(parents=True)
-    (folder / 'topic.md').write_text('my own notes\n')
+    (folder / 'topic.md').write_text('my own notes\n', encoding='utf-8')
     assert exporter.cmd_export(['--all', '-y', '--llm-wiki', str(project)]) == 1
-    assert (folder / 'topic.md').read_text() == 'my own notes\n'
+    assert (folder / 'topic.md').read_text(encoding='utf-8') == 'my own notes\n'
     assert 'not a crossweave export' in capsys.readouterr().err
