@@ -181,6 +181,11 @@ def _document(fields, body):
     head = '\n'.join(f'{key}: {json.dumps(value, ensure_ascii=False)}'
                      for key, value in fields.items())
     exported_at = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds')
+    # One newline convention, written and read untranslated: a transcript
+    # carrying terminal output has \r\n in it, and a file read back with
+    # newline translation never equals the document it was written from --
+    # every run rewrote it, and the app re-ingested it each time.
+    body = body.replace('\r\n', '\n').replace('\r', '\n')
     return f'---\n{head}\nexported_at: "{exported_at}"\n---\n{body}'
 
 
@@ -193,7 +198,8 @@ def _write(folder, name, document, tool, slug):
     if target.exists():
         if not target.is_file():
             raise ExportError('snapshot path exists and is not a regular file')
-        existing = target.read_text(encoding='utf-8')
+        with open(target, encoding='utf-8', newline='') as fh:
+            existing = fh.read()
         if not _is_snapshot(existing):
             raise ExportError(f'{name} exists and is not a crossweave export; '
                               'refusing to overwrite it')
@@ -205,7 +211,7 @@ def _write(folder, name, document, tool, slug):
     # new whole file, never a half-written one.
     temporary = None
     try:
-        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', suffix='.tmp',
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', newline='', suffix='.tmp',
                                          prefix='.cw-', dir=folder, delete=False) as fh:
             temporary = Path(fh.name)
             fh.write(document)

@@ -494,3 +494,12 @@ def test_a_topic_file_cw_did_not_write_is_left_alone(chain, capsys):
     assert exporter.cmd_export(['--all', '-y', '--llm-wiki', str(project)]) == 1
     assert (folder / 'topic.md').read_text(encoding='utf-8') == 'my own notes\n'
     assert 'not a crossweave export' in capsys.readouterr().err
+
+
+def test_terminal_output_with_crlf_is_unchanged_on_the_next_export(source):
+    project, state = source
+    state['text'] += '\n## User\n\n<bash-stderr>** WARNING: key exchange\r\n** next line\r\n</bash-stderr>\n'
+    path, created = exporter.snapshot(project, 'zcode', 'saved')
+    assert created
+    assert b'\r' not in path.read_bytes()
+    assert exporter.snapshot(project, 'zcode', 'saved') == (path, False)
