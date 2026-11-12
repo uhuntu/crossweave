@@ -645,19 +645,19 @@ def _export_all(opts, client):
     print(f'cw export: {counts["exported"]} exported, {counts["unchanged"]} unchanged, '
           f'{counts["failed"]} failed{retired}', file=sys.stderr)
     if client:
-        if counts['exported'] or counts['retired']:
-            try:
-                client.rescan(opts.llm_wiki, opts.project_id)
-            except ExportError as exc:
-                print(f'cw export: {exc}', file=sys.stderr)
-                print('The snapshots are saved. Retry with --rescan once the API answers; '
-                      'unchanged sources are skipped, so only the rescan is repeated.',
-                      file=sys.stderr)
-                return 1
-            print('LLM Wiki source rescan accepted; check the app for ingest progress. '
-                  'Generated wiki pages are not verified by this command.')
-        else:
-            print('cw export: nothing changed, so no rescan requested', file=sys.stderr)
+        # Asked for, a rescan is always sent, changed or not: it is how a
+        # rescan that failed after an earlier export is retried, and the app
+        # caches ingests by content, so unchanged sources cost nothing.
+        try:
+            client.rescan(opts.llm_wiki, opts.project_id)
+        except ExportError as exc:
+            print(f'cw export: {exc}', file=sys.stderr)
+            print('The snapshots are saved. Run the same command again once the API '
+                  'answers: unchanged sources are left alone and the rescan is sent.',
+                  file=sys.stderr)
+            return 1
+        print('LLM Wiki source rescan accepted; check the app for ingest progress. '
+              'Generated wiki pages are not verified by this command.')
     return 1 if counts['failed'] else 0
 
 

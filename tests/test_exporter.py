@@ -339,15 +339,29 @@ def test_all_asks_before_exporting_without_a_terminal(many, capsys):
     assert not list(project.glob('raw/sources/crossweave/**/*.md'))
 
 
-def test_all_rescans_once_and_only_when_something_changed(many, wiki_api, capsys):
+def test_all_rescans_once_per_run(many, wiki_api, capsys):
     project, _, _ = many
     url, calls = wiki_api
     args = ['--all', '-y', '--llm-wiki', str(project), '--rescan', '--api-url', url]
     assert exporter.cmd_export(args) == 0
     assert [m for m, _, _ in calls] == ['GET', 'POST']
+
+
+def test_a_failed_rescan_is_retried_by_running_the_command_again(many, wiki_api, monkeypatch, capsys):
+    project, _, _ = many
+    url, calls = wiki_api
+    args = ['--all', '-y', '--llm-wiki', str(project), '--rescan', '--api-url', url]
+    real = exporter.WikiClient.rescan
+    def unauthorized(*a):
+        raise exporter.ExportError('LLM Wiki API returned HTTP 401')
+    monkeypatch.setattr(exporter.WikiClient, 'rescan', unauthorized)
+    assert exporter.cmd_export(args) == 1
+    assert 'Run the same command again' in capsys.readouterr().err
+    monkeypatch.setattr(exporter.WikiClient, 'rescan', real)
+    # Nothing changed since, and the retry still reaches the app.
     assert exporter.cmd_export(args) == 0
+    assert '0 exported, 2 unchanged' in capsys.readouterr().err
     assert [m for m, _, _ in calls] == ['GET', 'POST']
-    assert 'no rescan requested' in capsys.readouterr().err
 
 
 @pytest.mark.parametrize('args, message', [

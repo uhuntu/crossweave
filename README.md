@@ -325,8 +325,10 @@ subagent. `--since` keeps what was active within a span (`30m`, `12h`, `7d`,
 `2w`); `--cwd` keeps what was started in a directory or below it, the current
 one when no directory is given. Both take a topic whole when any of its
 sessions qualifies. A source whose content has not changed is left as it is,
-so running the same command again writes nothing, and `--rescan` is requested
-once at the end, only when something was exported or retired.
+so running the same command again writes nothing. `--rescan` is requested
+once at the end, whether or not anything changed — that is how a rescan that
+failed (a missing token, the app not running) is retried: run the same command
+again. LLM Wiki caches ingests by content, so unchanged sources cost nothing.
 
 The export is local and free, but each new or changed source is one ingest
 on LLM Wiki's model, so `--all` asks before writing. `-y` skips the question;
