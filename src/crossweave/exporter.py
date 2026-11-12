@@ -15,6 +15,7 @@ from urllib.parse import quote, urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 from . import sessions
+from .common import TOOL_STARTED_TITLES
 
 API_URL = 'http://127.0.0.1:19828'
 TOKEN_ENV = 'LLM_WIKI_API_TOKEN'
@@ -142,13 +143,14 @@ def _clear_old_revisions(folder, tool, slug):
             pass
 
 
-def snapshot(project, tool, sid):
+def snapshot(project, tool, sid, record=None):
     project, root = source_root(project)
     details = sessions.session_handoff_details(tool, sid)
     if details is None:
         raise ExportError('session transcript unavailable')
     cwd, transcript = details
-    record = sessions._find_record(tool, sid)
+    if record is None:
+        record = sessions._find_record(tool, sid)
     if record is None:
         raise ExportError('session no longer exists')
     title = sessions._resolve_title_and_cwd(record)[0]
@@ -301,9 +303,127 @@ class WikiClient:
         return self.request('POST', '/projects/' + quote(matching[0]['id'], safe='') + '/sources/rescan')
 
 
+def _under(path, root):
+    if not path:
+        return False
+    try:
+        Path(path).expanduser().resolve().relative_to(root)
+        return True
+    except (ValueError, OSError):
+        return False
+
+
+def pick_sessions(since_seconds=None, under=None):
+    """([(record, title)] to export, skip counts): the local sessions --all takes,
+    newest first. The same cut as `cw note --all`: a live conversation is
+    left until it goes quiet -- exported now, it changes again within
+    minutes and the app re-ingests it for nothing -- and a session of one
+    or two turns is a quick question, noise in a knowledge base. Unchanged
+    sessions are not skipped here; snapshot() finds those without a write."""
+    from . import note, rename, search
+
+    cutoff = time.time() - since_seconds if since_seconds else 0
+    root = Path(under).expanduser().resolve() if under else None
+    picked, skipped = [], {'live': 0, 'short': 0, 'tool': 0}
+    for r in search.gather_candidates(None):
+        if cutoff and note._ts(r) and note._ts(r) < cutoff:
+            continue
+        try:
+            title, cwd = sessions._resolve_title_and_cwd(r)
+        except Exception:
+            title, cwd = None, None
+        if root is not None and not _under(cwd, root):
+            continue
+        # A judge run, an approval prompt, a codex review subagent: the
+        # tool's own bookkeeping, holding no request of the user's.
+        if ((r['tool'] == 'codex' and sessions.codex_is_subagent(r['id']))
+                or title in TOOL_STARTED_TITLES):
+            skipped['tool'] += 1
+            continue
+        if rename._is_live(r):
+            skipped['live'] += 1
+            continue
+        try:
+            turns = sessions.session_turns(r)
+        except Exception:  # a store that cannot be counted is still offered
+            turns = None
+        if turns is not None and turns < note.MIN_TURNS:
+            skipped['short'] += 1
+            continue
+        picked.append((r, ' '.join((title or '').split()) or r['id']))
+    return picked, skipped
+
+
+def _export_all(opts, client):
+    from . import note
+
+    since = None
+    if opts.since:
+        since = note._parse_since(opts.since)
+        if since is None:
+            raise ExportError('--since takes a span like 30m, 12h, 7d or 2w')
+    source_root(opts.llm_wiki)  # a wrong folder fails before the scan, not after
+    picked, skipped = pick_sessions(since, opts.cwd)
+    window = f' from the last {opts.since}' if since else ''
+    scope = f' under {opts.cwd}' if opts.cwd else ''
+    print(f'cw export: {len(picked)} sessions{window}{scope} '
+          f'(skipping {skipped["live"]} live, {skipped["short"]} under {note.MIN_TURNS} turns, '
+          f'{skipped["tool"]} tool-started)', file=sys.stderr)
+    if opts.dry_run:
+        for r, title in picked:
+            print(f'{r["tool"]:<8} {r["id"]}  {title}')
+        return 0
+    if not picked:
+        return 0
+    # The export is local and free; what it sets off is not: every new or
+    # changed source is one ingest in the app, on the app's model.
+    if not opts.yes and not note._confirm(
+            f'Export up to {len(picked)} sessions into {opts.llm_wiki}? '
+            'Each new or changed one is an LLM Wiki ingest. [y/N] '):
+        print('cw export: nothing exported (pass -y to skip this question)', file=sys.stderr)
+        return 1
+    counts = {'exported': 0, 'unchanged': 0, 'failed': 0}
+    for r, _ in picked:
+        try:
+            target, created = snapshot(opts.llm_wiki, r['tool'], r['id'], record=r)
+        except (ExportError, OSError) as exc:
+            counts['failed'] += 1
+            print(f'cw export: {r["tool"]} {r["id"]}: {exc}', file=sys.stderr)
+            continue
+        if created:
+            counts['exported'] += 1
+            print(f'exported: {target}', flush=True)
+        else:
+            counts['unchanged'] += 1
+    print(f'cw export: {counts["exported"]} exported, {counts["unchanged"]} unchanged, '
+          f'{counts["failed"]} failed', file=sys.stderr)
+    if client:
+        if counts['exported']:
+            try:
+                client.rescan(opts.llm_wiki, opts.project_id)
+            except ExportError as exc:
+                print(f'cw export: {exc}', file=sys.stderr)
+                print('The snapshots are saved. Retry with --rescan once the API answers; '
+                      'unchanged sessions are skipped, so only the rescan is repeated.',
+                      file=sys.stderr)
+                return 1
+            print('LLM Wiki source rescan accepted; check the app for ingest progress. '
+                  'Generated wiki pages are not verified by this command.')
+        else:
+            print('cw export: nothing changed, so no rescan requested', file=sys.stderr)
+    return 1 if counts['failed'] else 0
+
+
 def cmd_export(args):
     parser = argparse.ArgumentParser(prog='cw export', description='Export a versioned conversation to LLM Wiki')
-    parser.add_argument('selection', nargs='+', help='row number or <tool> <session-id-or-prefix>')
+    parser.add_argument('selection', nargs='*', help='row number or <tool> <session-id-or-prefix>')
+    parser.add_argument('--all', action='store_true',
+                        help='every local session (skipping live and short ones); unchanged ones are left alone')
+    parser.add_argument('--since', metavar='SPAN', help='with --all: only sessions active in the last 30m/12h/7d/2w')
+    parser.add_argument('--cwd', nargs='?', const=os.getcwd(), metavar='DIR',
+                        help='with --all: only sessions started in DIR or below (default: current directory)')
+    parser.add_argument('--dry-run', action='store_true', help='with --all: list what would be exported')
+    parser.add_argument('-y', '--yes', action='store_true', help='with --all: do not ask before exporting')
     parser.add_argument('--llm-wiki', required=True, metavar='DIR', help='existing LLM Wiki project folder')
     parser.add_argument('--rescan', action='store_true', help='request local LLM Wiki source rescan after export')
     parser.add_argument('--api-url', default=API_URL)
@@ -311,6 +431,23 @@ def cmd_export(args):
     opts = parser.parse_args(args)
     if opts.project_id and not opts.rescan:
         parser.error('--project-id requires --rescan')
+    if opts.all and opts.selection:
+        parser.error('--all picks the sessions itself; drop the row/session, or drop --all')
+    if not opts.all:
+        if not opts.selection:
+            parser.error('select a row number or <tool> <session-id-or-prefix>, or pass --all')
+        used = [flag for flag, on in (('--since', opts.since), ('--cwd', opts.cwd),
+                                      ('--dry-run', opts.dry_run), ('-y', opts.yes)) if on]
+        if used:
+            parser.error(f'{", ".join(used)} only applies with --all')
+    if opts.all:
+        try:
+            client = (WikiClient(opts.api_url, os.environ.get(TOKEN_ENV, ''))
+                      if opts.rescan and not opts.dry_run else None)
+            return _export_all(opts, client)
+        except (ExportError, OSError) as exc:
+            print(f'cw export: {exc}', file=sys.stderr)
+            return 1
     target = None
     try:
         tool, sid = resolve_selection(opts.selection)

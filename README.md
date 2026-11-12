@@ -289,7 +289,31 @@ then calls `POST /api/v1/projects/<id>/sources/rescan`, following the app's
 An accepted rescan is not confirmation that knowledge pages have finished
 generating: check progress in LLM Wiki. If the API is unavailable, the exported
 snapshot is retained and the command exits nonzero; retry with `--rescan` after
-fixing the connection. No source history is automatically exported in bulk.
+fixing the connection.
+
+To keep a wiki fed without picking rows one by one, `--all` exports every
+local session the way `cw note --all` picks them:
+
+```bash
+cw export --all --since 7d --llm-wiki ~/Documents/my-wiki --dry-run   # what would go in
+cw export --all --since 7d --llm-wiki ~/Documents/my-wiki --rescan    # export, then one rescan
+cw export --all --cwd ~/work/dg3sw --llm-wiki ~/work/dg3sw -y         # one project's sessions only
+```
+
+It skips a session that is still live (written to within the last five
+minutes; it goes in once it is quiet), one of fewer than three turns, and one
+a tool started for itself — a judge run, an approval prompt, a codex review
+subagent. `--since` keeps sessions active within a span (`30m`, `12h`, `7d`,
+`2w`); `--cwd` keeps those started in a directory or below it, the current
+one when no directory is given. A session whose content has not changed is
+left as it is, so running the same command again writes nothing, and
+`--rescan` is requested once at the end, only when something was exported.
+
+The export is local and free, but each new or changed source is one ingest
+on LLM Wiki's model, so `--all` asks before writing. `-y` skips the question;
+without a terminal it cannot be asked, and the command stops unless `-y` is
+given. As with a single export, earlier revisions stay in cw's local history
+and never reach the wiki as separate sources.
 
 The token must match the service at `--api-url`. A separately deployed headless
 service can use its startup `LLM_WIKI_API_TOKEN` rather than the desktop app's

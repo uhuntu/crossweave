@@ -274,3 +274,92 @@ def test_replace_does_not_retry_a_posix_permission_error(monkeypatch, tmp_path):
     with pytest.raises(PermissionError):
         exporter._replace(tmp_path / 'a', tmp_path / 'b')
     assert len(calls) == 1
+
+
+@pytest.fixture
+def many(source, monkeypatch, tmp_path):
+    """Four local sessions for --all: one worth exporting in each of two
+    directories, one live, one a codex review subagent, one too short."""
+    from crossweave import rename, search
+
+    project, state = source
+    now = __import__('time').time()
+    work, other = tmp_path / 'work', tmp_path / 'other'
+    work.mkdir()
+    other.mkdir()
+    records = [
+        {'tool': 'zcode', 'id': 'live', 'ts': now, 'cwd': str(work), 'turns': 9},
+        {'tool': 'zcode', 'id': 'here', 'ts': now - 3600, 'cwd': str(work / 'sub'), 'turns': 9},
+        {'tool': 'codex', 'id': 'review', 'ts': now - 3600, 'cwd': str(work), 'turns': 9},
+        {'tool': 'zcode', 'id': 'short', 'ts': now - 3600, 'cwd': str(work), 'turns': 1},
+        {'tool': 'zcode', 'id': 'there', 'ts': now - 10 * 86400, 'cwd': str(other), 'turns': 9},
+    ]
+    monkeypatch.setattr(search, 'gather_candidates', lambda tool: list(records))
+    monkeypatch.setattr(sessions, '_resolve_title_and_cwd',
+                        lambda r: ('Guardian review' if r['id'] == 'review' else 'T ' + r['id'], r['cwd']))
+    monkeypatch.setattr(sessions, 'codex_is_subagent', lambda sid: False)
+    monkeypatch.setattr(sessions, 'session_turns', lambda r: r['turns'])
+    monkeypatch.setattr(rename, '_is_live', lambda r: r['id'] == 'live')
+    monkeypatch.setattr(sessions, 'session_handoff_details',
+                        lambda tool, sid: (state.get('cwd'), state['text'] + sid + '\n'))
+    seen = []
+    monkeypatch.setattr(sessions, '_find_record', lambda tool, sid: seen.append(sid))
+    return project, work, seen
+
+
+def test_all_exports_what_a_wiki_should_ingest(many, capsys):
+    project, _, seen = many
+    assert exporter.cmd_export(['--all', '-y', '--llm-wiki', str(project)]) == 0
+    names = sorted(p.parent.name for p in project.glob('raw/sources/crossweave/*/*/session.md'))
+    assert names == ['here', 'there']
+    assert seen == []  # the scanned record is passed through, not looked up again
+    err = capsys.readouterr().err
+    assert '2 sessions (skipping 1 live, 1 under 3 turns, 1 tool-started)' in err
+    assert '2 exported, 0 unchanged, 0 failed' in err
+    assert exporter.cmd_export(['--all', '-y', '--llm-wiki', str(project)]) == 0
+    assert '0 exported, 2 unchanged' in capsys.readouterr().err
+
+
+def test_all_scopes_by_since_and_directory(many, capsys):
+    project, work, _ = many
+    assert exporter.cmd_export(['--all', '--since', '2d', '--dry-run', '--llm-wiki', str(project)]) == 0
+    assert capsys.readouterr().out.split() == ['zcode', 'here', 'T', 'here']
+    assert exporter.cmd_export(['--all', '--cwd', str(work), '--dry-run', '--llm-wiki', str(project)]) == 0
+    assert 'there' not in capsys.readouterr().out
+    assert not list(project.glob('raw/sources/crossweave/**/*.md'))
+
+
+def test_all_asks_before_exporting_without_a_terminal(many, capsys):
+    project, _, _ = many
+    assert exporter.cmd_export(['--all', '--llm-wiki', str(project)]) == 1
+    assert 'pass -y' in capsys.readouterr().err
+    assert not list(project.glob('raw/sources/crossweave/**/*.md'))
+
+
+def test_all_rescans_once_and_only_when_something_changed(many, wiki_api, capsys):
+    project, _, _ = many
+    url, calls = wiki_api
+    args = ['--all', '-y', '--llm-wiki', str(project), '--rescan', '--api-url', url]
+    assert exporter.cmd_export(args) == 0
+    assert [m for m, _, _ in calls] == ['GET', 'POST']
+    assert exporter.cmd_export(args) == 0
+    assert [m for m, _, _ in calls] == ['GET', 'POST']
+    assert 'no rescan requested' in capsys.readouterr().err
+
+
+@pytest.mark.parametrize('args, message', [
+    (['3', '--all'], 'drop --all'),
+    (['--since', '7d', '3'], 'only applies with --all'),
+    ([], 'or pass --all'),
+])
+def test_all_flags_do_not_mix_with_a_single_selection(source, args, message, capsys):
+    project, _ = source
+    with pytest.raises(SystemExit):
+        exporter.cmd_export(args + ['--llm-wiki', str(project)])
+    assert message in capsys.readouterr().err
+
+
+def test_all_rejects_a_bad_span(many, capsys):
+    project, _, _ = many
+    assert exporter.cmd_export(['--all', '--since', 'week', '--llm-wiki', str(project)]) == 1
+    assert '--since takes a span' in capsys.readouterr().err
