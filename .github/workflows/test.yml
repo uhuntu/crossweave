@@ -8,9 +8,20 @@ jobs:
   test:
     runs-on: ${{ matrix.os }}
     strategy:
+      # One leg failing must not cancel the rest: a missing 3.9 build on
+      # ubuntu-latest once cancelled every Windows leg before it ran.
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
         python-version: ["3.9", "3.12"]
+        # ubuntu-latest moved to 26.04, which has no 3.9 build in
+        # actions/python-versions; 24.04 still does.
+        exclude:
+          - os: ubuntu-latest
+            python-version: "3.9"
+        include:
+          - os: ubuntu-24.04
+            python-version: "3.9"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
