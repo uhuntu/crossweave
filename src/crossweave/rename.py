@@ -11,7 +11,8 @@ title is native to the tool, not a cw-side overlay:
           column's CHECK names the vocabulary; 'custom' is the
           user-rename value and survives the auto-titler)
   codex   append a newer session_index.jsonl line (the index keeps the
-          most recently updated name per id)
+          most recently updated name per id) and set threads.name in
+          state_<N>.sqlite, which is what codex itself shows
   claude  append a custom-title record to the transcript (the reader
           keeps the last one it finds)
   step    append a session_info record to the session file (both of
@@ -104,7 +105,55 @@ def _rename_codex(sid, title):
     line = json.dumps({"id": sid, "thread_name": title, "updated_at": stamp})
     with open(path, "a", encoding="utf-8") as fh:
         fh.write(line + "\n")
+    _rename_codex_state(sid, title)
     return True
+
+
+def _codex_state_db():
+    """The newest ~/.codex/state_<N>.sqlite, or None. codex bumps N on a
+    schema migration and leaves the old file behind, so the highest N is
+    the one it reads."""
+    import glob
+
+    from . import common
+
+    best, best_n = None, -1
+    for path in glob.glob(os.path.join(common.CODEX_HOME, "state_*.sqlite")):
+        m = re.fullmatch(r"state_(\d+)\.sqlite", os.path.basename(path))
+        if m and int(m.group(1)) > best_n:
+            best, best_n = path, int(m.group(1))
+    return best
+
+
+def _rename_codex_state(sid, title):
+    """Set the thread's name in codex's state database too.
+
+    codex 0.16x shows a thread's name from `threads.name` in
+    state_<N>.sqlite -- its resume picker and app never look at
+    session_index.jsonl again once the row exists, so an index line alone
+    renamed the session in cw's listing but not in codex. codex's own
+    rename runs `UPDATE threads SET name = ? WHERE id = ?` and appends the
+    index line; this does both the same way. updated_at is left alone: a
+    rename is not activity. Best-effort -- an older codex has no database,
+    and a locked or reshaped one must not undo the index line already
+    written."""
+    import sqlite3
+
+    db = _codex_state_db()
+    if not db:
+        return False
+    try:
+        con = sqlite3.connect(db, timeout=10)
+        try:
+            with con:
+                cur = con.execute("UPDATE threads SET name = ? WHERE id = ?", (title, sid))
+                return cur.rowcount > 0
+        finally:
+            con.close()
+    except sqlite3.Error as exc:
+        print(f"cw rename: codex state database not updated ({exc}); "
+              "codex itself may still show the old name", file=sys.stderr)
+        return False
 
 
 def _append_keep_mtime(path, line):

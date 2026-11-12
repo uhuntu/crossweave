@@ -138,6 +138,51 @@ def test_manual_rename_appends_a_codex_index_line(monkeypatch, tmp_path):
     assert codex.codex_thread_names().get(sid) == "kernel lockup triage"
 
 
+def _codex_state(rows, n=5):
+    import sqlite3
+    path = os.path.join(common.CODEX_HOME, f"state_{n}.sqlite")
+    con = sqlite3.connect(path)
+    con.execute("CREATE TABLE threads (id TEXT PRIMARY KEY, name TEXT, updated_at INTEGER)")
+    con.executemany("INSERT INTO threads VALUES (?, ?, ?)", rows)
+    con.commit()
+    con.close()
+    return path
+
+
+def _codex_state_row(path, sid):
+    import sqlite3
+    con = sqlite3.connect(path)
+    try:
+        return con.execute("SELECT name, updated_at FROM threads WHERE id = ?", (sid,)).fetchone()
+    finally:
+        con.close()
+
+
+def test_codex_rename_sets_the_thread_name_codex_shows(tmp_path):
+    """Regression test: a renamed codex session kept its old name inside
+    codex. codex 0.16x reads threads.name from state_<N>.sqlite, not
+    session_index.jsonl, so the rename has to land there as well -- in the
+    newest database, without touching updated_at."""
+    os.makedirs(common.CODEX_HOME, exist_ok=True)
+    sid = "01a1cd66-da27-76d2-81ab-d9aac86dcaec"
+    stale = _codex_state([(sid, "Continue handoff task", 100)], n=4)
+    current = _codex_state([(sid, "Continue handoff task", 100), ("other", "keep", 7)], n=5)
+
+    assert rename._rename_codex(sid, "水果检测项目迁移与演示视频修复") is True
+
+    assert _codex_state_row(current, sid) == ("水果检测项目迁移与演示视频修复", 100)
+    assert _codex_state_row(current, "other") == ("keep", 7)
+    assert _codex_state_row(stale, sid) == ("Continue handoff task", 100)
+    assert codex.codex_thread_names().get(sid) == "水果检测项目迁移与演示视频修复"
+
+
+def test_codex_rename_without_a_state_database_still_writes_the_index(tmp_path):
+    os.makedirs(common.CODEX_HOME, exist_ok=True)
+    assert rename._codex_state_db() is None
+    assert rename._rename_codex("sid-1", "kernel lockup triage") is True
+    assert codex.codex_thread_names().get("sid-1") == "kernel lockup triage"
+
+
 def test_manual_rename_appends_a_claude_custom_title(monkeypatch, tmp_path):
     proj = os.path.join(common.CLAUDE_PROJECTS, "-w")
     os.makedirs(proj)
