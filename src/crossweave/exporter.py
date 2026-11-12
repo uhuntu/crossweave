@@ -57,16 +57,27 @@ def resolve_selection(selection):
 
 
 def source_root(project):
-    project = Path(project).expanduser().resolve()
+    project = _real(Path(project).expanduser())
     root = project / 'raw' / 'sources'
     if not root.is_dir() or not (project / 'wiki').is_dir():
         raise ExportError('not an LLM Wiki project: expected raw/sources/ and wiki/; '
                           'create a project in LLM Wiki first')
     try:
-        root.resolve().relative_to(project)
+        _real(root).relative_to(project)
     except ValueError:
         raise ExportError('raw/sources must remain inside the selected project')
-    return project, root.resolve()
+    return project, _real(root)
+
+
+def _real(path):
+    """path.resolve() without the \\\\?\\ prefix Windows hands back when a
+    file on the way is held open -- a concurrent exporter swapping its
+    snapshot in -- which would make a folder inside raw/sources compare as
+    outside it."""
+    resolved = str(Path(path).resolve())
+    if resolved.startswith('\\\\?\\') and not resolved.startswith('\\\\?\\UNC\\'):
+        resolved = resolved[4:]
+    return Path(resolved)
 
 
 def _slug(sid):
@@ -171,7 +182,7 @@ def _revision(payload):
 def _folder(root, *parts):
     folder = root.joinpath('crossweave', *parts)
     try:
-        folder.resolve().relative_to(root)
+        _real(folder).relative_to(root)
     except ValueError:
         raise ExportError('export folder resolves outside raw/sources')
     return folder
@@ -200,7 +211,9 @@ def _write(folder, name, document, tool, slug):
             raise ExportError('snapshot path exists and is not a regular file')
         with open(target, encoding='utf-8', newline='') as fh:
             existing = fh.read()
-        if not _is_snapshot(existing):
+        # A snapshot an older cw wrote on Windows has \r\n throughout: still
+        # cw's, and unequal to the document, so it is replaced once.
+        if not _is_snapshot(existing.replace('\r\n', '\n')):
             raise ExportError(f'{name} exists and is not a crossweave export; '
                               'refusing to overwrite it')
         if _without_time(existing) == _without_time(document):

@@ -503,3 +503,16 @@ def test_terminal_output_with_crlf_is_unchanged_on_the_next_export(source):
     assert created
     assert b'\r' not in path.read_bytes()
     assert exporter.snapshot(project, 'zcode', 'saved') == (path, False)
+
+
+def test_a_snapshot_an_older_cw_wrote_with_crlf_is_still_recognised(source):
+    project, _ = source
+    path, _ = exporter.snapshot(project, 'zcode', 'saved')
+    path.write_bytes(path.read_bytes().replace(b'\n', b'\r\n'))
+    assert exporter.snapshot(project, 'zcode', 'saved') == (path, True)
+    assert b'\r' not in path.read_bytes()
+
+
+def test_a_windows_long_path_prefix_is_not_read_as_outside(monkeypatch, tmp_path):
+    monkeypatch.setattr(exporter.Path, 'resolve', lambda self: Path('\\\\?\\C:\\wiki\\raw'))
+    assert str(exporter._real(tmp_path)) == str(Path('C:\\wiki\\raw'))
