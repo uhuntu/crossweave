@@ -327,7 +327,11 @@ page about each). A session with no text drops out of its topic, and if it
 went in before this check, its source is moved out of `raw/sources` into the
 history. `--since` keeps what was active within a span (`30m`, `12h`, `7d`,
 `2w`); `--cwd` keeps what was started in a directory or below it, the current
-one when no directory is given. Both take a topic whole when any of its
+one when no directory is given. `--older-than` keeps only topics quiet for at
+least a span: a session that goes in alone and is then handed off, or
+`/clear`'d into a successor, has its source retired and its pages torn down
+and rebuilt from the topic, so `--since 7d --older-than 1d` lets work settle
+for a day before the wiki builds on it. Both take a topic whole when any of its
 sessions qualifies. A source whose content has not changed is left as it is,
 so running the same command again writes nothing. `--rescan` is requested
 once at the end, whether or not anything changed — that is how a rescan that

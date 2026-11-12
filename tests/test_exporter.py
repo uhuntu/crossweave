@@ -367,6 +367,7 @@ def test_a_failed_rescan_is_retried_by_running_the_command_again(many, wiki_api,
 @pytest.mark.parametrize('args, message', [
     (['3', '--all'], 'drop --all'),
     (['--since', '7d', '3'], 'only applies with --all'),
+    (['--older-than', '1d', '3'], 'only applies with --all'),
     ([], 'or pass --all'),
 ])
 def test_all_flags_do_not_mix_with_a_single_selection(source, args, message, capsys):
@@ -539,3 +540,28 @@ def test_a_session_with_no_text_is_skipped_and_its_old_source_retired(chain, mon
     assert _sources(project) == ['topic/claude-a/topic.md']
     text = (project / 'raw/sources/crossweave/topic/claude-a/topic.md').read_text(encoding='utf-8')
     assert 'source_sessions: ["claude:a", "claude:c"]' in text
+
+
+def test_older_than_holds_back_a_topic_still_settling(chain, capsys):
+    project, records, *_ = chain
+    # c, the newest of the chain, is an hour old; d too. Neither is quiet for a day.
+    assert exporter.cmd_export(['--all', '--older-than', '1d', '--dry-run',
+                                '--llm-wiki', str(project)]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == ''
+    assert '4 active within 1d' in captured.err
+    records['c']['ts'] -= 2 * 86400
+    records['d']['ts'] -= 2 * 86400
+    assert exporter.cmd_export(['--all', '--older-than', '1d', '--dry-run',
+                                '--llm-wiki', str(project)]) == 0
+    assert 'topic    3 sessions' in capsys.readouterr().out
+
+
+@pytest.mark.parametrize('args, message', [
+    (['--older-than', 'soon'], '--older-than takes a span'),
+    (['--since', '1d', '--older-than', '2d'], 'leaves nothing of --since 1d'),
+])
+def test_older_than_refuses_what_cannot_match(chain, args, message, capsys):
+    project, *_ = chain
+    assert exporter.cmd_export(['--all', *args, '--llm-wiki', str(project)]) == 1
+    assert message in capsys.readouterr().err

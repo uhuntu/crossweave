@@ -554,7 +554,7 @@ def _groups(records):
     return list(out.values())
 
 
-def pick_sessions(since_seconds=None, under=None):
+def pick_sessions(since_seconds=None, under=None, quiet_seconds=None):
     """([unit], skip counts): what --all exports, newest first. A unit is a
     topic -- the sessions that continue one another, joined the way the
     listing folds them -- and goes in as one source; a session nothing
@@ -569,7 +569,8 @@ def pick_sessions(since_seconds=None, under=None):
 
     cutoff = time.time() - since_seconds if since_seconds else 0
     root = Path(under).expanduser().resolve() if under else None
-    picked, empty, skipped = [], [], {'live': 0, 'short': 0, 'tool': 0, 'empty': 0}
+    quiet_cutoff = time.time() - quiet_seconds if quiet_seconds else 0
+    picked, empty, skipped = [], [], {'live': 0, 'recent': 0, 'short': 0, 'tool': 0, 'empty': 0}
     for group in _groups(search.gather_candidates(None)):
         if cutoff and not any(not _ts(r) or _ts(r) >= cutoff for r in group):
             continue
@@ -584,6 +585,12 @@ def pick_sessions(since_seconds=None, under=None):
         skipped['tool'] += started['tool']
         if any(rename._is_live(r) for r in unit['members']):
             skipped['live'] += len(unit['members'])
+            continue
+        # --older-than: a topic still settling -- a session about to be
+        # handed off or /clear'ed into a topic -- waits, so its pages are
+        # not built from it alone, then torn down when it joins one.
+        if quiet_cutoff and any(_last_active(r) > quiet_cutoff for r in unit['members']):
+            skipped['recent'] += len(unit['members'])
             continue
         known = [n for n in unit['turns'] if n is not None]
         if len(known) == len(unit['turns']) and sum(known) < note.MIN_TURNS:
@@ -603,6 +610,18 @@ def pick_sessions(since_seconds=None, under=None):
         picked.append(unit)
     picked.sort(key=lambda u: max(_ts(r) for r in u['members']), reverse=True)
     return picked, skipped, empty
+
+
+def _last_active(r):
+    """When a session was last written to: its listing ts, else its
+    transcript's mtime, else 0 (not known -- not counted as recent)."""
+    if _ts(r):
+        return _ts(r)
+    path = sessions._transcript_path(r)
+    try:
+        return os.path.getmtime(path) if path else 0
+    except OSError:
+        return 0
 
 
 _ROLE_RE = re.compile(r'^## (User|Assistant)$', re.M)
@@ -690,15 +709,26 @@ def _export_all(opts, client):
         since = note._parse_since(opts.since)
         if since is None:
             raise ExportError('--since takes a span like 30m, 12h, 7d or 2w')
+    quiet = None
+    if opts.older_than:
+        quiet = note._parse_since(opts.older_than)
+        if quiet is None:
+            raise ExportError('--older-than takes a span like 30m, 12h, 7d or 2w')
+        if since and quiet >= since:
+            raise ExportError(f'--older-than {opts.older_than} leaves nothing of --since {opts.since}')
     source_root(opts.llm_wiki)  # a wrong folder fails before the scan, not after
-    picked, skipped, empty = pick_sessions(since, opts.cwd)
+    picked, skipped, empty = pick_sessions(since, opts.cwd, quiet)
     window = f' from the last {opts.since}' if since else ''
+    if quiet:
+        window += f' quiet for {opts.older_than}'
     scope = f' under {opts.cwd}' if opts.cwd else ''
     sessions_in = sum(len(u['members']) for u in picked)
     topics = sum(1 for u in picked if len(u['members']) > 1)
     merged = f', {topics} of them topics merging several sessions' if topics else ''
     print(f'cw export: {len(picked)} sources from {sessions_in} sessions{window}{scope}{merged} '
-          f'(skipping {skipped["live"]} live, {skipped["short"]} under {note.MIN_TURNS} turns, '
+          f'(skipping {skipped["live"]} live, '
+          + (f'{skipped["recent"]} active within {opts.older_than}, ' if quiet else '')
+          + f'{skipped["short"]} under {note.MIN_TURNS} turns, '
           f'{skipped["tool"]} tool-started, {skipped["empty"]} with no text)', file=sys.stderr)
     if opts.dry_run:
         for unit in picked:
@@ -766,6 +796,9 @@ def cmd_export(args):
     parser.add_argument('--all', action='store_true',
                         help='every local session (skipping live and short ones); unchanged ones are left alone')
     parser.add_argument('--since', metavar='SPAN', help='with --all: only sessions active in the last 30m/12h/7d/2w')
+    parser.add_argument('--older-than', metavar='SPAN',
+                        help='with --all: only topics quiet for at least SPAN, so a session about to be '
+                             'continued does not go in alone first')
     parser.add_argument('--cwd', nargs='?', const=os.getcwd(), metavar='DIR',
                         help='with --all: only sessions started in DIR or below (default: current directory)')
     parser.add_argument('--dry-run', action='store_true', help='with --all: list what would be exported')
@@ -782,7 +815,8 @@ def cmd_export(args):
     if not opts.all:
         if not opts.selection:
             parser.error('select a row number or <tool> <session-id-or-prefix>, or pass --all')
-        used = [flag for flag, on in (('--since', opts.since), ('--cwd', opts.cwd),
+        used = [flag for flag, on in (('--since', opts.since), ('--older-than', opts.older_than),
+                                      ('--cwd', opts.cwd),
                                       ('--dry-run', opts.dry_run), ('-y', opts.yes)) if on]
         if used:
             parser.error(f'{", ".join(used)} only applies with --all')

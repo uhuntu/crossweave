@@ -22,7 +22,7 @@ USAGE = f"""Usage: cw <{'|'.join(TOOLS)}> [common-options] [prompt] [-- extra na
        cw resume <{'|'.join(TOOLS)}|N> [session-id-or-prefix] [--cwd <dir>]
        cw show <N> | cw show <tool> <session-id-or-prefix>
        cw export <N|tool session-id> --llm-wiki DIR [--rescan]
-       cw export --all [--since 7d] [--cwd [DIR]] [--dry-run] [-y] --llm-wiki DIR [--rescan]
+       cw export --all [--since 7d] [--older-than 1d] [--cwd [DIR]] [--dry-run] [-y] --llm-wiki DIR [--rescan]
        cw chat <tool> <session-id-or-prefix>
        cw web [--port 8765] [--no-open]   # local browser workspace
        cw <N> <{'|'.join(TOOLS)}> [native-options]
