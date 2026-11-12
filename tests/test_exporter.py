@@ -408,7 +408,7 @@ def chain(source, monkeypatch, tmp_path):
 
 
 def _sources(project):
-    return sorted(str(p.relative_to(project / 'raw/sources/crossweave'))
+    return sorted(p.relative_to(project / 'raw/sources/crossweave').as_posix()
                   for p in project.glob('raw/sources/crossweave/**/*.md'))
 
 
