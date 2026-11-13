@@ -763,6 +763,34 @@ def write_note(unit, vault, judge, judge_explicit=False):
     return got, path
 
 
+def write_notes(units, vault, judge, judge_explicit=False, prog='cw export'):
+    """Write the notes of `units`, four at a time; ({id(unit): (meta, body)},
+    [(unit, error)]). Each note written is said on stdout, each failure on
+    stderr, and the project indexes the notes land on are rebuilt."""
+    from concurrent.futures import ThreadPoolExecutor
+    from . import note
+
+    def one(unit):
+        try:
+            return write_note(unit, vault, judge, judge_explicit)
+        except (ExportError, OSError) as exc:
+            return exc
+
+    notes, failed, written = {}, [], []
+    with ThreadPoolExecutor(max_workers=note.WORKERS) as pool:
+        for unit, got in zip(units, pool.map(one, units)):
+            if isinstance(got, Exception):
+                failed.append((unit, got))
+                r = unit['members'][-1]
+                print(f'{prog}: {r["tool"]} {r["id"]}: {got}', file=sys.stderr)
+            else:
+                notes[id(unit)], path = got
+                written.append(path)
+                print(f'noted: {path}', flush=True)
+    note._index_folders_of(written)  # the project indexes the notes are listed on
+    return notes, failed
+
+
 def _note_text(body):
     """A note's body without the transcript pointers it carries for
     Obsidian (`原文 / Transcript: cw show ...`): in the wiki they would be
@@ -886,29 +914,11 @@ def _export_all(opts, client):
         return 1
     counts = {'exported': 0, 'unchanged': 0, 'failed': 0, 'retired': 0}
     if need:
-        from concurrent.futures import ThreadPoolExecutor
         from . import search
 
-        written = []
-        judge = opts.judge or search.DEFAULT_JUDGE
-
-        def one(unit):
-            try:
-                return write_note(unit, vault, judge, bool(opts.judge))
-            except (ExportError, OSError) as exc:
-                return exc
-
-        with ThreadPoolExecutor(max_workers=note.WORKERS) as pool:
-            for unit, got in zip(need, pool.map(one, need)):
-                if isinstance(got, Exception):
-                    counts['failed'] += 1
-                    r = unit['members'][-1]
-                    print(f'cw export: {r["tool"]} {r["id"]}: {got}', file=sys.stderr)
-                else:
-                    notes[id(unit)], path = got
-                    written.append(path)
-                    print(f'noted: {path}', flush=True)
-        note._index_folders_of(written)  # the project pages the notes are listed on
+        got, failed = write_notes(need, vault, opts.judge or search.DEFAULT_JUDGE, bool(opts.judge))
+        notes.update(got)
+        counts['failed'] += len(failed)
     for unit in picked:
         if opts.content == CONTENT_NOTES and id(unit) not in notes:
             continue  # its note failed, said above

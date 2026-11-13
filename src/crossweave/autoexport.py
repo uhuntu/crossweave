@@ -1,14 +1,21 @@
-"""Keep an LLM Wiki fed without being asked: no daemon, no cron.
+"""Keep the vault up to date without being asked: no daemon, no cron.
 
-With CW_LLM_WIKI set, an ordinary `cw` -- a listing, a fresh session --
-checks one small state file, and once a day (CW_LLM_WIKI_EXPORT=12h to
-change it, =off to stop) starts `cw export --all` in the background and
-goes on at once. The export takes what has gone quiet for a day, from as
-far back as the last successful run could have missed, and asks the app
-to rescan. It runs in the environment of the command that started it, so
-the token the shell loaded reaches it. A run that failed is named once,
-on the next listing, with the log to read, and is tried again within the
-hour."""
+An ordinary `cw` -- a listing, a fresh session -- checks one small state
+file, and once a day (CW_AUTO=12h to change it, =off to stop) starts the
+day's upkeep in the background and goes on at once:
+
+1. a note for every session or topic that has gone quiet for a day and has
+   no note yet, or one behind it (one judge call each, four at a time);
+2. the project pages those notes put behind (`cw wiki --projects`);
+3. with CW_LLM_WIKI set, the notes exported into that LLM Wiki and a rescan
+   asked for (CW_LLM_WIKI_EXPORT=off skips this step alone).
+
+The vault is the point; the LLM Wiki is an optional reader of it. The run
+reaches back as far as the last successful one could have missed, so a
+fortnight away loses nothing. It runs in the environment of the command
+that started it, so CW_VAULT and the LLM Wiki token the shell loaded reach
+it. A run that failed is named once, on the next listing, with the log to
+read, and is tried again within the hour."""
 import argparse
 import json
 import os
@@ -19,11 +26,12 @@ import time
 
 from . import exporter, llmwiki, sessions
 
-ENV = 'CW_LLM_WIKI_EXPORT'
-CHILD_ENV = 'CW_LLM_WIKI_EXPORT_CHILD'
+ENV = 'CW_AUTO'
+WIKI_ENV = 'CW_LLM_WIKI_EXPORT'
+CHILD_ENV = 'CW_AUTO_CHILD'
 DEFAULT_INTERVAL = '1d'
-# A topic waits this long after its last activity: exported before, a
-# session about to be continued goes in alone and is torn down again.
+# A session or topic waits this long after its last activity: noted
+# before, one about to be continued is noted alone and then again.
 QUIET = '1d'
 FIRST_SPAN = 7 * 86400
 MAX_SPAN = 90 * 86400
@@ -32,6 +40,7 @@ STALE_RUN = 3600
 RETRY_FAILED = 3600
 LOG_BYTES = 1_000_000
 OFF = ('0', 'off', 'no', 'false')
+KEY = 'daily'
 
 
 def _state_dir():
@@ -39,11 +48,11 @@ def _state_dir():
 
 
 def state_path():
-    return _state_dir() / 'llm-wiki-export.json'
+    return _state_dir() / 'daily.json'
 
 
 def log_path():
-    return _state_dir() / 'llm-wiki-export.log'
+    return _state_dir() / 'daily.log'
 
 
 def _read_state():
@@ -67,6 +76,10 @@ def _write_state(data):
         pass
 
 
+def _off(name):
+    return os.environ.get(name, '').strip().lower() in OFF
+
+
 def _interval():
     """Seconds between runs, or None when off (or unreadable -- said once
     per command, then treated as off rather than guessed)."""
@@ -77,60 +90,67 @@ def _interval():
         return None
     seconds = note._parse_since(raw)
     if seconds is None:
-        print(f'cw: {ENV}={raw} is not a span like 12h or 1d; LLM Wiki auto-export is off',
+        print(f'cw: {ENV}={raw} is not a span like 12h or 1d; the daily upkeep is off',
               file=sys.stderr)
     return seconds
 
 
-def _key(wiki):
-    return str(Path(wiki).expanduser().resolve())
+def _targets():
+    """(vault or None, LLM Wiki folder or None) the upkeep works on."""
+    from . import note
+
+    wiki = None if _off(WIKI_ENV) else llmwiki.wiki_dir()
+    return note.vault_path(), wiki
 
 
 def maybe_start():
-    """Start a background export when one is due. Never raises, never waits."""
+    """Start the day's upkeep in the background when it is due. Never
+    raises, never waits."""
     try:
         _maybe_start()
-    except Exception:  # a listing or a launch must not fail for the wiki
+    except Exception:  # a listing or a launch must not fail for the vault
         pass
 
 
 def _maybe_start():
     if os.environ.get(CHILD_ENV):
         return
-    wiki = llmwiki.wiki_dir()
-    if wiki is None:
+    vault, wiki = _targets()
+    if vault is None and wiki is None:
         return
     interval = _interval()
     if interval is None:
         return
     state = _read_state()
-    key = _key(wiki)
-    mine = state.get(key) if isinstance(state.get(key), dict) else {}
+    mine = state.get(KEY) if isinstance(state.get(KEY), dict) else {}
     now = time.time()
     if mine.get('result') == 'failed' and not mine.get('notified'):
-        print(f"cw: the last LLM Wiki auto-export failed ({mine.get('error') or 'see the log'}); "
+        print(f"cw: the last daily upkeep failed ({mine.get('error') or 'see the log'}); "
               f'log: {log_path()}', file=sys.stderr)
         mine['notified'] = True
-        state[key] = mine
+        state[KEY] = mine
         _write_state(state)
     started = mine.get('started') or 0
     finished = mine.get('finished') or 0
     if started > finished and now - started < STALE_RUN:
         return  # one is running
-    # A failed run -- the app was closed, the token missing -- is tried
+    # A failed run -- the app was closed, a judge out of credit -- is tried
     # again within the hour, not a whole interval later.
     wait = min(interval, RETRY_FAILED) if mine.get('result') == 'failed' else interval
     if now - started < wait:
         return
     mine.update(started=now, notified=False)
-    state[key] = mine
+    state[KEY] = mine
     _write_state(state)
-    _spawn(wiki)
-    print(f'cw: exporting quiet sessions to LLM Wiki in the background '
+    _spawn()
+    steps = ['notes', 'project pages'] if vault else []
+    if wiki:
+        steps.append('LLM Wiki')
+    print(f"cw: daily upkeep in the background -- {', '.join(steps)} "
           f'(log: {log_path()}; {ENV}=off stops it)', file=sys.stderr)
 
 
-def _spawn(wiki):
+def _spawn():
     log = log_path()
     log.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -144,8 +164,7 @@ def _spawn(wiki):
         pass
     package_parent = str(Path(__file__).resolve().parent.parent)
     code = ('import sys; sys.path.insert(0, %r); '
-            'from crossweave import autoexport; sys.exit(autoexport.run(%r))'
-            % (package_parent, str(wiki)))
+            'from crossweave import autoexport; sys.exit(autoexport.run())' % package_parent)
     env = dict(os.environ, **{CHILD_ENV: '1'})
     kwargs = {}
     if os.name == 'nt':
@@ -170,25 +189,39 @@ def span_since(mine, now):
     return int(min(MAX_SPAN, max(now - last + note._parse_since(QUIET) + 3600, 2 * 86400)))
 
 
-def _refresh_project_pages():
-    """The notes this run wrote put their projects' overview pages behind;
-    rebuild those (one judge call each). Their failures are the log's,
-    not the export's."""
-    from . import note, search, wiki
+def _write_quiet_notes(vault, since):
+    """Step 1: notes for the quiet sessions and topics that have none, or one
+    behind them. Returns the first failure's text, or None."""
+    from . import note, search
 
-    try:
-        vault = note.vault_path()
-        if vault is None:
-            return
-        stale = wiki.stale_projects(vault)
-        if stale:
-            print(f"cw wiki: rebuilding {len(stale)} project page(s): {', '.join(stale)}", flush=True)
-        for name in stale:
-            path = wiki.build_project(vault, name, search.DEFAULT_JUDGE)
-            if path:
-                print(f'wiki: {path}', flush=True)
-    except Exception as exc:  # the export's result stands whatever happens here
-        print(f'cw wiki: project pages not rebuilt: {type(exc).__name__}: {exc}', flush=True)
+    picked, _skipped, _empty = exporter.pick_sessions(since, None, note._parse_since(QUIET))
+    state = exporter.notes_state(vault)
+    need = [u for u in picked if exporter.fresh_note(u, state) is None]
+    print(f'cw note: {len(need)} of {len(picked)} quiet sessions and topics need a note', flush=True)
+    if not need:
+        return None
+    _notes, failed = exporter.write_notes(need, vault, search.DEFAULT_JUDGE, prog='cw note')
+    if failed:
+        return f'{len(failed)} note(s) not written: {failed[0][1]}'
+    return None
+
+
+def _refresh_project_pages(vault):
+    """Step 2: the project pages the notes put behind (one judge call
+    each). Returns the first failure's text, or None."""
+    from . import search, wiki
+
+    stale = wiki.stale_projects(vault)
+    if stale:
+        print(f"cw wiki: updating {len(stale)} project page(s): {', '.join(stale)}", flush=True)
+    failed = []
+    for name in stale:
+        path = wiki.build_project(vault, name, search.DEFAULT_JUDGE)
+        if path:
+            print(f'wiki: {path}', flush=True)
+        else:
+            failed.append(name)
+    return f"project page(s) not updated: {', '.join(failed)}" if failed else None
 
 
 class _LastError:
@@ -201,7 +234,7 @@ class _LastError:
     def write(self, text):
         for line in text.splitlines():
             if line.startswith('cw export: ') and ' exported, ' not in line \
-                    and ' sources from ' not in line:
+                    and ' sources from ' not in line and ' need a note' not in line:
                 self.last = line[len('cw export: '):].strip()
         return self.stream.write(text)
 
@@ -209,44 +242,64 @@ class _LastError:
         self.stream.flush()
 
 
-def run(wiki):
-    """The background export itself. Returns the exit code."""
-    state = _read_state()
-    key = _key(wiki)
-    mine = state.get(key) if isinstance(state.get(key), dict) else {}
-    began = mine.get('started') or time.time()
-    since = span_since(mine, time.time())
-    print(f"\n== {time.strftime('%Y-%m-%d %H:%M:%S')} cw LLM Wiki auto-export "
-          f"(last {since // 3600}h, quiet for {QUIET}) ==", flush=True)
+def _export_to_wiki(wiki, since):
+    """Step 3: the notes into the LLM Wiki, and a rescan. Returns the
+    failure's text, or None."""
     opts = argparse.Namespace(since=f'{-(-since // 3600)}h', older_than=QUIET, cwd=None,
                               dry_run=False, yes=True, llm_wiki=str(wiki), rescan=True,
                               content=exporter.CONTENT_NOTES, judge=None,
                               api_url=os.environ.get(llmwiki.API_ENV, '').strip() or exporter.API_URL,
                               project_id=None)
-    error = None
     said = _LastError(sys.stderr)
     sys.stderr = said
+    error = None
     try:
         client = exporter.WikiClient(opts.api_url, os.environ.get(exporter.TOKEN_ENV, ''))
-        code = exporter._export_all(opts, client)
+        if exporter._export_all(opts, client) != 0:
+            error = said.last or 'export or rescan failed'
     except (exporter.ExportError, OSError) as exc:
         print(f'cw export: {exc}', file=sys.stderr)
-        code, error = 1, str(exc)
+        error = str(exc)
     except Exception as exc:
         print(f'cw export: {type(exc).__name__}: {exc}', file=sys.stderr)
-        code, error = 1, f'{type(exc).__name__}: {exc}'
+        error = f'{type(exc).__name__}: {exc}'
     finally:
         sys.stderr = said.stream
+    return error
+
+
+def _step(name, fn, *args):
+    try:
+        return fn(*args)
+    except Exception as exc:  # one step failing does not stop the next
+        print(f'cw: {name} failed: {type(exc).__name__}: {exc}', flush=True)
+        return f'{name}: {type(exc).__name__}: {exc}'
+
+
+def run():
+    """The day's upkeep itself. Returns the exit code."""
+    vault, wiki = _targets()
+    state = _read_state()
+    mine = state.get(KEY) if isinstance(state.get(KEY), dict) else {}
+    began = mine.get('started') or time.time()
+    since = span_since(mine, time.time())
+    print(f"\n== {time.strftime('%Y-%m-%d %H:%M:%S')} cw daily upkeep "
+          f"(last {since // 3600}h, quiet for {QUIET}) ==", flush=True)
+    errors = []
+    if vault:
+        errors.append(_step('notes', _write_quiet_notes, vault, since))
+        errors.append(_step('project pages', _refresh_project_pages, vault))
+    if wiki:
+        errors.append(_step('LLM Wiki export', _export_to_wiki, wiki, since))
     sys.stdout.flush()
     sys.stderr.flush()
-    error = error or said.last
-    _refresh_project_pages()
+    errors = [e for e in errors if e]
     state = _read_state()
-    mine = state.get(key) if isinstance(state.get(key), dict) else {}
-    mine.update(finished=time.time(), result='ok' if code == 0 else 'failed',
-                error=None if code == 0 else (error or 'export or rescan failed'))
-    if code == 0:
+    mine = state.get(KEY) if isinstance(state.get(KEY), dict) else {}
+    mine.update(finished=time.time(), result='failed' if errors else 'ok',
+                error=errors[0] if errors else None)
+    if not errors:
         mine['succeeded'] = began
-    state[key] = mine
+    state[KEY] = mine
     _write_state(state)
-    return code
+    return 1 if errors else 0

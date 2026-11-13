@@ -346,15 +346,15 @@ without a terminal it cannot be asked, and the command stops unless `-y` is
 given. As with a single export, earlier revisions stay in cw's local history
 and never reach the wiki as separate sources.
 
-#### Keeping the wiki fed by itself
+#### The daily upkeep
 
-With `CW_LLM_WIKI` set, nothing else is needed: an ordinary `cw` — a listing (`cw`, `cw sessions`, `cw full`) or a fresh session (`cw claude`, …) — checks one small state file, and once a day starts
+Nothing has to be run by hand to keep the vault current. An ordinary `cw` — a listing (`cw`, `cw sessions`, `cw full`) or a fresh session (`cw claude`, …) — checks one small state file, and once a day starts the day's upkeep in the background and goes on at once; one stderr line says it started, what it will do and where its log is (`~/.cache/crossweave/daily.log`):
 
-```bash
-cw export --all --since <as far back as needed> --older-than 1d -y --llm-wiki "$CW_LLM_WIKI" --rescan
-```
+1. **Notes.** Every session or topic that has gone quiet for a day and has no note, or one its sessions have moved on from, gets one — one judge call each, four at a time, the same picking as `cw export --all` (live, short, tool-started and text-less sessions are left out; a handoff chain is one topic).
+2. **Project pages.** The project pages those notes put behind are updated (`cw wiki --projects`), each an edit of the page, one judge call.
+3. **LLM Wiki**, only with `CW_LLM_WIKI` set: the notes go into it (`cw export --all --older-than 1d --rescan`). The notes are already written, so this step makes no judge calls of its own.
 
-in the background and goes on at once; one stderr line says it started and where its log is (`~/.cache/crossweave/llm-wiki-export.log`). No daemon, no cron: the export rides on the use you make of cw anyway, so a machine where cw is not used is not exported from. The window reaches back to the last successful run, with the day a topic needs to go quiet on top (seven days the first time, ninety at most), so a fortnight away loses nothing. It runs in the environment of the command that started it, so the `LLM_WIKI_API_TOKEN` the shell loaded reaches it. A run that failed — the app closed, the token missing — is named once on the next listing, with its reason and the log, and tried again within the hour. `CW_LLM_WIKI_EXPORT=12h` changes the interval, `CW_LLM_WIKI_EXPORT=off` stops it; reading pages back ([Pages from an LLM Wiki](#pages-from-an-llm-wiki)) does not depend on it.
+It runs with a vault (`CW_VAULT`, or the default folder once a note is there), an LLM Wiki, or both; the vault is the point and the LLM Wiki an optional reader of it. No daemon, no cron: the upkeep rides on the use you make of cw anyway, so a machine where cw is not used does nothing. Each run reaches back to the last successful one, with the day a topic needs to go quiet on top (seven days the first time, ninety at most), so a fortnight away loses nothing. It runs in the environment of the command that started it, so `CW_VAULT` and the `LLM_WIKI_API_TOKEN` the shell loaded reach it. A run with a failed step — a judge out of credit, the LLM Wiki app closed — still runs the other steps, is named once on the next listing with its reason and the log, and is tried again within the hour. `CW_AUTO=12h` changes the interval, `CW_AUTO=off` stops the upkeep; `CW_LLM_WIKI_EXPORT=off` skips the LLM Wiki step alone. Reading pages back ([Pages from an LLM Wiki](#pages-from-an-llm-wiki)) depends on neither.
 
 The token must match the service at `--api-url`. A separately deployed headless
 service can use its startup `LLM_WIKI_API_TOKEN` rather than the desktop app's
@@ -534,7 +534,7 @@ The first time, it reads the folder's topic notes and the session notes no topic
 
 Two files at the vault's root belong to cw. `_schema.md` holds the conventions every generated text follows — notes, topic notes, topic pages, project pages: what to include (paths, commands, versions, decisions with their reasons, pitfalls with their fixes), what to leave out (session IDs, cw's own commands, small talk), one spelling per name, which language. Its text goes into every prompt just before the reply instruction, and where it conflicts with cw's built-in rules it wins, except for the section headings, which cw reads back (`还剩什么` is how it finds open items). It is written with the defaults the first time cw generates something into the vault, so there is a file to edit; until then the defaults apply. `_log.md` gets one line per thing cw generated, in one shape — `## [2026-11-13 09:55] note | board | USB 枚举握手排查 (zcode)` — so `grep '] project |' _log.md` lists every project-page update. A judge that fails writes neither.
 
-A fresh `cw claude|codex|…` and `cw context` start from it: the overview comes first, then the newest notes. The daily background run (see [Keeping the wiki fed by itself](#keeping-the-wiki-fed-by-itself)) rebuilds the pages its notes put behind, one judge call each.
+A fresh `cw claude|codex|…` and `cw context` start from it: the overview comes first, then the newest notes. The [daily upkeep](#the-daily-upkeep) writes the notes of quiet sessions and updates the pages they put behind, one judge call each.
 
 #### Checking the vault, and asking it
 

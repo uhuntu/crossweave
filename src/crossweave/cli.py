@@ -78,9 +78,12 @@ starts with this project's newest notes (what `cw context` prints) appended
 to the tool's system prompt -- background, no message sent. Not with -p or
 -c, nor before a subcommand; --no-context skips it once, CW_CONTEXT=off
 for good. kimi and opencode have no way to take it. With CW_LLM_WIKI
-set to an LLM Wiki project folder, its pages about the project follow,
-and once a day a listing or a launch exports quiet sessions to it in the
-background (CW_LLM_WIKI_EXPORT=off stops that, =12h changes the interval).
+set to an LLM Wiki project folder, its pages about the project follow.
+
+Once a day a listing or a launch starts the vault's upkeep in the
+background: notes for quiet sessions, the project pages they put behind,
+and with CW_LLM_WIKI the export into it (CW_AUTO=off stops the upkeep,
+=12h changes the interval; CW_LLM_WIKI_EXPORT=off skips the LLM Wiki step).
 
 Per-tool --yolo mapping:
   claude    -> --dangerously-skip-permissions

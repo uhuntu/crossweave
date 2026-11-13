@@ -148,7 +148,7 @@ def test_no_project_page_for_a_folder_that_is_not_one(vault, capsys):
 
 def test_the_daily_run_refreshes_stale_project_pages(vault, monkeypatch):
     v, prompts = vault
-    autoexport._refresh_project_pages()
+    assert autoexport._refresh_project_pages(str(v)) is None
     assert (v / "board" / "_project.md").exists()
     assert not (v / "_home" / "_project.md").exists()
 
