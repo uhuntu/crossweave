@@ -250,3 +250,13 @@ def test_a_note_the_page_found_nothing_in_does_not_keep_it_stale(vault, monkeypa
                         lambda prompt, j, e, label: prompts.append(prompt) or (_Proc(only_n1), j))
     wiki.build_project(str(v), "board", "step")
     assert wiki.stale_projects(str(v)) == []
+
+
+def test_projects_full_rebuilds_every_page_even_when_current(vault, capsys):
+    v, prompts = vault
+    assert wiki.cmd_wiki(["--projects", "-y"]) == 0
+    assert wiki.cmd_wiki(["--projects", "-y"]) == 0
+    assert len(prompts) == 1
+    assert wiki.cmd_wiki(["--projects", "--full", "-y"]) == 0
+    assert len(prompts) == 2
+    assert "Write the project's overview page" in prompts[-1]

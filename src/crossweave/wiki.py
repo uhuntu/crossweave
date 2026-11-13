@@ -672,22 +672,32 @@ def cmd_wiki(args):
               f"or drop --{mode}", file=sys.stderr)
         return 2
     if mode == "projects":
-        stale = stale_projects(vault)
+        # --full: every project page from scratch (after a lint review, or a
+        # change to _schema.md); otherwise only the ones behind their notes.
+        if full:
+            stale = [name for name in sorted(os.listdir(vault))
+                     if is_project_folder(vault, name)
+                     and project_sources(os.path.join(vault, name))]
+        else:
+            stale = stale_projects(vault)
         if not stale:
             print("Every project page is current.")
             return 0
         print(f"cw wiki: {len(stale)} project page{'s' if len(stale) != 1 else ''} to "
-              f"(re)build: {', '.join(stale)}", file=sys.stderr)
-        if not yes and not note._confirm(f"One judge call each. Go ahead? [y/N] "):
+              f"{'rebuild' if full else '(re)build'}: {', '.join(stale)}", file=sys.stderr)
+        if not yes and not note._confirm("One judge call each. Go ahead? [y/N] "):
             print("cw wiki: nothing built (pass -y to skip this question)", file=sys.stderr)
             return 1
+        from concurrent.futures import ThreadPoolExecutor
+
         failed = 0
-        for name in stale:
-            got = build_project(vault, name, judge, judge_explicit, full)
-            if got:
-                print(f"wiki: {os.path.relpath(got, vault)}")
-            else:
-                failed += 1
+        with ThreadPoolExecutor(max_workers=note.WORKERS) as pool:
+            for got in pool.map(lambda name: build_project(vault, name, judge, judge_explicit, full),
+                                stale):
+                if got:
+                    print(f"wiki: {os.path.relpath(got, vault)}", flush=True)
+                else:
+                    failed += 1
         return 1 if failed else 0
 
     if mode == "stale":
