@@ -102,6 +102,114 @@ def broken_links(vault):
     return out
 
 
+# ---------- the LLM Wiki side: its review queue, its duplicate pages ----------
+
+REVIEW_ORDER = ("contradiction", "duplicate", "missing-page", "suggestion")
+REVIEW_LIST_MAX = 12
+_PAGE_DIRS = ("entities", "concepts", "queries", "comparisons", "synthesis")
+
+
+def llm_wiki_reviews(project):
+    """[item] unresolved in the LLM Wiki's Review queue: from its API when
+    it answers, else from the project's own .llm-wiki/review.json."""
+    import json
+
+    from . import exporter, llmwiki
+    from urllib.parse import quote
+
+    try:
+        client = exporter.WikiClient(os.environ.get(llmwiki.API_ENV, "").strip() or exporter.API_URL,
+                                     os.environ.get(exporter.TOKEN_ENV, ""))
+        pid = client.project_id(project, timeout=5)
+        data = client.request("GET", f"/projects/{quote(pid, safe='')}/reviews"
+                              "?status=unresolved&limit=500", timeout=10)
+        items = next((data[k] for k in ("reviews", "items", "results") if isinstance(data.get(k), list)), None)
+        if items is not None:
+            return [i for i in items if isinstance(i, dict) and not i.get("resolved")]
+    except Exception:
+        pass
+    try:
+        with open(os.path.join(project, ".llm-wiki", "review.json"), encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return []
+    items = data if isinstance(data, list) else next(
+        (data[k] for k in ("reviews", "items") if isinstance(data, dict) and isinstance(data.get(k), list)), [])
+    return [i for i in items if isinstance(i, dict) and not i.get("resolved")]
+
+
+def _name_key(stem):
+    return re.sub(r"[^0-9a-z\u4e00-\u9fff]", "", stem.lower())
+
+
+def llm_wiki_duplicates(project):
+    """([[page, ...]] that are one name spelled differently,
+    [(page, page)] where one name is the other plus one word)."""
+    pages = []
+    for d in _PAGE_DIRS:
+        for path in sorted(glob.glob(os.path.join(project, "wiki", d, "*.md"))):
+            pages.append(f"{d}/{os.path.splitext(os.path.basename(path))[0]}")
+    groups = {}
+    for page in pages:
+        groups.setdefault(_name_key(page.split("/", 1)[1]), []).append(page)
+    same = [sorted(g) for _k, g in sorted(groups.items()) if len(g) > 1]
+    entities = [p for p in pages if p.startswith("entities/")]
+    near = []
+    for a in entities:
+        ta = [t for t in a.split("/", 1)[1].lower().split("-") if t]
+        for b in entities:
+            tb = [t for t in b.split("/", 1)[1].lower().split("-") if t]
+            if a != b and set(ta) < set(tb) and len(tb) - len(ta) == 1 and _name_key(a) != _name_key(b):
+                near.append((a, b))
+    return same, near
+
+
+def llm_wiki_findings():
+    """(wiki folder, reviews, same, near), or None without CW_LLM_WIKI."""
+    from . import llmwiki
+
+    project = llmwiki.wiki_dir()
+    if project is None:
+        return None
+    same, near = llm_wiki_duplicates(project)
+    return project, llm_wiki_reviews(project), same, near
+
+
+def render_llm_wiki(found):
+    project, reviews, same, near = found
+    if not reviews and not same and not near:
+        return []
+    out = [f"## LLM Wiki ({project})", ""]
+    if reviews:
+        by_type = {}
+        for item in reviews:
+            by_type.setdefault(str(item.get("type") or "other"), []).append(item)
+        out += [f"### 待处理的 Review / Unresolved reviews ({len(reviews)})", "",
+                "Open the Review tab in LLM Wiki to act on these; contradictions first.", ""]
+        order = list(REVIEW_ORDER) + sorted(set(by_type) - set(REVIEW_ORDER))
+        for kind in order:
+            items = by_type.get(kind)
+            if not items:
+                continue
+            out.append(f"**{kind}** ({len(items)})")
+            out.append("")
+            for item in items[:REVIEW_LIST_MAX]:
+                pages = ", ".join(f"`{p}`" for p in (item.get("affectedPages") or [])[:3])
+                out.append(f"- {item.get('title') or '(untitled)'}" + (f" — {pages}" if pages else ""))
+            if len(items) > REVIEW_LIST_MAX:
+                out.append(f"- … and {len(items) - REVIEW_LIST_MAX} more")
+            out.append("")
+    if same or near:
+        out += ["### 可能重复的页面 / Pages that may be one thing", ""]
+        for group in same:
+            out.append("- 重复 / same name: " + ", ".join(f"`{p}`" for p in group))
+        for a, b in near:
+            out.append(f"- 可能 / maybe: `{a}` · `{b}`")
+        out += ["", "Fix: merge them in LLM Wiki, and put the one spelling into the "
+                "naming rules of its `schema.md` so the next ingest keeps to it.", ""]
+    return out
+
+
 def _review_prompt(project, page, notes):
     return (
         "Below is one project's overview page from the user's knowledge base, "
@@ -161,7 +269,7 @@ def _has_findings(section_body):
     return any(item not in ("- 无", "- none", "- None") for item in items)
 
 
-def render(found, reviews, now=None):
+def render(found, reviews, now=None, llm=None):
     now = now or datetime.datetime.now()
     out = ["---", "kind: cw-lint", f"generated: {now:%Y-%m-%dT%H:%M}", "tags: [cw-lint]", "---",
            "# Vault lint", "",
@@ -190,6 +298,8 @@ def render(found, reviews, now=None):
             out += [f"## {project}", "", re.sub(r"(?m)^## ", "### ", body), "",
                     f"Fix: `cw wiki --project {project} --full` rebuilds the page from all "
                     "its notes; or correct it under the marker at its end", ""]
+    if llm is not None:
+        out += render_llm_wiki(llm)
     if len(out) == 9:
         out += ["Nothing to report.", ""]
     return "\n".join(out)
@@ -214,8 +324,12 @@ def run(vault, judge, judge_explicit=False, review=True, yes=False):
         else:
             print("cw wiki: the judge review was skipped (pass -y to run it); "
                   "the mechanical checks follow", file=sys.stderr)
+    try:
+        llm = llm_wiki_findings()
+    except Exception:  # the vault's report does not depend on the app
+        llm = None
     path = os.path.join(vault, LINT_NAME)
-    text = render(found, reviews)
+    text = render(found, reviews, llm=llm)
     tmp = f"{path}.{os.getpid()}.tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
         fh.write(text)
@@ -227,6 +341,12 @@ def run(vault, judge, judge_explicit=False, review=True, yes=False):
             counts.append(f"{len(found[key])} {label}")
     if found.get("unnoted"):
         counts.append(f"{found['unnoted'][0]} sessions without a note")
+    if llm is not None:
+        _project, wiki_reviews, same, near = llm
+        if wiki_reviews:
+            counts.append(f"{len(wiki_reviews)} LLM Wiki reviews open")
+        if same or near:
+            counts.append(f"{len(same) + len(near)} possible duplicate LLM Wiki pages")
     flagged = [p for p, body in reviews if body and _has_findings(body)]
     if flagged:
         counts.append(f"review findings in {', '.join(flagged)}")

@@ -145,3 +145,57 @@ def test_an_empty_vault_says_so(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("CW_VAULT", str(v))
     assert ask.cmd_ask(["x"]) == 1
     assert "no notes or pages yet" in capsys.readouterr().err
+
+
+# ---------- the LLM Wiki side ----------
+
+@pytest.fixture
+def llm_wiki(vault, monkeypatch, tmp_path):
+    import json
+    root = tmp_path / "work-wiki"
+    for rel in ("entities/devgetter", "entities/dev-getter", "entities/codex", "entities/codex-cli",
+                "entities/rock-5b", "concepts/DevGetter", "concepts/usb-enumeration"):
+        path = root / "wiki" / f"{rel}.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("---\ntype: x\n---\n# x\n", encoding="utf-8")
+    (root / ".llm-wiki").mkdir()
+    (root / ".llm-wiki" / "review.json").write_text(json.dumps([
+        {"type": "suggestion", "title": "Write a guide", "resolved": False},
+        {"type": "contradiction", "title": "LPO register", "resolved": False,
+         "affectedPages": ["wiki/concepts/lpo.md"]},
+        {"type": "missing-page", "title": "done already", "resolved": True},
+    ]), encoding="utf-8")
+    monkeypatch.setenv("CW_LLM_WIKI", str(root))
+    monkeypatch.setenv("CW_LLM_WIKI_API", "http://127.0.0.1:9")  # nothing listens: the file is read
+    return root
+
+
+def test_duplicates_are_one_name_spelled_differently_or_one_word_longer(llm_wiki):
+    same, near = lint.llm_wiki_duplicates(str(llm_wiki))
+    assert same == [["concepts/DevGetter", "entities/dev-getter", "entities/devgetter"]]
+    assert near == [("entities/codex", "entities/codex-cli")]
+
+
+def test_open_reviews_come_from_the_project_file_when_the_api_is_away(llm_wiki):
+    titles = [i["title"] for i in lint.llm_wiki_reviews(str(llm_wiki))]
+    assert titles == ["Write a guide", "LPO register"]
+
+
+def test_the_report_lists_reviews_contradictions_first_and_the_duplicates(vault, llm_wiki, capsys):
+    v, _, _ = vault
+    lint.run(str(v), "step", review=False)
+    text = (v / lint.LINT_NAME).read_text(encoding="utf-8")
+    section = text[text.index("## LLM Wiki"):]
+    assert section.index("**contradiction**") < section.index("**suggestion**")
+    assert "- LPO register — `wiki/concepts/lpo.md`" in section
+    assert "done already" not in section
+    assert "- 重复 / same name: `concepts/DevGetter`, `entities/dev-getter`, `entities/devgetter`" in section
+    assert "- 可能 / maybe: `entities/codex` · `entities/codex-cli`" in section
+    out = capsys.readouterr().out
+    assert "2 LLM Wiki reviews open" in out and "2 possible duplicate LLM Wiki pages" in out
+
+
+def test_no_llm_wiki_section_without_one(vault):
+    v, _, _ = vault
+    lint.run(str(v), "step", review=False)
+    assert "## LLM Wiki" not in (v / lint.LINT_NAME).read_text(encoding="utf-8")
