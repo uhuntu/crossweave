@@ -90,7 +90,7 @@ def catalog(vault):
         entries.append((kind, path, f"{meta.get('title') or ''} ({project})",
                         str(meta.get("updated") or meta.get("noted") or "")[:10],
                         note.search_digest(body, 160)))
-    entries.sort(key=lambda e: e[3], reverse=True)
+    entries.sort(key=lambda e: (e[3], e[1]), reverse=True)
     return entries[:CATALOG_MAX]
 
 
@@ -188,7 +188,8 @@ def _cited(text, chosen):
 def render_terminal(text, chosen, vault):
     lines = [text, "", "Sources:"]
     for n, (kind, path, title, date) in sorted(_cited(text, chosen).items()):
-        lines.append(f"  [E{n}] {kind} · {date} · {title} — {os.path.relpath(path, vault)}")
+        rel = os.path.relpath(path, vault).replace(os.sep, "/")
+        lines.append(f"  [E{n}] {kind} · {date} · {title} — {rel}")
     return "\n".join(lines) + "\n"
 
 

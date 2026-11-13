@@ -36,7 +36,8 @@ def vault(monkeypatch, tmp_path):
     v = tmp_path / "vault"
     session_note(v / "board", "2026-11-01 USB 枚举", "s1",
                  "## 做了什么\n- 修好枚举，命令 `fastboot flash boot boot.img`\n## 还剩什么\n- 跑回归")
-    session_note(v / "board", "2026-11-05 回归", "s2", "## 做了什么\n- 回归通过\n## 还剩什么\n- 发布")
+    session_note(v / "board", "2026-11-05 回归", "s2", "## 做了什么\n- 回归通过\n## 还剩什么\n- 发布",
+                 updated="2026-11-05T10:00", noted="2026-11-05T11:00")
     monkeypatch.setenv("CW_VAULT", str(v))
     monkeypatch.setattr(search, "gather_candidates", lambda tool, show_all=False: [])
     replies, prompts = [], []

@@ -56,7 +56,7 @@ def mechanical(vault):
     for sid, (noted, _body, path) in note.session_notes(vault).items():
         r = records.get(sid)
         if r and sid not in covered and note.is_stale(r, noted) and not rename._is_live(r):
-            behind.append(os.path.relpath(path, vault))
+            behind.append(os.path.relpath(path, vault).replace(os.sep, "/"))
     if behind:
         out["notes"] = sorted(behind)
     try:
@@ -97,7 +97,8 @@ def broken_links(vault):
             continue
         for target in sorted({m.group(1).strip() for m in _LINK_RE.finditer(text)}):
             if os.path.basename(target) not in stems:
-                out.append(f"{os.path.relpath(path, vault)} -> [[{target}]]")
+                rel = os.path.relpath(path, vault).replace(os.sep, "/")
+                out.append(f"{rel} -> [[{target}]]")
     return out
 
 

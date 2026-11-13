@@ -768,7 +768,7 @@ def project_sources(folder, limit=PROJECT_MAX_NOTES):
     topics = note._project_topic_notes(folder)
     covered = {sid for _s, meta, _b in topics for sid in (meta.get("sessions") or [])}
     notes = [n for n in note._project_notes(folder) if n[1].get("session") not in covered]
-    both = sorted(topics + notes, key=lambda n: str(n[1].get("updated") or ""), reverse=True)
+    both = sorted(topics + notes, key=lambda n: (str(n[1].get("updated") or ""), n[0]), reverse=True)
     return both[:limit]
 
 
