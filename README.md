@@ -535,6 +535,20 @@ Two files at the vault's root belong to cw. `_schema.md` holds the conventions e
 
 A fresh `cw claude|codex|…` and `cw context` start from it: the overview comes first, then the newest notes. The daily background run (see [Keeping the wiki fed by itself](#keeping-the-wiki-fed-by-itself)) rebuilds the pages its notes put behind, one judge call each.
 
+#### Checking the vault, and asking it
+
+```bash
+cw wiki --lint                 # check the vault, write _lint.md
+cw wiki --lint -y              # ...and let the judge review each project without asking
+cw wiki --lint --no-review     # only the checks that need no judge
+cw ask "Rock 5B 蓝牙固件下载要怎么设流控？"   # answer from the vault, citing its pages
+cw ask "..." --save            # file the answer into _wiki/answers/
+```
+
+`--lint` is the health check of the LLM Wiki pattern. What cw can tell by itself comes first, each with the command that fixes it: project pages behind their notes, topic pages behind their sessions, notes behind their sessions (not counting a session a current topic note speaks for), how many sessions of three turns or more have no note (the tools' own sessions not counted), and links in cw's generated pages that point at no file. Then, after a yes, the judge reads each project's overview page against its newest notes — four projects at a time — for claims that contradict each other, open items or current-state claims a newer note suggests are done, and gaps the notes keep coming back to that the page does not say, each citing the notes. All of it goes into `_lint.md` at the vault's root, rewritten each run; nothing is changed until you run the commands it names.
+
+`cw ask` reads the vault the way the pattern's index is meant to be read: the judge first sees a catalog — one line per project page, topic page, note and earlier answer, newest first, each with a short gist — picks up to eight pages, and answers from those alone, citing them as `[E3]`; the sources are listed under the answer with their paths. If nothing fits it says so rather than guess. An answer worth keeping (`--save`, or `y` when it asks) goes into `_wiki/answers/` with its citations as Obsidian links, and from then on it is in the catalog: what was worked out once is not worked out again. Answers are not topic pages — `cw wiki` and its staleness never see them.
+
 The listing marks the sessions a page was built from: `⌗` after the title, next to the `✎` a note would put there; `cw ui`'s preview names the pages. Where `✎` says *this session was written up*, `⌗` says *this session is part of a page* — the difference between what one conversation did and what is known about the topic now.
 
 ## Renaming sessions

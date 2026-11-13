@@ -47,6 +47,9 @@ USAGE = f"""Usage: cw <{'|'.join(TOOLS)}> [common-options] [prompt] [-- extra na
        cw note --index          # rebuild each project's _index.md from its notes
        cw context [DIR] [--limit N]   # print that project's newest notes, for a new session
        cw wiki <topic>          # one page per topic in the vault's _wiki/, from every session about it
+       cw wiki --project [NAME] # the project's overview page, kept up to date from its notes
+       cw wiki --lint [-y]      # check the vault: pages behind, broken links, contradictions -> _lint.md
+       cw ask "<question>"      # answer from the vault, citing its pages; --save files the answer back
        cw ui                  # pick a session: type to filter, Enter resumes, v views, h/n/r/d hand off/note/rename/delete
 
 Common options (translated per-tool, all optional):
@@ -142,7 +145,7 @@ Examples:
 # this list, and the test asserts it matches what main() actually dispatches,
 # so adding a subcommand cannot leave the message stale the way it was when
 # `stats` and `step` were both missing from it.
-SUBCOMMANDS = ("sessions", "full", "search", "resume", "show", "export", "chat", "web", "update", "stats", "doctor", "alias", "machines", "rename", "delete", "note", "context", "wiki", "ui")
+SUBCOMMANDS = ("sessions", "full", "search", "resume", "show", "export", "chat", "web", "update", "stats", "doctor", "alias", "machines", "rename", "delete", "note", "context", "wiki", "ask", "ui")
 
 
 def usage(name="cw"):
@@ -584,6 +587,9 @@ def main():
         sys.exit(note.cmd_context(rest))
     if tool == "wiki":
         sys.exit(wiki.cmd_wiki(rest))
+    if tool == "ask":
+        from . import ask
+        sys.exit(ask.cmd_ask(rest))
     if tool == "ui":
         sys.exit(ui.cmd_ui(rest))
 

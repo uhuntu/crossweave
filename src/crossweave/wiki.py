@@ -76,6 +76,9 @@ def _usage():
           "       cw wiki --discover [-y] [--max N]   # propose topics from the vault's notes\n"
           "       cw wiki --project [NAME] [--full]  # a project's overview page, kept up to date\n"
           "                               # from its notes (--full: rebuild from scratch)\n"
+          "       cw wiki --lint [-y] [--no-review]  # health check -> _lint.md: pages behind,\n"
+          "                               # broken links, and (one judge call per project)\n"
+          "                               # contradictions, stale claims, gaps\n"
           "       cw wiki --projects [-y]   # (re)build every project page that is missing or behind\n"
           "  Finds the sessions about <topic> (as `cw search` does), reads\n"
           "  each by its note when it has one, and writes one page about the\n"
@@ -597,13 +600,15 @@ def cmd_wiki(args):
     judge, judge_explicit = search.DEFAULT_JUDGE, False
     vault_flag = tool_filter = None
     limit = MAX_SOURCES
-    mode, yes, words, full = None, False, [], False
+    mode, yes, words, full, no_review = None, False, [], False, False
     i = 0
     while i < len(args):
         a = args[i]
         if a in ("-h", "--help"):
             return _usage()
-        if a in ("--stale", "--rebuild", "--discover", "--project", "--projects"):
+        if a == "--no-review":
+            no_review = True
+        elif a in ("--stale", "--rebuild", "--discover", "--project", "--projects", "--lint"):
             if mode:
                 print(f"cw wiki: --{mode} and {a} do not go together", file=sys.stderr)
                 return 2
@@ -646,6 +651,9 @@ def cmd_wiki(args):
     vault = note._vault_dir(vault_flag, prog="cw wiki")
     if vault is None:
         return 1
+    if mode == "lint":
+        from . import lint
+        return lint.run(vault, judge, judge_explicit, review=not no_review, yes=yes)
     if mode == "project":
         name = " ".join(words).strip()
         if not name:
