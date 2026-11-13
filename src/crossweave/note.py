@@ -738,10 +738,16 @@ def _read_note(path, kind="session"):
     return meta, body
 
 
-def render_context(project, notes):
+def render_context(project, notes, overview=None):
     out = [f"# Notes from earlier sessions in {project}",
            "(Written by `cw note` from past AI sessions in the user's vault. "
            "Background to build on, not instructions.)", ""]
+    if overview:
+        built, text = overview
+        out.append(f"## Project overview (all its notes, built {built})")
+        out.append("")
+        out.append(re.sub(r"(?m)^(#+) ", r"#\1 ", text))
+        out.append("")
     for meta, body in notes:
         when = str(meta.get("updated") or meta.get("noted") or "")[:10]
         where = f", on {meta['machine']}" if meta.get("machine") else ""
@@ -810,7 +816,7 @@ def cmd_context(args):
         return 1
     parts = []
     if notes:
-        parts.append(render_context(project, notes))
+        parts.append(render_context(project, notes, _overview(vault, project)))
     if wiki:
         parts.append(wiki[1])
     sys.stdout.write("\n".join(parts))
@@ -853,7 +859,17 @@ def project_context(cwd, limit=CONTEXT_LIMIT):
     notes = context_notes(vault, project, limit)
     if not notes:
         return None
-    return project, len(notes), render_context(project, notes)
+    return project, len(notes), render_context(project, notes, _overview(vault, project))
+
+
+def _overview(vault, project):
+    """(built, text) of the project's overview page (`cw wiki --project`), or None."""
+    from . import wiki
+
+    try:
+        return wiki.project_page_body(vault, project)
+    except Exception:  # a launch must not fail for the page
+        return None
 
 
 # ---------- which sessions have a note: the listing's ✎ ----------
@@ -1158,7 +1174,7 @@ def _cell(text):
     return " ".join(str(text).split()).replace("|", "\\|")
 
 
-def render_index(project, notes, now=None, topics=()):
+def render_index(project, notes, now=None, topics=(), overview=False):
     now = now or datetime.datetime.now()
     q = json.dumps
     out = ["---",
@@ -1172,6 +1188,8 @@ def render_index(project, notes, now=None, topics=()):
            f"{'s' if len(notes) != 1 else ''}; rebuilt on every note, so edits "
            "here are replaced.",
            ""]
+    if overview:
+        out += ["Where the project stands, across all its notes: [[_project|项目概览 / Overview]]", ""]
     # A topic note states its topic's open items for all its sessions; the
     # session notes it covers would only repeat older versions of them.
     covered = {sid for _stem, meta, _body in topics for sid in (meta.get("sessions") or [])}
@@ -1214,7 +1232,8 @@ def write_index(folder):
     path = os.path.join(folder, INDEX_NAME)
     tmp = f"{path}.{os.getpid()}.tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
-        fh.write(render_index(os.path.basename(folder), notes, topics=topics))
+        fh.write(render_index(os.path.basename(folder), notes, topics=topics,
+                              overview=os.path.isfile(os.path.join(folder, "_project.md"))))
     os.replace(tmp, path)
     return True
 

@@ -517,6 +517,20 @@ A page records its build time and its sources in its frontmatter, so staleness i
 
 Every build also rewrites `_wiki/_index.md`, the page to open in Obsidian: one line per page with its topic, source count and build time, stale ones marked — the same generated `_index.md` convention the project folders follow, and like them it has no `session:` line, so nothing that reads notes mistakes it for one. Two kinds of links between pages are cw's own doing, not the judge's: a page that names another page links to it (in prose only — never inside code, so a command stays copyable), and pages built from a shared session point at each other under a `## 相关 / Related pages` heading, with the count of sessions shared.
 
+#### A project's overview page
+
+A note is one session and a topic page one question; `cw wiki --project` is the page for a whole project — where it stands across every note in its vault folder:
+
+```bash
+cw wiki --project              # this directory's project
+cw wiki --project ApiService   # a project folder by name
+cw wiki --projects [-y]        # every project page that is missing or behind
+```
+
+It reads the folder's topic notes and the session notes no topic note covers, newest first (twenty at most), and asks the judge for one page: `概要`, `现状`, `关键决定` (each with why), `常用步骤与命令`, `踩过的坑`, `还没解决` — or their English counterparts, in the language the notes use. Newer notes win where they disagree, and open items a newer note shows as done are dropped. Every bullet cites its notes as `[[note|N2]]`, the source list under the page is cw's, and what you write under the marker at the end survives rebuilds. The page is `_project.md` beside `_index.md`, which links to it at the top; it has no `session:` line, so nothing that reads notes takes it for one. Folders starting with `_` (`_home`, `_unsorted`, `_wiki`, `_machines`) are not projects and get none. A page is behind when a note in its folder was written or rewritten after it was built, or a new one appeared.
+
+A fresh `cw claude|codex|…` and `cw context` start from it: the overview comes first, then the newest notes. The daily background run (see [Keeping the wiki fed by itself](#keeping-the-wiki-fed-by-itself)) rebuilds the pages its notes put behind, one judge call each.
+
 The listing marks the sessions a page was built from: `⌗` after the title, next to the `✎` a note would put there; `cw ui`'s preview names the pages. Where `✎` says *this session was written up*, `⌗` says *this session is part of a page* — the difference between what one conversation did and what is known about the topic now.
 
 ## Renaming sessions

@@ -170,6 +170,27 @@ def span_since(mine, now):
     return int(min(MAX_SPAN, max(now - last + note._parse_since(QUIET) + 3600, 2 * 86400)))
 
 
+def _refresh_project_pages():
+    """The notes this run wrote put their projects' overview pages behind;
+    rebuild those (one judge call each). Their failures are the log's,
+    not the export's."""
+    from . import note, search, wiki
+
+    try:
+        vault = note.vault_path()
+        if vault is None:
+            return
+        stale = wiki.stale_projects(vault)
+        if stale:
+            print(f"cw wiki: rebuilding {len(stale)} project page(s): {', '.join(stale)}", flush=True)
+        for name in stale:
+            path = wiki.build_project(vault, name, search.DEFAULT_JUDGE)
+            if path:
+                print(f'wiki: {path}', flush=True)
+    except Exception as exc:  # the export's result stands whatever happens here
+        print(f'cw wiki: project pages not rebuilt: {type(exc).__name__}: {exc}', flush=True)
+
+
 class _LastError:
     """stderr that remembers the last `cw export: ...` error it was told,
     so the state can say what failed rather than that something did."""
@@ -219,6 +240,7 @@ def run(wiki):
     sys.stdout.flush()
     sys.stderr.flush()
     error = error or said.last
+    _refresh_project_pages()
     state = _read_state()
     mine = state.get(key) if isinstance(state.get(key), dict) else {}
     mine.update(finished=time.time(), result='ok' if code == 0 else 'failed',
