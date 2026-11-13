@@ -255,6 +255,8 @@ its tool, session ID, source directory, content revision, export time, and the
 commands for viewing/resuming the original session. It contains saved user and
 assistant text, excluding reasoning and tool calls/results.
 
+What a source holds is the session's `cw note` by default (`--content notes`), not its transcript: the note is the conversation already distilled into what was done, why, the commands and paths that worked, the pitfalls and what is left, and a wiki built from it gets a few solid pages per line of work instead of a page for every file name, flag and dead end the transcript passed through. A topic's source is its topic note. A session or topic with no note yet, or one whose sessions moved on after it was written, gets one written first — one judge call each, `--judge` as for `cw note`, four at a time — and the note lands in your vault like any other, so Obsidian and the wiki are fed from the same record. The source's body is the note alone: the `cw show` lines a note carries for Obsidian are left out, and where it came from (tools, date, sessions, `cw resume`) stays in the frontmatter, so the wiki does not mistake the export format for knowledge. A note is rewritten only when its sessions move on, so the source changes, and is re-ingested, less often than a transcript would be. `--content transcript` exports the user and assistant text as described below; both forms use the same path, so switching rewrites a source in place.
+
 Re-exporting the same content leaves the existing file untouched. When the
 conversation has changed, cw first copies the file it is about to replace into
 its own history under

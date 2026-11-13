@@ -199,6 +199,7 @@ def run(wiki):
           f"(last {since // 3600}h, quiet for {QUIET}) ==", flush=True)
     opts = argparse.Namespace(since=f'{-(-since // 3600)}h', older_than=QUIET, cwd=None,
                               dry_run=False, yes=True, llm_wiki=str(wiki), rescan=True,
+                              content=exporter.CONTENT_NOTES, judge=None,
                               api_url=os.environ.get(llmwiki.API_ENV, '').strip() or exporter.API_URL,
                               project_id=None)
     error = None

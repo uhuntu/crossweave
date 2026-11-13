@@ -680,15 +680,140 @@ def topic_of(tool, sid):
     return None
 
 
-def export_unit(project, unit):
+def export_unit(project, unit, got=None):
     """(path, written, retired) for a unit: a topic of several sessions as
-    one topic source, a single session as its session snapshot."""
+    one topic source, a single session as its session snapshot. With
+    `got`, the unit's (meta, body) note, the note is the source's content
+    instead of the transcript; the path is the same either way, so a wiki
+    moves from one to the other in place."""
     members = unit['members']
+    if got is not None:
+        return note_snapshot(project, unit, *got)
     if len(members) > 1:
         return topic_snapshot(project, members, unit['title'])
     r = members[0]
     target, written = snapshot(project, r['tool'], r['id'], record=r)
     return target, written, []
+
+
+# ---------- notes as the content: the distilled record, not the transcript ----------
+
+CONTENT_NOTES = 'notes'
+CONTENT_TRANSCRIPT = 'transcript'
+
+
+def notes_state(vault):
+    """What the vault already holds: {session id: (noted, body, path)} and
+    [(noted, {session ids}, meta, body)] for its topic notes."""
+    from . import note
+
+    topics = []
+    for path in sorted(Path(vault).glob('*/*.md')):
+        if path.name == note.INDEX_NAME:
+            continue
+        got = note._read_note(str(path), 'topic_key')
+        if not got:
+            continue
+        meta, body = got
+        try:
+            noted = datetime.datetime.strptime(str(meta.get('noted', '')).strip(),
+                                               '%Y-%m-%dT%H:%M').timestamp()
+        except ValueError:
+            noted = path.stat().st_mtime
+        topics.append((noted, set(meta.get('sessions') or []), meta, body))
+    return note.session_notes(vault), topics
+
+
+def fresh_note(unit, state):
+    """The unit's note as (meta, body) when the vault has one that covers it
+    and none of its sessions moved on since; None when one must be written."""
+    from . import note
+
+    members = unit['members']
+    singles, topics = state
+    if len(members) == 1:
+        r = members[0]
+        got = singles.get(r['id'])
+        if not got or note.is_stale(r, got[0]):
+            return None
+        parsed = note._read_note(got[2])
+        return parsed if parsed else None
+    ids = {r['id'] for r in members}
+    best = max(topics, key=lambda t: len(t[1] & ids), default=None)
+    if not best or not ids <= best[1] or note.topic_note_is_stale(members, best[:2]):
+        return None
+    return best[2], best[3]
+
+
+def write_note(unit, vault, judge, judge_explicit=False):
+    """Write the unit's note now (one judge call); ((meta, body), its path),
+    or ExportError."""
+    from . import note
+
+    members = unit['members']
+    if len(members) == 1:
+        path = note._note_one(members[0], vault, judge, judge_explicit)
+        got = note._read_note(path) if path else None
+    else:
+        newest_first = sorted(members, key=_ts, reverse=True)
+        path = note.note_topic(newest_first, vault, judge, judge_explicit)
+        got = note._read_note(path, 'topic_key') if path else None
+    if not got:
+        raise ExportError('no note could be written (see above)')
+    return got, path
+
+
+def _note_text(body):
+    """A note's body without the transcript pointers it carries for
+    Obsidian (`原文 / Transcript: cw show ...`): in the wiki they would be
+    read as knowledge, and the frontmatter already says where it came from."""
+    out, skipping = [], False
+    for line in body.splitlines():
+        if line.startswith('原文 / Transcript'):
+            skipping = True
+            continue
+        if skipping and (not line.strip() or line.lstrip().startswith('- `cw show ')):
+            continue
+        skipping = False
+        out.append(line)
+    return '\n'.join(out).strip()
+
+
+def note_snapshot(project, unit, meta, body):
+    """A source whose content is the unit's cw note."""
+    project, root = source_root(project)
+    members = unit['members']
+    text = _note_text(body)
+    title = unit['title']
+    tools = sorted({r['tool'] for r in members})
+    date = str(meta.get('updated') or meta.get('noted') or '')[:10]
+    newest = max(members, key=_ts)
+    revision = _revision(dict(title=title, note=text,
+                              sessions=[f"{r['tool']}:{r['id']}" for r in members]))
+    if len(members) > 1:
+        key = topic_key(members)
+        folder, name, history = _folder(root, 'topic', key), TOPIC_NAME, ('topic', key)
+        dirs = sorted({str(meta.get('cwd') or '')} - {''})
+        fields = dict(kind=TOPIC_KIND, title=title,
+                      source_sessions=[f"{r['tool']}:{r['id']}" for r in members],
+                      source_directories=dirs, tools=tools, date=date,
+                      source_revision=revision, content_scope='cw_note',
+                      resume_command=f"cw resume {newest['tool']} {newest['id']}")
+    else:
+        r = members[0]
+        slug = _slug(r['id'])
+        folder, name, history = _folder(root, r['tool'], slug), SNAPSHOT_NAME, (r['tool'], slug)
+        folder.mkdir(parents=True, exist_ok=True)
+        _clear_old_revisions(folder, r['tool'], slug)
+        fields = dict(kind=SESSION_KIND, title=title, source_tool=r['tool'],
+                      source_session=r['id'], source_directory=str(meta.get('cwd') or ''),
+                      tools=tools, date=date, source_revision=revision,
+                      content_scope='cw_note',
+                      view_command=f"cw show {r['tool']} {r['id']}",
+                      resume_command=f"cw resume {r['tool']} {r['id']}")
+    target, written = _write(folder, name, _document(fields, f'# {title}\n\n{text}\n'), *history)
+    retired = _retire(root, members, keep=target) if len(members) > 1 else []
+    return target, written, retired
 
 
 def _describe(unit):
@@ -730,23 +855,65 @@ def _export_all(opts, client):
           + (f'{skipped["recent"]} active within {opts.older_than}, ' if quiet else '')
           + f'{skipped["short"]} under {note.MIN_TURNS} turns, '
           f'{skipped["tool"]} tool-started, {skipped["empty"]} with no text)', file=sys.stderr)
+    notes, need, vault = {}, [], None
+    if opts.content == CONTENT_NOTES and picked:
+        vault = note._vault_dir(None, 'cw export')
+        if vault is None:
+            raise ExportError('no vault for the notes; set CW_VAULT, or pass --content transcript')
+        state = notes_state(vault)
+        for unit in picked:
+            got = fresh_note(unit, state)
+            if got is None:
+                need.append(unit)
+            else:
+                notes[id(unit)] = got
+        if need:
+            print(f'cw export: {len(need)} of them need a note written first '
+                  f'(one judge call each, {opts.judge or "default judge"})', file=sys.stderr)
     if opts.dry_run:
         for unit in picked:
-            print(_describe(unit))
+            print(_describe(unit) + ('  (+note)' if unit in need else ''))
         return 0
     if not picked and not empty:
         return 0
     # The export is local and free; what it sets off is not: every new or
     # changed source is one ingest in the app, on the app's model.
+    calls = f' after {len(need)} judge calls for notes' if need else ''
     if not opts.yes and not note._confirm(
-            f'Export up to {len(picked)} sources into {opts.llm_wiki}? '
+            f'Export up to {len(picked)} sources into {opts.llm_wiki}{calls}? '
             'Each new or changed one is an LLM Wiki ingest. [y/N] '):
         print('cw export: nothing exported (pass -y to skip this question)', file=sys.stderr)
         return 1
     counts = {'exported': 0, 'unchanged': 0, 'failed': 0, 'retired': 0}
+    if need:
+        from concurrent.futures import ThreadPoolExecutor
+        from . import search
+
+        written = []
+        judge = opts.judge or search.DEFAULT_JUDGE
+
+        def one(unit):
+            try:
+                return write_note(unit, vault, judge, bool(opts.judge))
+            except (ExportError, OSError) as exc:
+                return exc
+
+        with ThreadPoolExecutor(max_workers=note.WORKERS) as pool:
+            for unit, got in zip(need, pool.map(one, need)):
+                if isinstance(got, Exception):
+                    counts['failed'] += 1
+                    r = unit['members'][-1]
+                    print(f'cw export: {r["tool"]} {r["id"]}: {got}', file=sys.stderr)
+                else:
+                    notes[id(unit)], path = got
+                    written.append(path)
+                    print(f'noted: {path}', flush=True)
+        note._index_folders_of(written)  # the project pages the notes are listed on
     for unit in picked:
+        if opts.content == CONTENT_NOTES and id(unit) not in notes:
+            continue  # its note failed, said above
         try:
-            target, written, retired = export_unit(opts.llm_wiki, unit)
+            target, written, retired = export_unit(opts.llm_wiki, unit, notes.get(id(unit)))
         except (ExportError, OSError) as exc:
             counts['failed'] += 1
             r = unit['members'][-1]
@@ -801,6 +968,10 @@ def cmd_export(args):
                              'continued does not go in alone first')
     parser.add_argument('--cwd', nargs='?', const=os.getcwd(), metavar='DIR',
                         help='with --all: only sessions started in DIR or below (default: current directory)')
+    parser.add_argument('--content', choices=(CONTENT_NOTES, CONTENT_TRANSCRIPT), default=CONTENT_NOTES,
+                        help="what a source holds: the session's or topic's cw note (default; one is "
+                             'written first when missing or behind), or the raw transcript')
+    parser.add_argument('--judge', help='with --content notes: the tool that writes missing notes')
     parser.add_argument('--dry-run', action='store_true', help='with --all: list what would be exported')
     parser.add_argument('-y', '--yes', action='store_true', help='with --all: do not ask before exporting')
     parser.add_argument('--llm-wiki', required=True, metavar='DIR', help='existing LLM Wiki project folder')
@@ -838,7 +1009,28 @@ def cmd_export(args):
             print(f'cw export: {tool} {sid} continues or is continued by '
                   f'{len(unit["members"]) - 1} other sessions; exporting the topic '
                   f'"{unit["title"]}" as one source', file=sys.stderr)
-            target, created, retired = export_unit(opts.llm_wiki, unit)
+        got = None
+        if opts.content == CONTENT_NOTES:
+            from . import note, search
+
+            source_root(opts.llm_wiki)
+            if unit is None:
+                record = sessions._find_record(tool, sid)
+                if record is None:
+                    raise ExportError('session no longer exists')
+                title = ' '.join((sessions._resolve_title_and_cwd(record)[0] or sid).split())
+                unit = dict(members=[record], title=title)
+            vault = note._vault_dir(None, 'cw export')
+            if vault is None:
+                raise ExportError('no vault for the notes; set CW_VAULT, or pass --content transcript')
+            got = fresh_note(unit, notes_state(vault))
+            if got is None:
+                print('cw export: writing the note first (one judge call)', file=sys.stderr)
+                got, path = write_note(unit, vault, opts.judge or search.DEFAULT_JUDGE, bool(opts.judge))
+                note._index_folders_of([path])
+                print(f'noted: {path}', file=sys.stderr)
+        if got is not None or (unit and len(unit['members']) > 1):
+            target, created, retired = export_unit(opts.llm_wiki, unit, got)
             for path in retired:
                 print(f'retired: {path}')
         else:

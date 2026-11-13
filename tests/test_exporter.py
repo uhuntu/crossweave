@@ -10,6 +10,17 @@ import pytest
 from crossweave import exporter, sessions
 
 
+@pytest.fixture(autouse=True)
+def transcripts_unless_said(monkeypatch):
+    """These tests are about the transcript form; the notes form, the
+    default, is tested below with --content notes said outright."""
+    real = exporter.cmd_export
+
+    def cmd_export(args):
+        return real(list(args) if '--content' in args else [*args, '--content', 'transcript'])
+    monkeypatch.setattr(exporter, 'cmd_export', cmd_export)
+
+
 @pytest.fixture
 def source(monkeypatch, tmp_path):
     project = tmp_path / 'my-wiki'
@@ -565,3 +576,148 @@ def test_older_than_refuses_what_cannot_match(chain, args, message, capsys):
     project, *_ = chain
     assert exporter.cmd_export(['--all', *args, '--llm-wiki', str(project)]) == 1
     assert message in capsys.readouterr().err
+
+
+# ---------- --content notes: the cw note is the source ----------
+
+SESSION_NOTE = """---
+title: "alone"
+tool: "step"
+session: "d"
+cwd: "/work/board"
+project: "board"
+updated: {updated}
+noted: {noted}
+resume: "cw resume step d"
+show: "cw show step d"
+tags: [ai-session, step]
+---
+# alone
+
+原文 / Transcript: `cw show step d`
+
+## 做了什么
+- flashed the board
+
+## 还剩什么
+- regression run
+"""
+
+
+@pytest.fixture
+def noted(chain, monkeypatch, tmp_path):
+    """The chain, a vault, and a judge that writes notes on demand."""
+    from crossweave import note
+    project, records, *_ = chain
+    vault = tmp_path / 'vault'
+    (vault / 'board').mkdir(parents=True)
+    monkeypatch.setenv('CW_VAULT', str(vault))
+    asked = []
+
+    def note_one(r, vault_, judge, explicit=False):
+        asked.append(('session', r['id']))
+        path = vault / 'board' / f"2026-11-13 {r['id']}.md"
+        path.write_text(SESSION_NOTE.replace('"d"', json.dumps(r['id'])).format(
+            updated='2026-11-13T10:00', noted='2099-01-01T00:00'), encoding='utf-8')
+        return str(path)
+
+    def note_topic(records_, vault_, judge, explicit=False):
+        asked.append(('topic', [r['id'] for r in records_]))
+        path = vault / 'board' / 'DevGetter 上架.md'
+        ids = json.dumps([r['id'] for r in records_])
+        path.write_text(f"""---
+title: "DevGetter 上架"
+topic_key: "a"
+cwd: "/work/board"
+project: "board"
+sessions: {ids}
+tools: ["claude", "kimi"]
+updated: 2026-11-13T10:00
+noted: 2099-01-01T00:00
+resume: "cw resume claude c"
+tags: [ai-topic]
+---
+# DevGetter 上架
+
+原文 / Transcripts:
+
+- `cw show claude c`
+- `cw show kimi b`
+- `cw show claude a`
+
+## 做了什么
+- shipped to Play
+
+## 还剩什么
+- MDM rollout
+""", encoding='utf-8')
+        return str(path)
+
+    monkeypatch.setattr(note, '_note_one', note_one)
+    monkeypatch.setattr(note, 'note_topic', note_topic)
+    return project, vault, asked
+
+
+def test_notes_are_written_where_missing_and_become_the_sources(noted, capsys):
+    project, vault, asked = noted
+    assert exporter.cmd_export(['--all', '-y', '--content', 'notes', '--llm-wiki', str(project)]) == 0
+    assert sorted(kind for kind, _ in asked) == ['session', 'topic']
+    assert _sources(project) == ['step/d/session.md', 'topic/claude-a/topic.md']
+    topic = (project / 'raw/sources/crossweave/topic/claude-a/topic.md').read_text(encoding='utf-8')
+    assert 'content_scope: "cw_note"' in topic
+    assert 'source_sessions: ["claude:a", "kimi:b", "claude:c"]' in topic
+    assert 'tools: ["claude", "kimi"]' in topic and 'date: "2026-11-13"' in topic
+    body = topic.split('\n---\n', 1)[1]
+    assert body.startswith('# DevGetter 上架\n\n## 做了什么\n- shipped to Play')
+    assert 'cw show' not in body and '原文' not in body
+    assert 'first answer' not in topic  # the transcript stays out
+    err = capsys.readouterr().err
+    assert '2 of them need a note written first' in err
+    # Notes now fresh: nothing is asked of the judge, nothing rewritten.
+    asked.clear()
+    assert exporter.cmd_export(['--all', '-y', '--content', 'notes', '--llm-wiki', str(project)]) == 0
+    assert asked == []
+    assert '0 exported, 2 unchanged' in capsys.readouterr().err
+
+
+def test_a_note_behind_its_session_is_written_again(noted, capsys):
+    project, vault, asked = noted
+    (vault / 'board' / '2026-11-12 d.md').write_text(SESSION_NOTE.format(
+        updated='2026-11-12T10:00', noted='2000-01-01T00:00'), encoding='utf-8')
+    assert exporter.cmd_export(['--all', '-y', '--content', 'notes', '--llm-wiki', str(project)]) == 0
+    assert ('session', 'd') in asked
+
+
+def test_dry_run_marks_what_needs_a_note_and_writes_nothing(noted, capsys):
+    project, vault, asked = noted
+    assert exporter.cmd_export(['--all', '--dry-run', '--content', 'notes', '--llm-wiki', str(project)]) == 0
+    out = capsys.readouterr().out
+    assert out.count('(+note)') == 2
+    assert asked == [] and not _sources(project)
+
+
+def test_a_failed_note_fails_only_its_source(noted, monkeypatch, capsys):
+    from crossweave import note
+    project, vault, asked = noted
+    monkeypatch.setattr(note, 'note_topic', lambda *a, **k: None)
+    assert exporter.cmd_export(['--all', '-y', '--content', 'notes', '--llm-wiki', str(project)]) == 1
+    assert _sources(project) == ['step/d/session.md']
+    assert '1 exported, 0 unchanged, 1 failed' in capsys.readouterr().err
+
+
+def test_a_transcript_source_turns_into_the_note_in_place(noted, capsys):
+    project, vault, asked = noted
+    assert exporter.cmd_export(['--all', '-y', '--content', 'transcript', '--llm-wiki', str(project)]) == 0
+    before = _sources(project)
+    assert exporter.cmd_export(['--all', '-y', '--content', 'notes', '--llm-wiki', str(project)]) == 0
+    assert _sources(project) == before
+    text = (project / 'raw/sources/crossweave/step/d/session.md').read_text(encoding='utf-8')
+    assert 'flashed the board' in text and 'alone answer' not in text
+
+
+def test_one_selected_session_exports_its_note(noted, monkeypatch, capsys):
+    project, vault, asked = noted
+    monkeypatch.setitem(sessions.ID_RESOLVERS, 'step', lambda prefix: [prefix])
+    assert exporter.cmd_export(['step', 'd', '--content', 'notes', '--llm-wiki', str(project)]) == 0
+    assert asked == [('session', 'd')]
+    assert 'writing the note first' in capsys.readouterr().err
