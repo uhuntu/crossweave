@@ -5,7 +5,9 @@ file, and once a day (CW_AUTO=12h to change it, =off to stop) starts the
 day's upkeep in the background and goes on at once:
 
 1. a note for every session or topic that has gone quiet for a day and has
-   no note yet, or one behind it (one judge call each, four at a time);
+   no note yet, or one behind it (one judge call each, four at a time), and
+   the new notes of sessions started in ~ moved into the projects they are
+   about (`cw note --sort-home`, one judge call);
 2. the project pages those notes put behind (`cw wiki --projects`);
 3. with CW_LLM_WIKI set, the notes exported into that LLM Wiki and a rescan
    asked for (CW_LLM_WIKI_EXPORT=off skips this step alone).
@@ -206,6 +208,17 @@ def _write_quiet_notes(vault, since):
     return None
 
 
+def _sort_home(vault):
+    """Step 1b: notes of sessions started in ~ moved into the projects they
+    are about (one judge call for all of them). Returns None; a judge that
+    is unavailable leaves _home as it is, which is no failure."""
+    from . import note, search
+
+    if note.unsorted_home_notes(vault):
+        note.sort_home(vault, search.DEFAULT_JUDGE, yes=True)
+    return None
+
+
 def _refresh_project_pages(vault):
     """Step 2: the project pages the notes put behind (one judge call
     each). Returns the first failure's text, or None."""
@@ -288,6 +301,7 @@ def run():
     errors = []
     if vault:
         errors.append(_step('notes', _write_quiet_notes, vault, since))
+        errors.append(_step('sorting _home', _sort_home, vault))
         errors.append(_step('project pages', _refresh_project_pages, vault))
     if wiki:
         errors.append(_step('LLM Wiki export', _export_to_wiki, wiki, since))

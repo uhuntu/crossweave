@@ -184,19 +184,21 @@ def steps(vault, monkeypatch):
     monkeypatch.setattr(wiki, "stale_projects", lambda v: ["board"])
     monkeypatch.setattr(wiki, "build_project", lambda v, name, judge: done.append(("project", name)) or "p")
     monkeypatch.setattr(exporter, "_export_all", lambda opts, client: done.append(("export", opts.content)) or 0)
+    monkeypatch.setattr(note, "unsorted_home_notes", lambda v: ["one"])
+    monkeypatch.setattr(note, "sort_home", lambda v, judge, yes=False: done.append(("sort", yes)) or [])
     return done
 
 
 def test_a_run_writes_the_missing_notes_then_the_project_pages(steps, vault):
     assert autoexport.run() == 0
     assert steps[0] == ("pick", autoexport.FIRST_SPAN, 86400)
-    assert steps[1:] == [("notes", ["B"]), ("project", "board")]
+    assert steps[1:] == [("notes", ["B"]), ("sort", True), ("project", "board")]
     assert state()["result"] == "ok" and state()["succeeded"]
 
 
 def test_with_an_llm_wiki_the_notes_are_exported_last(steps, llm_wiki):
     assert autoexport.run() == 0
-    assert [s[0] for s in steps] == ["pick", "notes", "project", "export"]
+    assert [s[0] for s in steps] == ["pick", "notes", "sort", "project", "export"]
     assert steps[-1] == ("export", exporter.CONTENT_NOTES)
 
 
