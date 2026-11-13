@@ -43,6 +43,7 @@ import json
 import os
 import shutil
 import sqlite3
+import threading
 import urllib.parse
 
 from . import common
@@ -71,19 +72,21 @@ TITLE_SCAN_MESSAGES = 50
 # underneath is reconnected rather than served from the old file, and a
 # vanished one reads as absent. Read-only mode means the handle holds no
 # lock the app could trip over.
-_connection = None
-_connection_key = None
+# Per thread: sqlite3 refuses a connection on any thread but the one that
+# opened it (ProgrammingError, which _query reads as "no rows"), so `cw
+# note`/`cw export` workers saw these sessions as empty.
+_local = threading.local()
 
 
 def _drop_connection():
-    global _connection, _connection_key
-    if _connection is not None:
+    con = getattr(_local, "connection", None)
+    if con is not None:
         try:
-            _connection.close()
+            con.close()
         except sqlite3.Error:
             pass
-    _connection = None
-    _connection_key = None
+    _local.connection = None
+    _local.key = None
 
 
 def _connect():
@@ -94,7 +97,6 @@ def _connect():
     checkpoints a read-write connection performs), which is what sharing a
     database with a running app requires. The backslash swap keeps the URI
     legal on Windows."""
-    global _connection, _connection_key
     if not os.path.isfile(ZCODE_DB):
         _drop_connection()
         return None
@@ -104,16 +106,16 @@ def _connect():
         _drop_connection()
         return None
     key = (ZCODE_DB, st.st_dev, st.st_ino)
-    if _connection is not None and _connection_key == key:
-        return _connection
+    if getattr(_local, "connection", None) is not None and getattr(_local, "key", None) == key:
+        return _local.connection
     _drop_connection()
     try:
-        _connection = sqlite3.connect("file:%s?mode=ro" % ZCODE_DB.replace("\\", "/"), uri=True)
-        _connection_key = key
+        _local.connection = sqlite3.connect("file:%s?mode=ro" % ZCODE_DB.replace("\\", "/"), uri=True)
+        _local.key = key
     except sqlite3.Error:
-        _connection = None
-        _connection_key = None
-    return _connection
+        _local.connection = None
+        _local.key = None
+    return _local.connection
 
 
 def _query(query, params=()):

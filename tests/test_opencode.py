@@ -214,3 +214,17 @@ def test_build_command_maps_the_common_flags():
 
 def test_a_lone_directory_stays_opencodes_positional(tmp_path):
     assert cli.build_command("opencode", [str(tmp_path)]) == ["opencode", str(tmp_path)]
+
+
+def test_a_worker_thread_reads_what_the_main_thread_opened(tmp_path, monkeypatch):
+    # The same-thread check zcode tripped on (see test_zcode): notes are
+    # written four at a time, on threads other than the one that listed.
+    import threading
+    basic(tmp_path, monkeypatch)
+    main = opencode.opencode_handoff_messages(SID)
+    assert main
+    got = []
+    worker = threading.Thread(target=lambda: got.append(opencode.opencode_handoff_messages(SID)))
+    worker.start()
+    worker.join()
+    assert got == [main]

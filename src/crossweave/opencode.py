@@ -27,6 +27,7 @@ import json
 import os
 import re
 import sqlite3
+import threading
 
 from . import common
 
@@ -47,23 +48,24 @@ TITLE_SCAN_MESSAGES = 50
 
 # One cached read-only connection per process, revalidated by file identity
 # on every take -- the reason and the shape are zcode's (see zcode._connect).
-_connection = None
-_connection_key = None
+# Per thread: sqlite3 refuses a connection on any thread but the one that
+# opened it (ProgrammingError, which _query reads as "no rows"), so `cw
+# note`/`cw export` workers saw these sessions as empty.
+_local = threading.local()
 
 
 def _drop_connection():
-    global _connection, _connection_key
-    if _connection is not None:
+    con = getattr(_local, "connection", None)
+    if con is not None:
         try:
-            _connection.close()
+            con.close()
         except sqlite3.Error:
             pass
-    _connection = None
-    _connection_key = None
+    _local.connection = None
+    _local.key = None
 
 
 def _connect():
-    global _connection, _connection_key
     db = OPENCODE_DB
     try:
         st = os.stat(db)
@@ -71,16 +73,16 @@ def _connect():
         _drop_connection()
         return None
     key = (db, st.st_dev, st.st_ino)
-    if _connection is not None and _connection_key == key:
-        return _connection
+    if getattr(_local, "connection", None) is not None and getattr(_local, "key", None) == key:
+        return _local.connection
     _drop_connection()
     try:
-        _connection = sqlite3.connect("file:%s?mode=ro" % db.replace("\\", "/"), uri=True)
-        _connection_key = key
+        _local.connection = sqlite3.connect("file:%s?mode=ro" % db.replace("\\", "/"), uri=True)
+        _local.key = key
     except sqlite3.Error:
-        _connection = None
-        _connection_key = None
-    return _connection
+        _local.connection = None
+        _local.key = None
+    return _local.connection
 
 
 def _query(query, params=()):

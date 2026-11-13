@@ -815,3 +815,17 @@ def test_zcode_takes_no_wrapper_flags():
 def test_the_deep_link_encodes_the_whole_path():
     link = zcode.zcode_workspace_link("/home/hunt/work/JSearch")
     assert link == "zcode://workspace/open?path=%2Fhome%2Fhunt%2Fwork%2FJSearch"
+
+
+def test_a_worker_thread_reads_what_the_main_thread_opened(tmp_path):
+    # `cw note` and `cw export` write notes four at a time: a connection the
+    # main thread opened used to be refused on the workers (sqlite3's
+    # same-thread check), and every zcode session read as empty there.
+    import threading
+    one_session(tmp_path)
+    assert zcode.zcode_handoff_messages(SID) == [("user", "fix the nfc lock")]
+    got = []
+    worker = threading.Thread(target=lambda: got.append(zcode.zcode_handoff_messages(SID)))
+    worker.start()
+    worker.join()
+    assert got == [[("user", "fix the nfc lock")]]
