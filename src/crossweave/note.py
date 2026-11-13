@@ -1548,6 +1548,10 @@ def sort_home(vault, judge, judge_explicit=False, yes=False, dry_run=False):
                 if os.path.exists(dest):
                     stem, ext = os.path.splitext(os.path.basename(path))
                     dest = os.path.join(folder, f"{stem} (from _home){ext}")
+                    suffix = 2
+                    while os.path.exists(dest):
+                        dest = os.path.join(folder, f"{stem} (from _home {suffix}){ext}")
+                        suffix += 1
                 text = _set_front(text, "project", target)
                 touched.append(dest)
             tmp = f"{dest}.{os.getpid()}.tmp"

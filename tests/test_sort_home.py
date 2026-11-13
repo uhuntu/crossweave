@@ -79,6 +79,25 @@ def test_dry_run_shows_the_plan_and_moves_nothing(vault, capsys):
     assert len(list((v / note.HOME_PROJECT).glob("*.md"))) == 4
 
 
+def test_moving_a_note_preserves_all_existing_names(vault):
+    v, replies, _ = vault
+    folder = v / "Rock 5B"
+    folder.mkdir()
+    names = ["2026-11-01 蓝牙流控.md", "2026-11-01 蓝牙流控 (from _home).md",
+             "2026-11-01 蓝牙流控 (from _home 2).md"]
+    for name in names:
+        (folder / name).write_text("Existing handwritten content", encoding="utf-8")
+    replies.append(REPLY)
+
+    moved = note.sort_home(str(v), "step", yes=True)
+
+    for name in names:
+        assert (folder / name).read_text(encoding="utf-8") == "Existing handwritten content"
+    destination = folder / "2026-11-01 蓝牙流控 (from _home 3).md"
+    assert (str(v / note.HOME_PROJECT / names[0]), str(destination)) in moved
+    assert 'session: "s1"' in destination.read_text(encoding="utf-8")
+
+
 def test_without_a_yes_nothing_moves(vault, capsys):
     v, replies, _ = vault
     replies.append(REPLY)
