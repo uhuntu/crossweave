@@ -70,7 +70,8 @@ def test_a_note_lands_in_the_project_folder_with_frontmatter(world, capsys):
     assert 'session: "sess_abc"' in text
     assert 'resume: "cw resume zcode sess_abc"' in text
     assert "tags: [ai-session, zcode]" in text
-    assert text.rstrip().endswith("- 回归测试")
+    assert text.partition(note.OWN_MARKER)[0].rstrip().endswith("- 回归测试")
+    assert "## 我的补充 / My notes" in text
     assert "# USB 枚举握手排查\n\n原文 / Transcript: `cw show zcode sess_abc`\n\n## 做了什么" in text
     assert 'show: "cw show zcode sess_abc"' in text
     assert f"noted: board{os.sep}" in capsys.readouterr().out  # a native path
@@ -86,6 +87,32 @@ def test_noting_again_rewrites_the_same_note(world):
     assert len(files) == 1, files  # found by its session line, not its name
     text = (world.vault / files[0]).read_text(encoding="utf-8")
     assert "something else" in text and "a new title" in text
+
+
+def test_rewriting_a_moved_note_preserves_the_handwritten_suffix(world):
+    note.cmd_note(["1"])
+    path = world.vault / _notes(world.vault)[0]
+    own = "\n\n## 我的补充\n\n手动更正。\n\n```sh\necho kept\n```\n"
+    path.write_text(path.read_text(encoding="utf-8").partition(note.OWN_MARKER)[0]
+                    + note.OWN_MARKER + own, encoding="utf-8")
+    folder = world.vault / "Moved"
+    folder.mkdir()
+    path = path.rename(folder / path.name)
+    world.reply = "## 做了什么\n- 新进展"
+    for _ in range(2):
+        assert note.cmd_note(["1"]) == 0
+        text = path.read_text(encoding="utf-8")
+        assert text.partition(note.OWN_MARKER)[2] == own
+        assert text.count(note.OWN_MARKER) == 1
+        assert "新进展" in text
+
+
+def test_unreadable_existing_note_is_not_replaced(tmp_path):
+    path = tmp_path / "note.md"
+    path.write_bytes(b"\xff")
+    with pytest.raises(UnicodeDecodeError):
+        note._with_own_notes("new generated content", str(path))
+    assert path.read_bytes() == b"\xff"
 
 
 def test_an_id_prefix_works_where_a_row_does(world):
@@ -143,7 +170,7 @@ def test_a_fenced_reply_keeps_only_the_note(world):
     world.reply = "Here you go:\n```markdown\n## Done\n- x\n```\n"
     assert note.cmd_note(["1"]) == 0
     text = (world.vault / _notes(world.vault)[0]).read_text(encoding="utf-8")
-    assert text.endswith("## Done\n- x\n")
+    assert text.partition(note.OWN_MARKER)[0].rstrip().endswith("## Done\n- x")
 
 
 def test_a_dead_judge_writes_nothing(world, monkeypatch, capsys):
@@ -360,7 +387,7 @@ def test_the_index_is_not_a_note(world, capsys):
     assert set(note.noted_index()) == {"sess_abc"}
     capsys.readouterr()
     assert note.cmd_context(["/w/board"]) == 0
-    assert capsys.readouterr().out.count("## ") == 1 + 3  # one note, its 3 sections
+    assert capsys.readouterr().out.count("## ") == 1 + 4  # one note, its 3 sections and the handwritten section
 
 
 def test_open_items_come_from_the_newest_notes_only(world):

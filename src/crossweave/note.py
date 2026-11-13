@@ -405,6 +405,26 @@ def _existing_note_anywhere(vault, sid, first):
     return path
 
 
+OWN_MARKER = "<!-- cw note: 下面是你自己的内容，重写时保留 / your own notes below survive rewrites -->"
+
+
+def _with_own_notes(text, path):
+    """Keep the user's suffix verbatim, outside the generated part.
+
+    Read errors must stop the write: treating an unreadable note as new
+    would silently discard the very content this boundary protects.
+    """
+    try:
+        with open(path, encoding="utf-8", newline="") as fh:
+            previous = fh.read()
+    except FileNotFoundError:
+        previous = ""
+    _, sep, own = previous.partition(OWN_MARKER)
+    if not sep:
+        own = "\n\n## 我的补充 / My notes\n\n"
+    return text.rstrip() + "\n\n" + OWN_MARKER + own
+
+
 def _write_note(r, vault, title, cwd, body):
     folder = os.path.join(vault, _project(cwd))
     os.makedirs(folder, exist_ok=True)
@@ -417,9 +437,11 @@ def _write_note(r, vault, title, cwd, body):
         path = os.path.join(folder, f"{when:%Y-%m-%d} {name}.md")
         if os.path.exists(path):  # another session, same day and title
             path = os.path.join(folder, f"{when:%Y-%m-%d} {name} {r['id'][:8]}.md")
+    text = _with_own_notes(render(r, title, cwd, body,
+                           project=os.path.basename(os.path.dirname(path))), path)
     tmp = f"{path}.{os.getpid()}.{threading.get_ident()}.tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        fh.write(render(r, title, cwd, body, project=os.path.basename(os.path.dirname(path))))
+    with open(tmp, "w", encoding="utf-8", newline="") as fh:
+        fh.write(text)
     os.replace(tmp, path)
     return path
 
@@ -573,10 +595,11 @@ def note_topic(records, vault, judge, judge_explicit=False):
             path = os.path.join(folder, f"{_safe_name(name) or 'topic'}.md")
             if os.path.exists(path):
                 path = os.path.join(folder, f"{_safe_name(name) or 'topic'} (topic).md")
+        text = _with_own_notes(render_topic(records, name, key, cwd, body,
+                                project=os.path.basename(os.path.dirname(path))), path)
         tmp = f"{path}.{os.getpid()}.{threading.get_ident()}.tmp"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            fh.write(render_topic(records, name, key, cwd, body,
-                                  project=os.path.basename(os.path.dirname(path))))
+        with open(tmp, "w", encoding="utf-8", newline="") as fh:
+            fh.write(text)
         os.replace(tmp, path)
     append_log(vault, "topic", _project(cwd), f"{name} ({len(records)} sessions)")
     return path

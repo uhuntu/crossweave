@@ -97,6 +97,21 @@ def test_noting_the_topic_again_rewrites_its_note(world):
     assert "vc9" in (world.vault / "ApiService" / "DevGetter 上架.md").read_text(encoding="utf-8")
 
 
+def test_topic_rewrite_preserves_handwritten_content(world):
+    note.cmd_note(["1"])
+    path = world.vault / "ApiService" / "DevGetter 上架.md"
+    own = "\n\n## 手写补充\n- 设备验证结果，与自动总结分开保留。\n"
+    path.write_text(path.read_text(encoding="utf-8").partition(note.OWN_MARKER)[0]
+                    + note.OWN_MARKER + own, encoding="utf-8")
+    world.reply = TOPIC_REPLY.replace("vc8", "vc10")
+    for _ in range(2):
+        assert note.cmd_note(["1"]) == 0
+        text = path.read_text(encoding="utf-8")
+        assert "vc10" in text
+        assert text.partition(note.OWN_MARKER)[2] == own
+        assert text.count(note.OWN_MARKER) == 1
+
+
 def test_session_flag_and_a_plain_row_note_one_session(world, monkeypatch):
     seen = []
     monkeypatch.setattr(note, "_note_one", lambda r, *a, **k: seen.append(r["id"]) or None)
