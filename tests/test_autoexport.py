@@ -173,6 +173,7 @@ def test_the_spawned_process_is_detached_and_logs(vault, monkeypatch, tmp_path):
 def steps(vault, monkeypatch):
     """The three steps' machinery faked: two quiet units, one with a fresh note."""
     done = []
+    monkeypatch.setattr(autoexport, '_backfill_notes', lambda v, since: None)
     units = [{"members": [{"tool": "zcode", "id": "a"}], "title": "A"},
              {"members": [{"tool": "zcode", "id": "b"}], "title": "B"}]
     monkeypatch.setattr(exporter, "pick_sessions", lambda since, under, quiet: (
@@ -226,3 +227,58 @@ def test_the_run_reaches_back_to_what_the_last_success_could_not_take(steps, vau
         "started": time.time(), "succeeded": time.time() - 10 * 86400}})
     autoexport.run()
     assert steps[0][1] >= 11 * 86400
+
+
+def test_history_is_bounded_skips_fresh_and_recent_and_resumes(vault, monkeypatch):
+    v, _ = vault
+    now = [time.time()]
+    monkeypatch.setattr(autoexport.time, 'time', lambda: now[0])
+    units = [{'title': str(n), 'members': [{'id': str(n), 'ts': now[0] - n * 86400} ]}
+             for n in range(1, 35)]
+    monkeypatch.setattr(exporter, 'pick_sessions', lambda *args: (units, {}, []))
+    monkeypatch.setattr(exporter, 'notes_state', lambda v: {})
+    fresh, batches = {'9'}, []
+    monkeypatch.setattr(exporter, 'fresh_note', lambda u, st: True if u['title'] in fresh else None)
+
+    def write(batch, *args, **kwargs):
+        batches.append([u['title'] for u in batch])
+        fresh.update(batches[-1])
+        return {}, []
+    monkeypatch.setattr(exporter, 'write_notes', write)
+    assert autoexport._backfill_notes(str(v), 7 * 86400) is None
+    assert batches == [[str(n) for n in range(8, 29) if n != 9]]
+    assert autoexport._backfill_notes(str(v), 7 * 86400) is None
+    assert len(batches) == 1
+    now[0] += 86401
+    autoexport._backfill_notes(str(v), 7 * 86400)
+    assert len(batches) == 2
+    assert not set(batches[0]) & set(batches[1])
+    assert '34' in batches[1]
+
+
+def test_history_failures_consume_budget_and_budget_is_per_vault(vault, monkeypatch, tmp_path):
+    v, _ = vault
+    units = [{'title': str(n), 'members': [{'id': str(n), 'ts': time.time() - 30 * 86400}]}
+             for n in range(25)]
+    monkeypatch.setattr(exporter, 'pick_sessions', lambda *args: (units, {}, []))
+    monkeypatch.setattr(exporter, 'notes_state', lambda v: {})
+    monkeypatch.setattr(exporter, 'fresh_note', lambda *args: None)
+    batches = []
+
+    def fail(batch, *args, **kwargs):
+        batches.append(batch)
+        return {}, [(u, exporter.ExportError('judge unavailable')) for u in batch]
+    monkeypatch.setattr(exporter, 'write_notes', fail)
+    assert '20 historical note(s)' in autoexport._backfill_notes(str(v), 7 * 86400)
+    assert autoexport._backfill_notes(str(v), 7 * 86400) is None
+    assert len(batches) == 1
+    assert '20 historical note(s)' in autoexport._backfill_notes(str(tmp_path / 'other'), 7 * 86400)
+    assert len(batches) == 2
+
+
+def test_history_runs_between_recent_notes_and_sorting(steps, vault, monkeypatch):
+    monkeypatch.setattr(autoexport, '_backfill_notes',
+                        lambda v, since: steps.append(('history', since)) or 'backfill failed')
+    assert autoexport.run() == 1
+    assert [s[0] for s in steps] == ['pick', 'notes', 'history', 'sort', 'project']
+    assert state()['error'] == 'backfill failed'

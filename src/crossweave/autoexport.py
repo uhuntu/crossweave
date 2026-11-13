@@ -5,7 +5,8 @@ file, and once a day (CW_AUTO=12h to change it, =off to stop) starts the
 day's upkeep in the background and goes on at once:
 
 1. a note for every session or topic that has gone quiet for a day and has
-   no note yet, or one behind it (one judge call each, four at a time), and
+   no note yet, or one behind it (one judge call each, four at a time);
+   older history follows, at most 20 note attempts per vault per 24h, and
    the new notes of sessions started in ~ moved into the projects they are
    about (`cw note --sort-home`, one judge call);
 2. the project pages those notes put behind (`cw wiki --projects`);
@@ -43,6 +44,8 @@ RETRY_FAILED = 3600
 LOG_BYTES = 1_000_000
 OFF = ('0', 'off', 'no', 'false')
 KEY = 'daily'
+BACKFILL_LIMIT = 20
+BACKFILL_WINDOW = 86400
 
 
 def _state_dir():
@@ -208,6 +211,44 @@ def _write_quiet_notes(vault, since):
     return None
 
 
+def _backfill_notes(vault, since):
+    """Catch up outside the recent window, at most 20 attempts per vault
+    in 24 hours. Reserve attempts before calling the judge so retries of
+    unrelated failed steps cannot spend another whole batch."""
+    from . import note, search
+
+    now = time.time()
+    state = _read_state()
+    quotas = state.setdefault('backfill', {})
+    key = str(Path(vault).resolve())
+    quota = quotas.get(key, {})
+    if now - quota.get('started', 0) >= BACKFILL_WINDOW:
+        quota = {'started': now, 'attempted': 0}
+    remaining = max(0, BACKFILL_LIMIT - quota.get('attempted', 0))
+    if not remaining:
+        print('cw note: historical backfill budget used; waiting for the next day', flush=True)
+        return None
+    picked, _skipped, _empty = exporter.pick_sessions(None, None, note._parse_since(QUIET))
+    notes = exporter.notes_state(vault)
+    cutoff = now - since
+    need = [u for u in picked
+            if all(exporter._ts(r) and exporter._ts(r) < cutoff for r in u['members'])
+            and exporter.fresh_note(u, notes) is None]
+    batch = need[:remaining]
+    print(f'cw note: historical backfill {len(batch)} of {len(need)} pending '
+          f'(limit {BACKFILL_LIMIT} attempts per 24h)', flush=True)
+    if not batch:
+        return None
+    quota['attempted'] = quota.get('attempted', 0) + len(batch)
+    quota.setdefault('started', now)
+    quotas[key] = quota
+    _write_state(state)
+    _notes, failed = exporter.write_notes(batch, vault, search.DEFAULT_JUDGE, prog='cw note history')
+    if failed:
+        return f'{len(failed)} historical note(s) not written: {failed[0][1]}'
+    return None
+
+
 def _sort_home(vault):
     """Step 1b: notes of sessions started in ~ moved into the projects they
     are about (one judge call for all of them). Returns None; a judge that
@@ -301,6 +342,7 @@ def run():
     errors = []
     if vault:
         errors.append(_step('notes', _write_quiet_notes, vault, since))
+        errors.append(_step('historical notes', _backfill_notes, vault, since))
         errors.append(_step('sorting _home', _sort_home, vault))
         errors.append(_step('project pages', _refresh_project_pages, vault))
     if wiki:
