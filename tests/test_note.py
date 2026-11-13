@@ -54,8 +54,9 @@ def world(monkeypatch, tmp_path):
 
 def _notes(vault):
     # as_posix: the assertions spell folders with "/", Windows paths with "\\"
+    # cw's own files at the vault's root (_schema.md, _log.md) are not notes
     return sorted(p.relative_to(vault).as_posix() for p in vault.rglob("*.md")
-                  if p.name != note.INDEX_NAME)
+                  if p.name != note.INDEX_NAME and p.parent != vault)
 
 
 def test_a_note_lands_in_the_project_folder_with_frontmatter(world, capsys):

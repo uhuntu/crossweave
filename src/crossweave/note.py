@@ -136,6 +136,101 @@ def _resolve(target, cache):
     return r, None
 
 
+# ---------- the vault's own conventions and log ----------
+
+SCHEMA_NAME = "_schema.md"
+LOG_NAME = "_log.md"
+SCHEMA_CHARS = 4000
+DEFAULT_SCHEMA = """---
+kind: cw-schema
+---
+# 知识库约定 / Wiki conventions
+
+cw 写笔记（`cw note`）、话题笔记、话题页（`cw wiki <话题>`）和项目概览（`cw wiki --project`）时，
+都会把这一页交给模型，作为必须遵守的约定。改这里就能调整所有生成内容的写法，从下一次生成起生效。
+各类页面的节标题（如“还剩什么”“现状”）请保留：cw 靠它们找待办、拼上下文。
+
+## 写什么
+- 具体：文件路径、命令、版本、配置值、错误信息、PR 与提交号、相关的人。
+- 决定要写原因；踩过的坑要写解决办法。
+- 被后来推翻或已经完成的内容，不再当作现状写。
+
+## 不写什么
+- 会话机制本身：会话 ID、cw 命令、导出格式、工具注入的系统提示。
+- 常识性解释（什么是 Git、什么是代理）。
+- 寒暄、模型复述自己的指令、半途放弃又没有结论的尝试细节。
+
+## 命名
+- 同一个东西只用一种写法：DevGetter、TesSmartUpdater、ApiService、OEMConfig、Rock 5B、CYW55572、crossweave（cw）、LLM Wiki。
+
+## 语言
+- 跟随会话的语言；专有名词、命令、路径保持原文。
+"""
+
+
+def vault_schema(vault):
+    """The conventions in <vault>/_schema.md, frontmatter dropped -- the
+    defaults while there is no such file. "" when it cannot be read."""
+    if not vault:
+        return ""
+    path = os.path.join(vault, SCHEMA_NAME)
+    if not os.path.exists(path):
+        text = DEFAULT_SCHEMA
+    else:
+        try:
+            with open(path, encoding="utf-8") as fh:
+                text = fh.read()
+        except (OSError, UnicodeDecodeError):
+            return ""
+    if text.startswith("---\n") and "\n---\n" in text[4:]:
+        text = text[4:].split("\n---\n", 1)[1]
+    text = text.strip()
+    return text[:SCHEMA_CHARS]
+
+
+def with_schema(prompt, vault):
+    """The prompt with the user's conventions put in just before its last
+    instruction (the "Reply with ..." line), where they read as binding."""
+    conventions = vault_schema(vault)
+    if not conventions:
+        return prompt
+    block = ("The user's conventions for this knowledge base (from "
+             f"{SCHEMA_NAME}; follow them, and where they conflict with the "
+             "rules above, they win -- except the section headings, which keep "
+             "the names given above):\n" + conventions + "\n\n")
+    head, sep, tail = prompt.rpartition("\nReply with ")
+    return f"{head}\n\n{block}Reply with {tail}" if sep else prompt + "\n\n" + block
+
+
+def append_log(vault, kind, project, text, now=None):
+    """One line in <vault>/_log.md: what cw generated, when, in the same
+    grep-able shape every time (`## [YYYY-MM-DD HH:MM] kind | project | text`).
+    Never fails what it records."""
+    if not vault:
+        return
+    now = now or datetime.datetime.now()
+    path = os.path.join(vault, LOG_NAME)
+    line = f"## [{now:%Y-%m-%d %H:%M}] {kind} | {project} | {' '.join(str(text).split())}\n"
+    # The first thing cw writes also leaves the conventions it followed,
+    # as a file to edit -- not before: a judge that fails writes nothing.
+    try:
+        with open(os.path.join(vault, SCHEMA_NAME), "x", encoding="utf-8") as fh:
+            fh.write(DEFAULT_SCHEMA)
+    except OSError:
+        pass
+    try:
+        with _WRITE_LOCK:
+            fresh = not os.path.exists(path)
+            with open(path, "a", encoding="utf-8") as fh:
+                if fresh:
+                    fh.write("---\nkind: cw-log\n---\n# cw log\n\n"
+                             "What cw wrote into this vault, oldest first. "
+                             "Appended by cw; grep it.\n\n")
+                fh.write(line)
+    except OSError:
+        pass
+
+
 def _prompt(r, title, cwd, digest):
     return (
         "Below is a digest of one past AI coding-assistant session: the "
@@ -171,11 +266,11 @@ def _clean(output):
     return "\n".join(body).strip()
 
 
-def _summarize(r, title, cwd, digest, judge, judge_explicit=False, label="the note"):
+def _summarize(r, title, cwd, digest, judge, judge_explicit=False, label="the note", vault=None):
     """The note body from the judge, or raise search.JudgeError / return ""."""
     from . import search
 
-    prompt = _prompt(r, title, cwd, digest)
+    prompt = with_schema(_prompt(r, title, cwd, digest), vault)
     # As with `cw rename`: a judge that answers in prose once usually
     # answers in shape the next time, so one retry before giving up. The
     # call rides search's fallback chain: a judge that is out of credit,
@@ -271,7 +366,7 @@ def _note_one(r, vault, judge, judge_explicit=False):
     # which judge is being asked is the fallback chain's own line to print
     try:
         body = _summarize(r, title, cwd, digest, judge, judge_explicit,
-                          label=f"the note for {short}")
+                          label=f"the note for {short}", vault=vault)
     except search.JudgeError as e:
         print(f"cw note: judge ({judge}) unavailable -- {short} not noted "
               f"(exit {e.code}); try --judge <tool>", file=sys.stderr)
@@ -282,7 +377,9 @@ def _note_one(r, vault, judge, judge_explicit=False):
         return None
 
     with _WRITE_LOCK:
-        return _write_note(r, vault, title, cwd, body)
+        path = _write_note(r, vault, title, cwd, body)
+    append_log(vault, "note", _project(cwd), f"{title} ({r['tool']})")
+    return path
 
 
 def _write_note(r, vault, title, cwd, body):
@@ -419,7 +516,7 @@ def note_topic(records, vault, judge, judge_explicit=False):
     if not parts:
         print(f"cw note: the sessions of '{name}' hold nothing to note", file=sys.stderr)
         return None
-    prompt = _topic_prompt(name, cwd, parts)
+    prompt = with_schema(_topic_prompt(name, cwd, parts), vault)
     body, used = "", judge
     try:
         for _ in range(2):
@@ -449,6 +546,7 @@ def note_topic(records, vault, judge, judge_explicit=False):
         with open(tmp, "w", encoding="utf-8") as fh:
             fh.write(render_topic(records, name, key, cwd, body))
         os.replace(tmp, path)
+    append_log(vault, "topic", _project(cwd), f"{name} ({len(records)} sessions)")
     return path
 
 
