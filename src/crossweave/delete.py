@@ -1,11 +1,13 @@
 """Remove a local session from cw's scanned store, retaining a file backup."""
+import base64
 import json
 import os
 import shutil
+import sqlite3
 import sys
 import tempfile
 
-from . import codex, common, sessions
+from . import agy, codex, common, sessions
 
 
 def _paths(record):
@@ -20,7 +22,52 @@ def _paths(record):
         return [record['dir']] if record.get('dir') else []
     if tool in ('claude', 'step', 'pi'):
         return [record['path']] if record.get('path') else []
+    if tool == 'agy':
+        sid = record['id']
+        candidates = [
+            os.path.join(agy.AGY_BRAIN, sid),
+            os.path.join(agy.AGY_DIR, 'conversations', f'{sid}.pb'),
+        ]
+        return [p for p in candidates if os.path.exists(p)]
     return []
+
+
+def _agy_backup_row(sid):
+    if not os.path.isfile(agy.AGY_DB):
+        return None
+    con = sqlite3.connect(f'file:{agy.AGY_DB.replace(chr(92), "/")}?mode=ro', uri=True)
+    try:
+        cur = con.execute(
+            'SELECT * FROM conversation_summaries WHERE conversation_id = ?', (sid,))
+        row = cur.fetchone()
+        if not row:
+            return None
+        cols = [d[0] for d in cur.description]
+        out = {}
+        for k, v in zip(cols, row):
+            out[k] = base64.b64encode(v).decode('ascii') if isinstance(v, (bytes, bytearray)) else v
+        return out
+    except sqlite3.Error:
+        return None
+    finally:
+        con.close()
+
+
+def _agy_delete_db(sid):
+    if not os.path.isfile(agy.AGY_DB):
+        return
+    con = sqlite3.connect(agy.AGY_DB, timeout=10)
+    try:
+        with con:
+            con.execute('DELETE FROM conversation_summaries WHERE conversation_id = ?', (sid,))
+            for table in ('conversations_fts', 'conversation_parents'):
+                try:
+                    con.execute(f'DELETE FROM {table} WHERE conversation_id = ?', (sid,))
+                except sqlite3.OperationalError:
+                    pass
+    finally:
+        con.close()
+    agy._drop_connection()
 
 
 def cmd_delete(args):
@@ -47,7 +94,7 @@ def cmd_delete(args):
         print('cw delete: session no longer exists -- run `cw` to refresh', file=sys.stderr)
         return 1
     paths = _paths(record)
-    if not paths:
+    if not paths and entry['tool'] != 'agy':
         print(f"cw delete: {entry['tool']} deletion is not supported", file=sys.stderr)
         return 1
     print(f"Delete [{entry['tool']}] {entry['id']}?")
@@ -69,6 +116,10 @@ def cmd_delete(args):
         os.makedirs(root, exist_ok=True)
         backup = tempfile.mkdtemp(prefix=entry['tool'] + '-', dir=root)
         manifest = {'tool': entry['tool'], 'id': entry['id'], 'files': []}
+        if entry['tool'] == 'agy':
+            row = _agy_backup_row(entry['id'])
+            if row is not None:
+                manifest['db_row'] = row
         for i, path in enumerate(paths):
             target = os.path.join(backup, str(i))
             manifest['files'].append({'original': os.path.abspath(path), 'backup': target})
@@ -77,7 +128,9 @@ def cmd_delete(args):
         for item in manifest['files']:
             shutil.move(item['original'], item['backup'])
             moved.append(item)
-    except OSError as exc:
+        if entry['tool'] == 'agy':
+            _agy_delete_db(entry['id'])
+    except (OSError, sqlite3.Error) as exc:
         # Restore earlier moves if a multi-file deletion fails partway through.
         for item in reversed(moved):
             try:

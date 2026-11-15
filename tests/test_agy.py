@@ -7,7 +7,7 @@ import sqlite3
 
 import pytest
 
-from crossweave import agy, cli, doctor, rename, search, sessions, update
+from crossweave import agy, cli, delete, doctor, rename, search, sessions, update
 
 SID = "37197b54-255d-4390-a0c1-7d015ba5a452"
 SUB_SID = "aaaaaaaa-1111-2222-3333-444444444444"
@@ -164,3 +164,25 @@ def test_rename_agy(store):
     store.session(SID, title="Old title")
     assert rename._apply({"tool": "agy", "id": SID}, "New agy title") is True
     assert agy.agy_light_records()[0]["title"] == "New agy title"
+
+
+def test_delete_agy(store, tmp_path):
+    store.session(SID, title="Delete me")
+    tpath = store.transcript(SID, [{"step_index": 0, "type": "USER_INPUT", "content": "hi"}])
+    pb_dir = tmp_path / "conversations"
+    pb_dir.mkdir(parents=True, exist_ok=True)
+    pb_file = pb_dir / f"{SID}.pb"
+    pb_file.write_bytes(b"pb-data")
+
+    sessions.write_list_cache([{"tool": "agy", "id": SID}])
+    assert delete.cmd_delete(["1", "-y"]) == 0
+    assert agy.agy_light_records() == []
+    assert not tpath.exists()
+    assert not pb_file.exists()
+
+    manifest_path = next((tmp_path / "no-stores" / "deleted").glob("*/manifest.json"))
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["tool"] == "agy"
+    assert manifest["id"] == SID
+    assert manifest["db_row"]["title"] == "Delete me"
+    assert len(manifest["files"]) == 2
