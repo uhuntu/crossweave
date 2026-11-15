@@ -7,7 +7,7 @@ import sqlite3
 import sys
 import tempfile
 
-from . import agy, codex, common, opencode, sessions
+from . import agy, codex, common, opencode, sessions, zcode
 
 
 def _paths(record):
@@ -105,6 +105,48 @@ def _opencode_delete_db(sid):
     opencode._drop_connection()
 
 
+def _zcode_backup_rows(sid):
+    if not os.path.isfile(zcode.ZCODE_DB):
+        return None
+    con = sqlite3.connect(f'file:{zcode.ZCODE_DB.replace(chr(92), "/")}?mode=ro', uri=True)
+    try:
+        cur = con.execute('SELECT * FROM session WHERE id = ?', (sid,))
+        row = cur.fetchone()
+        if not row:
+            return None
+        cols = [d[0] for d in cur.description]
+        session_row = dict(zip(cols, row))
+        mcur = con.execute('SELECT * FROM message WHERE session_id = ? ORDER BY sequence', (sid,))
+        mcols = [d[0] for d in mcur.description]
+        messages = [dict(zip(mcols, mr)) for mr in mcur.fetchall()]
+        pcur = con.execute(
+            'SELECT * FROM part WHERE message_id IN '
+            '(SELECT id FROM message WHERE session_id = ?) ORDER BY sequence', (sid,))
+        pcols = [d[0] for d in pcur.description]
+        parts = [dict(zip(pcols, pr)) for pr in pcur.fetchall()]
+        return {'session': session_row, 'messages': messages, 'parts': parts}
+    except sqlite3.Error:
+        return None
+    finally:
+        con.close()
+
+
+def _zcode_delete_db(sid):
+    if not os.path.isfile(zcode.ZCODE_DB):
+        return
+    con = sqlite3.connect(zcode.ZCODE_DB, timeout=10)
+    try:
+        with con:
+            con.execute(
+                'DELETE FROM part WHERE message_id IN '
+                '(SELECT id FROM message WHERE session_id = ?)', (sid,))
+            con.execute('DELETE FROM message WHERE session_id = ?', (sid,))
+            con.execute('DELETE FROM session WHERE id = ?', (sid,))
+    finally:
+        con.close()
+    zcode._drop_connection()
+
+
 def cmd_delete(args):
     if args in (['-h'], ['--help']):
         print('Usage: cw delete <N> [-y]  (or cw <N> delete [-y])\n'
@@ -129,7 +171,7 @@ def cmd_delete(args):
         print('cw delete: session no longer exists -- run `cw` to refresh', file=sys.stderr)
         return 1
     paths = _paths(record)
-    if not paths and entry['tool'] not in ('agy', 'opencode'):
+    if not paths and entry['tool'] not in ('agy', 'opencode', 'zcode'):
         print(f"cw delete: {entry['tool']} deletion is not supported", file=sys.stderr)
         return 1
     print(f"Delete [{entry['tool']}] {entry['id']}?")
@@ -159,6 +201,10 @@ def cmd_delete(args):
             rows = _opencode_backup_rows(entry['id'])
             if rows is not None:
                 manifest['db_rows'] = rows
+        elif entry['tool'] == 'zcode':
+            rows = _zcode_backup_rows(entry['id'])
+            if rows is not None:
+                manifest['db_rows'] = rows
         for i, path in enumerate(paths):
             target = os.path.join(backup, str(i))
             manifest['files'].append({'original': os.path.abspath(path), 'backup': target})
@@ -171,6 +217,8 @@ def cmd_delete(args):
             _agy_delete_db(entry['id'])
         elif entry['tool'] == 'opencode':
             _opencode_delete_db(entry['id'])
+        elif entry['tool'] == 'zcode':
+            _zcode_delete_db(entry['id'])
     except (OSError, sqlite3.Error) as exc:
         # Restore earlier moves if a multi-file deletion fails partway through.
         for item in reversed(moved):

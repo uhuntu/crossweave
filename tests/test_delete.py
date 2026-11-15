@@ -92,3 +92,33 @@ def test_out_of_range(store):
     assert delete.cmd_delete(["0", "-y"]) == 1
     assert delete.cmd_delete(["2", "-y"]) == 1
     assert all(p.exists() for p in store[1])
+
+
+def test_delete_zcode_with_backup(tmp_path, monkeypatch):
+    import sqlite3
+    from crossweave import zcode
+    db_path = tmp_path / 'zcode.db'
+    con = sqlite3.connect(str(db_path))
+    con.executescript(
+        'CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT, title TEXT, '
+        'title_source TEXT, time_title_updated INTEGER, time_created INTEGER, '
+        'time_updated INTEGER, parent_id TEXT);'
+        'CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, sequence INTEGER, data TEXT);'
+        'CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, sequence INTEGER, data TEXT);'
+    )
+    con.execute("INSERT INTO session VALUES ('sess_1', '/tmp', 'Z title', 'default', 1, 1, 2, NULL)")
+    con.execute("INSERT INTO message VALUES ('m1', 'sess_1', 1, '{\"role\":\"user\"}')")
+    con.execute("INSERT INTO part VALUES ('p1', 'm1', 1, '{\"type\":\"text\",\"text\":\"hi\"}')")
+    con.commit()
+    con.close()
+    monkeypatch.setattr(zcode, 'ZCODE_DB', str(db_path))
+    monkeypatch.setattr(sessions, 'LIST_CACHE_FILE', str(tmp_path / 'cache' / 'list.json'))
+    sessions.write_list_cache([{'tool': 'zcode', 'id': 'sess_1'}])
+
+    assert delete.cmd_delete(['1', '-y']) == 0
+    assert zcode.zcode_light_records(show_all=True) == []
+    manifest_path = next((tmp_path / 'cache' / 'deleted').glob('*/manifest.json'))
+    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+    assert manifest['db_rows']['session']['id'] == 'sess_1'
+    assert len(manifest['db_rows']['messages']) == 1
+    assert len(manifest['db_rows']['parts']) == 1
