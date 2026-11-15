@@ -96,6 +96,79 @@ def _rename_zcode(sid, title):
         con.close()
 
 
+def _encode_varint(n):
+    out = bytearray()
+    while True:
+        b = n & 0x7F
+        n >>= 7
+        if n:
+            out.append(b | 0x80)
+        else:
+            out.append(b)
+            return bytes(out)
+
+
+def _decode_varint(buf, pos):
+    val = 0
+    shift = 0
+    while pos < len(buf):
+        b = buf[pos]
+        pos += 1
+        val |= (b & 0x7F) << shift
+        if not (b & 0x80):
+            return val, pos
+        shift += 7
+    raise ValueError("truncated varint")
+
+
+def _rewrite_agy_raw_summary(raw, title):
+    """Replace protobuf field 1 (title) in `raw_summary`, preserving all other fields."""
+    if not isinstance(raw, (bytes, bytearray)) or not raw:
+        return None
+    buf = bytes(raw)
+    pos = 0
+    out = bytearray()
+    replaced = False
+    try:
+        while pos < len(buf):
+            tag_start = pos
+            tag, pos = _decode_varint(buf, pos)
+            field_num = tag >> 3
+            wire_type = tag & 0x07
+            if wire_type == 0:
+                _, pos = _decode_varint(buf, pos)
+                out.extend(buf[tag_start:pos])
+            elif wire_type == 1:
+                if pos + 8 > len(buf):
+                    return None
+                pos += 8
+                out.extend(buf[tag_start:pos])
+            elif wire_type == 2:
+                length, val_start = _decode_varint(buf, pos)
+                val_end = val_start + length
+                if val_end > len(buf):
+                    return None
+                if field_num == 1 and not replaced:
+                    encoded = title.encode("utf-8")
+                    out.extend(buf[tag_start:pos])
+                    out.extend(_encode_varint(len(encoded)))
+                    out.extend(encoded)
+                    replaced = True
+                else:
+                    out.extend(buf[tag_start:val_end])
+                pos = val_end
+            elif wire_type == 5:
+                if pos + 4 > len(buf):
+                    return None
+                pos += 4
+                out.extend(buf[tag_start:pos])
+            else:
+                return None
+    except ValueError:
+        return None
+    return bytes(out) if replaced else None
+
+
 def _rename_agy(sid, title):
     import sqlite3
 
@@ -106,9 +179,23 @@ def _rename_agy(sid, title):
     con = sqlite3.connect(agy.AGY_DB, timeout=10)
     try:
         with con:
-            cur = con.execute(
-                "UPDATE conversation_summaries SET title=? WHERE conversation_id=?",
-                (title, sid))
+            row = con.execute(
+                "SELECT raw_summary FROM conversation_summaries WHERE conversation_id=?",
+                (sid,),
+            ).fetchone()
+            if row is None:
+                return False
+            new_raw = _rewrite_agy_raw_summary(row[0], title)
+            if new_raw is not None:
+                cur = con.execute(
+                    "UPDATE conversation_summaries SET title=?, raw_summary=? WHERE conversation_id=?",
+                    (title, new_raw, sid),
+                )
+            else:
+                cur = con.execute(
+                    "UPDATE conversation_summaries SET title=? WHERE conversation_id=?",
+                    (title, sid),
+                )
             if cur.rowcount > 0:
                 agy.agy_set_custom_title(sid, title)
                 return True

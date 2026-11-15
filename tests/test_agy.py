@@ -161,13 +161,28 @@ def test_doctor_and_search_include_agy(store):
 
 
 def test_rename_agy(store):
-    store.session(SID, title="Old title")
-    assert rename._apply({"tool": "agy", "id": SID}, "New agy title") is True
-    assert agy.agy_light_records()[0]["title"] == "New agy title"
+    store.con.execute("ALTER TABLE conversation_summaries ADD COLUMN raw_summary blob")
+    old_raw = b"\x0a\x09Old title\x12\x04keep\x18\x2a"
+    store.con.execute(
+        "INSERT INTO conversation_summaries "
+        "(conversation_id, title, preview, step_count, last_modified_time, workspace_uris, raw_summary) "
+        "VALUES (?,?,?,?,?,?,?)",
+        (SID, "Old title", "", 1, "2026-11-15T07:53:42Z", "[]", old_raw),
+    )
+    store.con.commit()
+
+    assert rename._apply({"tool": "agy", "id": SID}, "新标题 agy") is True
+    assert agy.agy_light_records()[0]["title"] == "新标题 agy"
+    updated_raw = store.con.execute(
+        "SELECT raw_summary FROM conversation_summaries WHERE conversation_id=?", (SID,)
+    ).fetchone()[0]
+    encoded = "新标题 agy".encode("utf-8")
+    assert updated_raw == b"\x0a" + bytes([len(encoded)]) + encoded + b"\x12\x04keep\x18\x2a"
+
     # Even if agy runtime overwrites conversation_summaries.title later, cw keeps the renamed title
     store.con.execute("UPDATE conversation_summaries SET title=? WHERE conversation_id=?", ("Overwritten", SID))
     store.con.commit()
-    assert agy.agy_light_records()[0]["title"] == "New agy title"
+    assert agy.agy_light_records()[0]["title"] == "新标题 agy"
 
 
 def test_delete_agy(store, tmp_path):
