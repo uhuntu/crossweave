@@ -734,15 +734,19 @@ def test_resume_falls_back_to_startfile_on_windows_when_zcode_missing(monkeypatc
     one_session(tmp_path, cwd=str(workdir))
     monkeypatch.setattr(sessions, "zcode_cli_on_path", lambda: False)
     monkeypatch.setattr(sessions.os, "name", "nt")
-    opened = []
-    monkeypatch.setattr(sessions.os, "startfile", lambda url: opened.append(url), raising=False)
+    calls = []
 
-    def _missing(argv):
-        raise FileNotFoundError(argv[0])
+    def _popen(argv, **kwargs):
+        if argv[0] == "zcode":
+            raise FileNotFoundError(argv[0])
+        calls.append((argv, kwargs))
 
-    monkeypatch.setattr(sessions.subprocess, "Popen", _missing)
+    monkeypatch.setattr(sessions.subprocess, "Popen", _popen)
     sessions.cmd_resume(["zcode", SID])
-    assert opened == [sessions.zcode_workspace_link(str(workdir))]
+    assert len(calls) == 1
+    assert calls[0][0] == ["cmd", "/c", "start", "", sessions.zcode_workspace_link(str(workdir))]
+    assert calls[0][1]["stdout"] == sessions.subprocess.DEVNULL
+    assert calls[0][1]["stderr"] == sessions.subprocess.DEVNULL
 
 
 def test_resume_without_an_id_opens_the_cli_tui(monkeypatch, tmp_path, capsys):

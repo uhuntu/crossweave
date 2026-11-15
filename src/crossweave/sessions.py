@@ -2048,9 +2048,17 @@ def cmd_resume(args):
         try:
             subprocess.Popen(["zcode", link])
         except FileNotFoundError:
-            if os.name == "nt" and hasattr(os, "startfile"):
+            if os.name == "nt":
                 try:
-                    os.startfile(link)
+                    flags = (getattr(subprocess, "DETACHED_PROCESS", 0)
+                             | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+                    subprocess.Popen(
+                        ["cmd", "/c", "start", "", link],
+                        stdin=subprocess.DEVNULL,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        creationflags=flags,
+                    )
                     return
                 except OSError:
                     pass
