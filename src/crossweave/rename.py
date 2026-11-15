@@ -109,7 +109,10 @@ def _rename_agy(sid, title):
             cur = con.execute(
                 "UPDATE conversation_summaries SET title=? WHERE conversation_id=?",
                 (title, sid))
-            return cur.rowcount > 0
+            if cur.rowcount > 0:
+                agy.agy_set_custom_title(sid, title)
+                return True
+            return False
     finally:
         con.close()
 

@@ -164,6 +164,10 @@ def test_rename_agy(store):
     store.session(SID, title="Old title")
     assert rename._apply({"tool": "agy", "id": SID}, "New agy title") is True
     assert agy.agy_light_records()[0]["title"] == "New agy title"
+    # Even if agy runtime overwrites conversation_summaries.title later, cw keeps the renamed title
+    store.con.execute("UPDATE conversation_summaries SET title=? WHERE conversation_id=?", ("Overwritten", SID))
+    store.con.commit()
+    assert agy.agy_light_records()[0]["title"] == "New agy title"
 
 
 def test_delete_agy(store, tmp_path):

@@ -67,6 +67,7 @@ def _agy_delete_db(sid):
                     pass
     finally:
         con.close()
+    agy.agy_clear_custom_title(sid)
     agy._drop_connection()
 
 

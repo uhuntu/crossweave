@@ -27,6 +27,7 @@ def _default_dir():
 AGY_DIR = _default_dir()
 AGY_DB = os.path.join(AGY_DIR, "conversation_summaries.db")
 AGY_BRAIN = os.path.join(AGY_DIR, "brain")
+AGY_TITLES_FILE = os.path.join(common.HOME, ".config", "crossweave", "agy_titles.json")
 
 _USER_REQUEST_RE = re.compile(r"<USER_REQUEST>\s*(.*?)\s*</USER_REQUEST>", re.S)
 _TRAILING_TAGS_RE = re.compile(
@@ -214,7 +215,38 @@ def _first_prompt(sid, preview=None):
     return None, fallback
 
 
-def _row_title(sid, stored, preview=None):
+def _read_custom_titles():
+    data = common.read_json(AGY_TITLES_FILE)
+    if not isinstance(data, dict):
+        return {}
+    return {k: v for k, v in data.items() if isinstance(k, str) and isinstance(v, str) and v.strip()}
+
+
+def _write_custom_titles(mapping):
+    parent = os.path.dirname(AGY_TITLES_FILE)
+    os.makedirs(parent, exist_ok=True)
+    tmp = f"{AGY_TITLES_FILE}.{os.getpid()}.tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(mapping, fh, ensure_ascii=False, indent=2)
+    os.replace(tmp, AGY_TITLES_FILE)
+
+
+def agy_set_custom_title(sid, title):
+    mapping = _read_custom_titles()
+    mapping[sid] = title
+    _write_custom_titles(mapping)
+
+
+def agy_clear_custom_title(sid):
+    mapping = _read_custom_titles()
+    if sid in mapping:
+        del mapping[sid]
+        _write_custom_titles(mapping)
+
+
+def _row_title(sid, stored, preview=None, custom_titles=None):
+    if custom_titles and sid in custom_titles:
+        return custom_titles[sid]
     title = common._as_title(stored)
     if title:
         return title
@@ -225,6 +257,7 @@ def _row_title(sid, stored, preview=None):
 def agy_light_records(show_all=False):
     """One record per Antigravity conversation. Subagent conversations
     (parent_conversation_id or nesting_depth > 0) are omitted unless --all."""
+    custom_titles = _read_custom_titles()
     records = []
     rows = _query(
         "SELECT conversation_id, title, preview, last_modified_time, workspace_uris, "
@@ -242,7 +275,7 @@ def agy_light_records(show_all=False):
             "ts": _ts(modified),
             "path": agy_transcript_path(sid),
             "cwd": _workspace_cwd(workspace_uris),
-            "title": _row_title(sid, title, preview=preview),
+            "title": _row_title(sid, title, preview=preview, custom_titles=custom_titles),
         })
     return records
 
