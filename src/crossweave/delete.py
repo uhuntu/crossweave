@@ -26,7 +26,10 @@ def _paths(record):
         sid = record['id']
         candidates = [
             os.path.join(agy.AGY_BRAIN, sid),
-            os.path.join(agy.AGY_DIR, 'conversations', f'{sid}.pb'),
+            os.path.join(agy.AGY_DIR, 'annotations', f'{sid}.pbtxt'),
+            os.path.join(agy.AGY_DIR, 'conversations', f'{sid}.db'),
+            os.path.join(agy.AGY_DIR, 'conversations', f'{sid}.db-wal'),
+            os.path.join(agy.AGY_DIR, 'conversations', f'{sid}.db-shm'),
         ]
         return [p for p in candidates if os.path.exists(p)]
     return []

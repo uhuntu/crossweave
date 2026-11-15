@@ -160,7 +160,7 @@ def test_doctor_and_search_include_agy(store):
     assert [r["id"] for r in recs] == [SID]
 
 
-def test_rename_agy(store):
+def test_rename_agy(store, tmp_path):
     store.con.execute("ALTER TABLE conversation_summaries ADD COLUMN raw_summary blob")
     old_raw = b"\x0a\x09Old title\x12\x04keep\x18\x2a"
     store.con.execute(
@@ -170,9 +170,14 @@ def test_rename_agy(store):
         (SID, "Old title", "", 1, "2026-11-15T07:53:42Z", "[]", old_raw),
     )
     store.con.commit()
+    ann_dir = tmp_path / "annotations"
+    ann_dir.mkdir(parents=True, exist_ok=True)
+    pbtxt = ann_dir / f"{SID}.pbtxt"
+    pbtxt.write_text('title:"Old title" last_user_view_time:{seconds:123}\n', encoding="utf-8")
 
     assert rename._apply({"tool": "agy", "id": SID}, "新标题 agy") is True
     assert agy.agy_light_records()[0]["title"] == "新标题 agy"
+    assert pbtxt.read_text(encoding="utf-8") == 'title:"新标题 agy" last_user_view_time:{seconds:123}\n'
     updated_raw = store.con.execute(
         "SELECT raw_summary FROM conversation_summaries WHERE conversation_id=?", (SID,)
     ).fetchone()[0]
@@ -188,20 +193,25 @@ def test_rename_agy(store):
 def test_delete_agy(store, tmp_path):
     store.session(SID, title="Delete me")
     tpath = store.transcript(SID, [{"step_index": 0, "type": "USER_INPUT", "content": "hi"}])
-    pb_dir = tmp_path / "conversations"
-    pb_dir.mkdir(parents=True, exist_ok=True)
-    pb_file = pb_dir / f"{SID}.pb"
-    pb_file.write_bytes(b"pb-data")
+    conv_dir = tmp_path / "conversations"
+    conv_dir.mkdir(parents=True, exist_ok=True)
+    conv_db = conv_dir / f"{SID}.db"
+    conv_db.write_bytes(b"sqlite-data")
+    ann_dir = tmp_path / "annotations"
+    ann_dir.mkdir(parents=True, exist_ok=True)
+    ann_file = ann_dir / f"{SID}.pbtxt"
+    ann_file.write_text('title:"Delete me"\n', encoding="utf-8")
 
     sessions.write_list_cache([{"tool": "agy", "id": SID}])
     assert delete.cmd_delete(["1", "-y"]) == 0
     assert agy.agy_light_records() == []
     assert not tpath.exists()
-    assert not pb_file.exists()
+    assert not conv_db.exists()
+    assert not ann_file.exists()
 
     manifest_path = next((tmp_path / "no-stores" / "deleted").glob("*/manifest.json"))
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["tool"] == "agy"
     assert manifest["id"] == SID
     assert manifest["db_row"]["title"] == "Delete me"
-    assert len(manifest["files"]) == 2
+    assert len(manifest["files"]) == 3

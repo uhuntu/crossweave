@@ -169,6 +169,27 @@ def _rewrite_agy_raw_summary(raw, title):
     return bytes(out) if replaced else None
 
 
+def _rewrite_agy_pbtxt(path, title):
+    """Update or insert `title:"..."` in `~/.gemini/antigravity/annotations/<sid>.pbtxt`."""
+    escaped = json.dumps(title, ensure_ascii=False)
+    try:
+        text = open(path, "r", encoding="utf-8").read() if os.path.isfile(path) else ""
+    except OSError:
+        return
+    if re.search(r'title\s*:\s*"(?:[^"\\]|\\.)*"', text):
+        new_text = re.sub(r'title\s*:\s*"(?:[^"\\]|\\.)*"', f"title:{escaped}", text, count=1)
+    elif text.strip():
+        new_text = f"title:{escaped} " + text.lstrip()
+    else:
+        new_text = f"title:{escaped}\n"
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(new_text)
+    except OSError:
+        pass
+
+
 def _rename_agy(sid, title):
     import sqlite3
 
@@ -197,6 +218,7 @@ def _rename_agy(sid, title):
                     (title, sid),
                 )
             if cur.rowcount > 0:
+                _rewrite_agy_pbtxt(os.path.join(agy.AGY_DIR, "annotations", f"{sid}.pbtxt"), title)
                 agy.agy_set_custom_title(sid, title)
                 return True
             return False
