@@ -228,3 +228,17 @@ def test_a_worker_thread_reads_what_the_main_thread_opened(tmp_path, monkeypatch
     worker.start()
     worker.join()
     assert got == [main]
+
+
+def test_delete_opencode_with_backup(tmp_path, monkeypatch):
+    from crossweave import delete
+    basic(tmp_path, monkeypatch)
+    sessions.write_list_cache([{"tool": "opencode", "id": SID}])
+    assert delete.cmd_delete(["1", "-y"]) == 0
+    assert opencode.opencode_light_records(show_all=True) == []
+    manifest_path = next((tmp_path / "no-stores" / "deleted").glob("*/manifest.json"))
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["tool"] == "opencode"
+    assert manifest["id"] == SID
+    assert manifest["db_rows"]["session"]["id"] == SID
+    assert len(manifest["db_rows"]["messages"]) >= 1

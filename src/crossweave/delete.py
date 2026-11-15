@@ -7,7 +7,7 @@ import sqlite3
 import sys
 import tempfile
 
-from . import agy, codex, common, sessions
+from . import agy, codex, common, opencode, sessions
 
 
 def _paths(record):
@@ -70,6 +70,41 @@ def _agy_delete_db(sid):
     agy._drop_connection()
 
 
+def _opencode_backup_rows(sid):
+    if not os.path.isfile(opencode.OPENCODE_DB):
+        return None
+    con = sqlite3.connect(f'file:{opencode.OPENCODE_DB.replace(chr(92), "/")}?mode=ro', uri=True)
+    try:
+        cur = con.execute('SELECT * FROM session_v2 WHERE id = ?', (sid,))
+        row = cur.fetchone()
+        if not row:
+            return None
+        cols = [d[0] for d in cur.description]
+        session_row = dict(zip(cols, row))
+        mcur = con.execute(
+            'SELECT * FROM session_message WHERE session_id = ? ORDER BY seq', (sid,))
+        mcols = [d[0] for d in mcur.description]
+        messages = [dict(zip(mcols, mr)) for mr in mcur.fetchall()]
+        return {'session': session_row, 'messages': messages}
+    except sqlite3.Error:
+        return None
+    finally:
+        con.close()
+
+
+def _opencode_delete_db(sid):
+    if not os.path.isfile(opencode.OPENCODE_DB):
+        return
+    con = sqlite3.connect(opencode.OPENCODE_DB, timeout=10)
+    try:
+        with con:
+            con.execute('DELETE FROM session_message WHERE session_id = ?', (sid,))
+            con.execute('DELETE FROM session_v2 WHERE id = ?', (sid,))
+    finally:
+        con.close()
+    opencode._drop_connection()
+
+
 def cmd_delete(args):
     if args in (['-h'], ['--help']):
         print('Usage: cw delete <N> [-y]  (or cw <N> delete [-y])\n'
@@ -94,7 +129,7 @@ def cmd_delete(args):
         print('cw delete: session no longer exists -- run `cw` to refresh', file=sys.stderr)
         return 1
     paths = _paths(record)
-    if not paths and entry['tool'] != 'agy':
+    if not paths and entry['tool'] not in ('agy', 'opencode'):
         print(f"cw delete: {entry['tool']} deletion is not supported", file=sys.stderr)
         return 1
     print(f"Delete [{entry['tool']}] {entry['id']}?")
@@ -120,6 +155,10 @@ def cmd_delete(args):
             row = _agy_backup_row(entry['id'])
             if row is not None:
                 manifest['db_row'] = row
+        elif entry['tool'] == 'opencode':
+            rows = _opencode_backup_rows(entry['id'])
+            if rows is not None:
+                manifest['db_rows'] = rows
         for i, path in enumerate(paths):
             target = os.path.join(backup, str(i))
             manifest['files'].append({'original': os.path.abspath(path), 'backup': target})
@@ -130,6 +169,8 @@ def cmd_delete(args):
             moved.append(item)
         if entry['tool'] == 'agy':
             _agy_delete_db(entry['id'])
+        elif entry['tool'] == 'opencode':
+            _opencode_delete_db(entry['id'])
     except (OSError, sqlite3.Error) as exc:
         # Restore earlier moves if a multi-file deletion fails partway through.
         for item in reversed(moved):
