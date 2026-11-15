@@ -96,6 +96,24 @@ def _rename_zcode(sid, title):
         con.close()
 
 
+def _rename_agy(sid, title):
+    import sqlite3
+
+    from . import agy
+
+    if not os.path.isfile(agy.AGY_DB):
+        return False
+    con = sqlite3.connect(agy.AGY_DB, timeout=10)
+    try:
+        with con:
+            cur = con.execute(
+                "UPDATE conversation_summaries SET title=? WHERE conversation_id=?",
+                (title, sid))
+            return cur.rowcount > 0
+    finally:
+        con.close()
+
+
 def _rename_codex(sid, title):
     from . import common
 
@@ -286,6 +304,8 @@ def _apply(r, title):
     tool, sid = r["tool"], r["id"]
     if tool == "zcode":
         return _rename_zcode(sid, title)
+    if tool == "agy":
+        return _rename_agy(sid, title)
     if tool == "codex":
         return _rename_codex(sid, title)
     if tool == "claude":
@@ -318,7 +338,7 @@ def _is_trivial(title):
 # only title field either offers sits in a live app's own database, not in
 # the transcript cw reads -- and both are refused before anything else
 # happens to their rows.
-_RENAMABLE = ("zcode", "codex", "claude", "step", "pi", "kimi")
+_RENAMABLE = ("zcode", "agy", "codex", "claude", "step", "pi", "kimi")
 
 
 def _is_live(r):

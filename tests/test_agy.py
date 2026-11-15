@@ -7,7 +7,7 @@ import sqlite3
 
 import pytest
 
-from crossweave import agy, cli, doctor, search, sessions, update
+from crossweave import agy, cli, doctor, rename, search, sessions, update
 
 SID = "37197b54-255d-4390-a0c1-7d015ba5a452"
 SUB_SID = "aaaaaaaa-1111-2222-3333-444444444444"
@@ -158,3 +158,9 @@ def test_doctor_and_search_include_agy(store):
 
     recs = search.gather_candidates(tool_filter="agy", show_all=False)
     assert [r["id"] for r in recs] == [SID]
+
+
+def test_rename_agy(store):
+    store.session(SID, title="Old title")
+    assert rename._apply({"tool": "agy", "id": SID}, "New agy title") is True
+    assert agy.agy_light_records()[0]["title"] == "New agy title"
