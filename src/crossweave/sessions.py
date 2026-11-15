@@ -2048,6 +2048,12 @@ def cmd_resume(args):
         try:
             subprocess.Popen(["zcode", link])
         except FileNotFoundError:
+            if os.name == "nt" and hasattr(os, "startfile"):
+                try:
+                    os.startfile(link)
+                    return
+                except OSError:
+                    pass
             print("cw: 'zcode' not found on PATH", file=sys.stderr)
             sys.exit(127)
         except OSError as exc:

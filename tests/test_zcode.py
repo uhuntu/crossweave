@@ -727,6 +727,24 @@ def test_resume_falls_back_to_the_deep_link_without_the_cli(monkeypatch, tmp_pat
     assert "pick the session in its task list" in err
 
 
+def test_resume_falls_back_to_startfile_on_windows_when_zcode_missing(monkeypatch, tmp_path):
+    workdir = tmp_path / "proj"
+    workdir.mkdir()
+    monkeypatch.chdir(workdir)
+    one_session(tmp_path, cwd=str(workdir))
+    monkeypatch.setattr(sessions, "zcode_cli_on_path", lambda: False)
+    monkeypatch.setattr(sessions.os, "name", "nt")
+    opened = []
+    monkeypatch.setattr(sessions.os, "startfile", lambda url: opened.append(url), raising=False)
+
+    def _missing(argv):
+        raise FileNotFoundError(argv[0])
+
+    monkeypatch.setattr(sessions.subprocess, "Popen", _missing)
+    sessions.cmd_resume(["zcode", SID])
+    assert opened == [sessions.zcode_workspace_link(str(workdir))]
+
+
 def test_resume_without_an_id_opens_the_cli_tui(monkeypatch, tmp_path, capsys):
     """With the CLI: its TUI, rooted here, where /resume lists this
     directory's sessions. Without it: the guidance message, nothing launched."""
