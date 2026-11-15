@@ -13,7 +13,7 @@ the per-tool stores, the two listing caches, and the handoff export dir.
 
 import pytest
 
-from crossweave import codebuddy, common, machines, opencode, pi, sessions, step, workbuddy, zcode
+from crossweave import agy, codebuddy, common, machines, opencode, pi, sessions, step, workbuddy, zcode
 
 
 @pytest.fixture(autouse=True)
@@ -33,6 +33,9 @@ def _isolate_stores(monkeypatch, tmp_path):
                          (str(nowhere / "workbuddy-ai"), "workbuddy-ai")))
     monkeypatch.setattr(zcode, "ZCODE_DB", str(nowhere / "zcode" / "db.sqlite"))
     monkeypatch.setattr(zcode, "ZCODE_TUI_MEMO", str(nowhere / "zcode-no-tui.json"))
+    monkeypatch.setattr(agy, "AGY_DIR", str(nowhere / "agy"))
+    monkeypatch.setattr(agy, "AGY_DB", str(nowhere / "agy" / "conversation_summaries.db"))
+    monkeypatch.setattr(agy, "AGY_BRAIN", str(nowhere / "agy" / "brain"))
     monkeypatch.setattr(sessions, "LIST_CACHE_FILE", str(nowhere / "last_list.json"))
     monkeypatch.setattr(sessions, "HANDOFF_DIR", str(nowhere / "handoffs"))
     # remembered ssh targets would send a --machines test out over ssh

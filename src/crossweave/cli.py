@@ -6,7 +6,7 @@ import sys
 
 from . import __version__, alias, autoexport, chat, common, delete, doctor, exporter, machines, note, rename, search, sessions, show, ui, update, web, wiki
 
-TOOLS = ("claude", "codex", "kimi", "step", "pi", "opencode", "zcode")
+TOOLS = ("claude", "codex", "kimi", "step", "pi", "opencode", "zcode", "agy")
 
 # USAGE is an f-string built from TOOLS, search.JUDGE_CMD and
 # search.DEFAULT_JUDGE for the same reason SUBCOMMANDS exists below: the
@@ -93,6 +93,7 @@ Per-tool --yolo mapping:
   pi        -> (nothing to add: pi never asks before a tool call)
   opencode  -> --auto   (approves what isn't explicitly denied)
   zcode     -> (desktop app; no flags apply)
+  agy       -> --dangerously-skip-permissions
 
 Examples:
   cw claude -p "summarize this repo"
@@ -221,6 +222,18 @@ def build_command(tool, rest):
     cmd = []
     if tool == "claude":
         cmd = ["claude"]
+        if print_:
+            cmd.append("-p")
+        if continue_session:
+            cmd.append("--continue")
+        if model:
+            cmd += ["--model", model]
+        for d in add_dirs:
+            cmd += ["--add-dir", d]
+        if yolo:
+            cmd.append("--dangerously-skip-permissions")
+    elif tool == "agy":
+        cmd = ["agy"]
         if print_:
             cmd.append("-p")
         if continue_session:

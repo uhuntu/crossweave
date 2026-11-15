@@ -29,6 +29,7 @@ TOOL_UPDATE_CMD = {
     # opencode spells it upgrade (update is an alias); it detects its own
     # install method.
     "opencode": ["opencode", "upgrade"],
+    "agy": ["agy", "update"],
 }
 
 # If this is set, failed updates retry through this proxy. Confirmed live

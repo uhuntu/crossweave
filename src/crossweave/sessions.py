@@ -69,6 +69,17 @@ from .common import (
     TRIVIAL_TITLES,
     unwrap_openclaw_ctx,
 )
+from .agy import (
+    agy_contains,
+    agy_first_user_text,
+    agy_handoff_messages,
+    agy_last_message,
+    agy_light_records,
+    agy_resolve,
+    agy_session_cwd,
+    agy_session_turns,
+    agy_snippet,
+)
 from .claude import (
     claude_custom_title,
     claude_handoff_messages,
@@ -370,6 +381,10 @@ def literal_matches(candidates, topic):
             if opencode_contains(record["id"], pattern):
                 hits.append(record)
             continue
+        if record["tool"] == "agy":
+            if agy_contains(record["id"], pattern):
+                hits.append(record)
+            continue
         # pi writes step's format, so step's line reader reads it
         scan_as = "step" if record["tool"] == "pi" else record["tool"]
         if any(_file_contains(path, pattern,
@@ -409,6 +424,11 @@ def session_handoff_details(tool, sid):
         if cwd is None and sid not in opencode_resolve(sid):
             return None
         messages = opencode_handoff_messages(sid)
+    elif tool == "agy":
+        cwd = agy_session_cwd(sid)
+        if cwd is None and sid not in agy_resolve(sid):
+            return None
+        messages = agy_handoff_messages(sid)
     elif tool == "zcode":
         record = next((r for r in zcode_light_records(show_all=True) if r["id"] == sid), None)
         if not record:
@@ -721,6 +741,7 @@ def _all_light_records():
     light += pi_light_records(False)
     light += opencode_light_records(False)
     light += zcode_light_records(False)
+    light += agy_light_records(False)
     return light
 
 
@@ -787,6 +808,7 @@ def cmd_list(args):
         ("pi", lambda: pi_light_records(show_all)),
         ("opencode", lambda: opencode_light_records(show_all)),
         ("zcode", lambda: zcode_light_records(show_all)),
+        ("agy", lambda: agy_light_records(show_all)),
     ):
         if publish or tool_filter in (None, tool):
             light += gather()
@@ -954,6 +976,8 @@ def cmd_stats(args):
         light += opencode_light_records(True)
     if tool_filter in (None, "zcode"):
         light += zcode_light_records(True)
+    if tool_filter in (None, "agy"):
+        light += agy_light_records(True)
 
     total = len(light)
     if total == 0:
@@ -1184,6 +1208,9 @@ def _handoff_source_of(r):
     if r["tool"] == "opencode":
         m = HANDOFF_SEED_RE.match(opencode_first_user_text(r["id"]).lstrip())
         return (m.group(1), m.group(2)) if m else None
+    if r["tool"] == "agy":
+        m = HANDOFF_SEED_RE.match(agy_first_user_text(r["id"]).lstrip())
+        return (m.group(1), m.group(2)) if m else None
     path = _transcript_path(r)
     return handoff_source(path, r["tool"]) if path else None
 
@@ -1276,7 +1303,7 @@ def _transcript_path(r):
     # still resolves through the index.
     if r.get("path"):
         return r["path"]
-    if r["tool"] in ("claude", "step", "pi", "zcode", "opencode"):
+    if r["tool"] in ("claude", "step", "pi", "zcode", "opencode", "agy"):
         # zcode's and opencode's transcripts live in a SQLite store, not in a file -- a
         # path-less record is the normal case there, not a missing one.
         return None
@@ -1305,6 +1332,8 @@ def _find_record(tool, sid):
         return next((r for r in opencode_light_records(show_all=True) if r["id"] == sid), None)
     if tool == "zcode":
         return next((r for r in zcode_light_records(show_all=True) if r["id"] == sid), None)
+    if tool == "agy":
+        return next((r for r in agy_light_records(show_all=True) if r["id"] == sid), None)
     if tool == "codebuddy":
         return next((r for r in codebuddy_light_records(show_all=True) if r["id"] == sid), None)
     if tool == "workbuddy":
@@ -1344,7 +1373,7 @@ def _resolve_title_and_cwd(r, depth=0):
         # and the light record normalized it on the way in.
         title = r.get("title") or "(no title)"
         cwd_show = r.get("cwd") or "?"
-    elif tool in ("codebuddy", "workbuddy", "opencode"):
+    elif tool in ("codebuddy", "workbuddy", "opencode", "agy"):
         # Same: the titler wrote it (into the file, or opencode's store), and
         # the light record read it
         title = r.get("title") or "(no title)"
@@ -1439,6 +1468,8 @@ def session_turns(record):
         return zcode_session_turns(record.get("id"))
     if tool == "opencode":
         return opencode_session_turns(record.get("id"))
+    if tool == "agy":
+        return agy_session_turns(record.get("id"))
     if tool == "kimi":
         path = os.path.join(record.get("dir") or "", "agents", "main", "wire.jsonl")
         marker, exclude = b'"turn.prompt"', None
@@ -1558,6 +1589,9 @@ def session_last_message(record):
         return (preview_text(last) or None) if last else None
     if record.get("tool") == "opencode":
         last = opencode_last_message(record.get("id"))
+        return (preview_text(last) or None) if last else None
+    if record.get("tool") == "agy":
+        last = agy_last_message(record.get("id"))
         return (preview_text(last) or None) if last else None
     path = _transcript_path(record)
     if not path:
@@ -1760,7 +1794,7 @@ def _zcode_next_instruction(extra):
 ID_RESOLVERS = {
     "claude": claude_resolve, "codex": codex_resolve, "kimi": kimi_resolve,
     "step": step_resolve, "pi": pi_resolve, "opencode": opencode_resolve,
-    "zcode": zcode_resolve,
+    "zcode": zcode_resolve, "agy": agy_resolve,
 }
 
 
@@ -1859,6 +1893,9 @@ def cmd_resume(args):
         elif tool == "opencode":
             # no picker flag: the TUI's own session list (ctrl+x l) is it
             exec_or_die(["opencode"])
+        elif tool == "agy":
+            # no picker flag: `/resume` inside the TUI is the picker
+            exec_or_die(["agy"])
         elif tool == "zcode":
             if zcode_cli_on_path():
                 if zcode_tui_known_missing():
@@ -1912,7 +1949,7 @@ def cmd_resume(args):
     cwd_getter = {"claude": claude_session_cwd, "codex": codex_cwd, "kimi": kimi_session_cwd,
                   "step": step_session_cwd, "pi": pi_session_cwd,
                   "opencode": opencode_session_cwd, "zcode": zcode_session_cwd,
-                  "codebuddy": codebuddy_session_cwd}[tool]
+                  "agy": agy_session_cwd, "codebuddy": codebuddy_session_cwd}[tool]
 
     if forced_cwd:
         if not os.path.isdir(forced_cwd):
@@ -1960,6 +1997,8 @@ def cmd_resume(args):
         exec_or_die(["pi", "--session", full_id, *extra])
     elif tool == "opencode":
         exec_or_die(["opencode", "--session", full_id, *extra])
+    elif tool == "agy":
+        exec_or_die(["agy", "--conversation", full_id, *extra])
     elif tool == "codebuddy":
         exec_or_die(["codebuddy", "-r", full_id, *extra])
     elif tool == "zcode":

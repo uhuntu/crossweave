@@ -400,6 +400,8 @@ def _session_messages(r):
             return sessions.kimi_handoff_messages(r["dir"]) if r.get("dir") else []
         if tool == "zcode":
             return sessions.zcode_handoff_messages(r["id"])
+        if tool == "agy":
+            return sessions.agy_handoff_messages(r["id"])
         # not renamable, but `cw note` digests them the same way
         if tool in ("codebuddy", "workbuddy"):
             return sessions.codebuddy_handoff_messages(r["path"]) if r.get("path") else []

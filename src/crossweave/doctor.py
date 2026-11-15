@@ -20,7 +20,7 @@ import os
 import sqlite3
 import sys
 
-from . import codebuddy, color, common, opencode, pi, step, workbuddy, zcode
+from . import agy, codebuddy, color, common, opencode, pi, step, workbuddy, zcode
 from .claude import claude_light_records
 from .codebuddy import codebuddy_light_records
 from .codex import codex_light_records, codex_rollout_files
@@ -174,6 +174,18 @@ def _verdict(files, records):
     return EMPTY, 0, None
 
 
+def _check_agy():
+    if not os.path.isfile(agy.AGY_DB):
+        return MISSING, 0, None
+    schema = agy.agy_schema()
+    if schema is None:
+        return BROKEN, 0, "the store exists but cannot be opened"
+    if schema != "v1":
+        return BROKEN, 0, ("the db opens but has no conversation_summaries "
+                           "table -- schema changed?")
+    return OK, len(agy.agy_light_records(show_all=True)), None
+
+
 CHECKS = (
     ("claude", _check_claude),
     ("codex", _check_codex),
@@ -182,6 +194,7 @@ CHECKS = (
     ("pi", _check_pi),
     ("opencode", _check_opencode),
     ("zcode", _check_zcode),
+    ("agy", _check_agy),
 )
 
 
