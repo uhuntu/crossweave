@@ -132,11 +132,21 @@ Write-Launcher "clisweave" (Join-Path $ScriptDir "bin\cw")
 Write-Launcher "aim" (Join-Path $ScriptDir "bin\cw")
 Write-Launcher "aimux" (Join-Path $ScriptDir "bin\cw")
 
-$pathDirs = $env:PATH -split ";"
-if ($pathDirs -notcontains $BinDir) {
-    Write-Host "Note: $BinDir is not on your PATH. Add it, e.g.:"
-    Write-Host "  [Environment]::SetEnvironmentVariable('PATH', `"$BinDir;`$env:PATH`", 'User')"
-    Write-Host "  (then restart your terminal)"
+# Make commands available immediately, including when invoked through irm | iex.
+if (($env:Path -split ';') -notcontains $BinDir) {
+    $env:Path = "$BinDir;$env:Path"
+}
+
+# Persist only the user PATH, without copying machine PATH entries into it.
+try {
+    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+    if (($userPath -split ';') -notcontains $BinDir) {
+        $newUserPath = if ($userPath) { "$BinDir;$userPath" } else { $BinDir }
+        [Environment]::SetEnvironmentVariable('Path', $newUserPath, 'User')
+        Write-Host "Added $BinDir to user PATH."
+    }
+} catch {
+    Write-Warning "Could not save user PATH: $_. Commands are available in this session; add $BinDir to user PATH for future terminals."
 }
 
 Write-Host "Done. Try: cw --help"
