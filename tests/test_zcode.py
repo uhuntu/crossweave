@@ -554,42 +554,50 @@ def test_resume_keeps_flags_out_of_the_headless_instruction(monkeypatch, tmp_pat
 
 
 def test_resume_skips_the_tui_once_the_install_is_known_to_have_none(monkeypatch, tmp_path, capsys):
-    """A remembered no-TUI install is not attempted again -- the landing
-    carries the headless command instead of a second doomed start."""
+    """A remembered no-TUI install is not attempted again -- the landing is
+    the desktop app on the session's workspace, with the headless command
+    carried alongside instead of a second doomed start."""
     one_session(tmp_path)
     monkeypatch.setattr(sessions, "zcode_cli_on_path", lambda: True)
     zcode.zcode_remember_tui_missing()
     calls = []
     monkeypatch.setattr(sessions.subprocess, "call",
                         lambda argv, **kw: calls.append(argv) or 0)
+    launched = []
+    monkeypatch.setattr(sessions.subprocess, "Popen",
+                        lambda argv, **kw: launched.append(argv))
 
-    with pytest.raises(SystemExit) as exc_info:
-        sessions.cmd_resume(["zcode", SID])
+    sessions.cmd_resume(["zcode", SID])
 
-    assert exc_info.value.code == 1
     assert calls == []  # the TUI start that cannot work was not repeated
     err = capsys.readouterr().err
     assert "@zcode/tui" in err
     assert f"zcode --resume {SID} -p" in err
+    assert launched and launched[0][0] == "zcode"
+    assert launched[0][1].startswith("zcode://workspace/open?path=")
 
 
 def test_resume_remembers_a_tui_death_on_the_missing_package(monkeypatch, tmp_path, capsys):
     """The one TUI death worth remembering: the child's output names the
     missing package, so the next resume on this install skips straight to
-    the landing. A death the output cannot explain is left alone."""
+    the desktop landing -- and this one does too, right away. A death the
+    output cannot explain is left alone."""
     one_session(tmp_path)
     monkeypatch.setattr(sessions, "zcode_cli_on_path", lambda: True)
     monkeypatch.setattr(sessions, "_run_zcode_tui", lambda argv: (
         1, "Error: Cannot find package '@zcode/tui' imported from "
            "/opt/ZCode/resources/glm/zcode.cjs\n"))
     assert not os.path.exists(zcode.ZCODE_TUI_MEMO)
+    launched = []
+    monkeypatch.setattr(sessions.subprocess, "Popen",
+                        lambda argv, **kw: launched.append(argv))
 
-    with pytest.raises(SystemExit) as exc_info:
-        sessions.cmd_resume(["zcode", SID])
+    sessions.cmd_resume(["zcode", SID])
 
-    assert exc_info.value.code == 1
     assert zcode.zcode_tui_known_missing()
-    assert f"zcode --resume {SID} -p" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert f"zcode --resume {SID} -p" in err
+    assert launched and launched[0][1].startswith("zcode://workspace/open?path=")
 
 
 def test_resume_does_not_remember_a_tui_death_it_cannot_explain(monkeypatch, tmp_path):
@@ -610,17 +618,21 @@ def test_resume_does_not_remember_a_tui_death_it_cannot_explain(monkeypatch, tmp
 def test_a_tui_that_died_on_the_missing_package_is_reported_even_at_zero(monkeypatch, tmp_path, capsys):
     """The install's CLI writes its TUI error to stderr and returns that
     write's result -- which is not reliably an exit status. A run whose
-    output says the TUI never opened is a failure whatever the code says."""
+    output says the TUI never opened is a failure whatever the code says,
+    and lands on the desktop like any other no-TUI discovery."""
     one_session(tmp_path)
     monkeypatch.setattr(sessions, "zcode_cli_on_path", lambda: True)
     monkeypatch.setattr(sessions, "_run_zcode_tui", lambda argv: (
         0, "Error: Cannot find package '@zcode/tui' imported from x\n"))
+    launched = []
+    monkeypatch.setattr(sessions.subprocess, "Popen",
+                        lambda argv, **kw: launched.append(argv))
 
-    with pytest.raises(SystemExit) as exc_info:
-        sessions.cmd_resume(["zcode", SID])
+    sessions.cmd_resume(["zcode", SID])
 
-    assert exc_info.value.code == 1
     assert zcode.zcode_tui_known_missing()
+    assert "@zcode/tui" in capsys.readouterr().err
+    assert launched and launched[0][1].startswith("zcode://workspace/open?path=")
 
 
 def test_resume_without_an_id_says_where_the_ids_come_from_without_a_tui(monkeypatch, tmp_path, capsys):
@@ -642,8 +654,8 @@ def test_resume_without_an_id_says_where_the_ids_come_from_without_a_tui(monkeyp
 def test_a_zcode_handoff_skips_the_tui_it_knows_is_missing(monkeypatch, tmp_path, capsys):
     """The seed run is headless and persists the session on a TUI-less
     install too; it is the resume after it that cannot work, and a
-    remembered install is not attempted -- the landing names the seeded
-    session so the user can keep talking to it."""
+    remembered install is not attempted -- the landing is the desktop app
+    on the seeded session's workspace, with the headless command alongside."""
     monkeypatch.setattr(sessions, "zcode_cli_on_path", lambda: True)
     monkeypatch.setattr(sessions, "session_handoff_details",
                         lambda tool, sid: (str(tmp_path), "# export\n\nthe body"))
@@ -652,15 +664,19 @@ def test_a_zcode_handoff_skips_the_tui_it_knows_is_missing(monkeypatch, tmp_path
     calls = []
     monkeypatch.setattr(sessions.subprocess, "call",
                         lambda argv, **kw: calls.append(argv) or 0)
+    launched = []
+    monkeypatch.setattr(sessions.subprocess, "Popen",
+                        lambda argv, **kw: launched.append(argv))
     monkeypatch.setattr(sessions, "zcode_newest_session_since",
                         lambda started: "sess_fresh04-0000")
 
-    with pytest.raises(SystemExit) as exc_info:
-        sessions.perform_handoff("claude", "019abc-source", "zcode", [])
+    sessions.perform_handoff("claude", "019abc-source", "zcode", [])
 
-    assert exc_info.value.code == 1
     assert len(calls) == 1 and calls[0][:2] == ["zcode", "-p"]  # seeded, not resumed
-    assert "zcode --resume sess_fresh04-0000 -p" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "zcode --resume sess_fresh04-0000 -p" in err
+    assert launched and launched[0][0] == "zcode"
+    assert launched[0][1].startswith("zcode://workspace/open?path=")
 
 
 # ---------- the no-TUI memo ----------

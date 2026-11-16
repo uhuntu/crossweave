@@ -654,17 +654,24 @@ def perform_handoff(source_tool, source_id, target_tool, extra, forced_cwd=None,
         if sid:
             if zcode_tui_known_missing():
                 # This install cannot open a TUI at all -- the seed run is
-                # what carried the context in, so the session exists and the
-                # landing says how to keep talking to it.
-                _zcode_tui_failure_hint(sid, remembered=True)
-                sys.exit(1)
+                # what carried the context in, so the session exists, and
+                # the desktop app on its workspace is the landing rather
+                # than an exit beside directions to one.
+                _zcode_tui_failure_hint(sid, remembered=True, opening_desktop=True)
+                _zcode_open_desktop(sid)
+                return
             rc, err = _run_zcode_tui(["zcode", "--resume", sid, *extra])
             no_tui = zcode_stderr_says_no_tui(err)
             if no_tui:
+                # First discovery of the dead end the memo now records:
+                # land on the desktop route straight away too.
                 zcode_remember_tui_missing()
-            if rc or no_tui:
-                _zcode_tui_failure_hint(sid, rc or 1)
-                sys.exit(rc or 1)
+                _zcode_tui_failure_hint(sid, remembered=True, opening_desktop=True)
+                _zcode_open_desktop(sid)
+                return
+            if rc:
+                _zcode_tui_failure_hint(sid, rc)
+                sys.exit(rc)
             return
         print("cw handoff: could not determine the seeded zcode session -- continue "
               "manually with `zcode -c`", file=sys.stderr)
@@ -1757,10 +1764,11 @@ def _run_zcode_tui(argv):
     return rc, err_text
 
 
-def _zcode_tui_failure_hint(full_id, rc=None, remembered=False):
+def _zcode_tui_failure_hint(full_id, rc=None, remembered=False, opening_desktop=False):
     """Where to go when the TUI did not open: the headless continuation --
-    which on a TUI-less install is the only interactive-ish route there is
-    -- or the desktop app's task list."""
+    which on a TUI-less install is the only terminal route there is -- and
+    the desktop app's task list, named as directions when cw is not opening
+    it, announced as the landing when it is."""
     if remembered:
         lead = ("cw resume: this zcode install has no TUI -- its @zcode/tui package "
                 "is missing (remembered from an earlier attempt, so the TUI was not "
@@ -1768,9 +1776,55 @@ def _zcode_tui_failure_hint(full_id, rc=None, remembered=False):
     else:
         lead = (f"cw resume: the zcode TUI exited with status {rc} -- an install "
                 "without @zcode/tui has no TUI")
-    print(f"{lead}. Continue headlessly with `zcode --resume {full_id} -p \"<next "
-          f"instruction>\"` (through cw: `cw resume zcode {full_id} \"<next "
-          "instruction>\"`), or resume in the desktop app's task list.", file=sys.stderr)
+    instruction = (f"Continue headlessly with `zcode --resume {full_id} -p \"<next "
+                   f"instruction>\"` (through cw: `cw resume zcode {full_id} \"<next "
+                   "instruction>\"`)")
+    if opening_desktop:
+        print(f"{lead}. Opening the desktop app on the session's workspace -- its task "
+              f"list is the session picker. {instruction}.", file=sys.stderr)
+    else:
+        print(f"{lead}. {instruction}, or resume in the desktop app's task list.",
+              file=sys.stderr)
+
+
+def _zcode_open_desktop(full_id):
+    """The desktop app on the session's workspace, by its deep link -- the
+    landing when nothing on this install can open a TUI. Popen, not exec:
+    the GUI is not the terminal's successor process, and cw should exit
+    once the app is up."""
+    link = zcode_workspace_link(zcode_session_cwd(full_id))
+    try:
+        subprocess.Popen(["zcode", link])
+    except FileNotFoundError:
+        if os.name == "nt":
+            try:
+                flags = (getattr(subprocess, "DETACHED_PROCESS", 0)
+                         | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+                subprocess.Popen(
+                    ["cmd", "/c", "start", "", link],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    creationflags=flags,
+                )
+                return
+            except OSError:
+                pass
+        print("cw: 'zcode' not found on PATH", file=sys.stderr)
+        sys.exit(127)
+    except OSError as exc:
+        print(f"cw resume: could not run zcode: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _zcode_resume_goes_desktop(extra):
+    """True when a resume has no route through this terminal: no CLI to run
+    anything with, or a CLI whose TUI is known missing and no instruction to
+    answer headlessly -- the desktop deep link takes over, and the cwd
+    switch made for launching a child here has nothing to launch for."""
+    if not zcode_cli_on_path():
+        return True
+    return zcode_tui_known_missing() and _zcode_next_instruction(extra) is None
 
 
 def _zcode_next_instruction(extra):
@@ -1977,8 +2031,14 @@ def cmd_resume(args):
     else:
         target_cwd = cwd_getter(full_id)
         if target_cwd and os.path.isdir(target_cwd) and os.path.realpath(target_cwd) != os.path.realpath(os.getcwd()):
-            print(f"cw resume: this {tool} session was created in {target_cwd}, switching there first", file=sys.stderr)
-            os.chdir(target_cwd)
+            # A zcode resume that lands in the desktop app has nothing to
+            # launch from this directory -- the deep link names the
+            # workspace itself -- so no switch, and no "switching there
+            # first" line suggesting the terminal is going anywhere.
+            goes_desktop = tool == "zcode" and _zcode_resume_goes_desktop(extra)
+            if not goes_desktop:
+                print(f"cw resume: this {tool} session was created in {target_cwd}, switching there first", file=sys.stderr)
+                os.chdir(target_cwd)
 
     if tool == "claude":
         exec_or_die(["claude", "--resume", full_id, *extra])
@@ -2021,9 +2081,12 @@ def cmd_resume(args):
                     sys.exit(127)
             if zcode_tui_known_missing():
                 # Attempting it anyway only repeats a start that already
-                # proved it cannot work on this install.
-                _zcode_tui_failure_hint(full_id, remembered=True)
-                sys.exit(1)
+                # proved it cannot work on this install -- and with no
+                # instruction there is nothing to answer headlessly, so the
+                # desktop app is the landing, not an exit beside it.
+                _zcode_tui_failure_hint(full_id, remembered=True, opening_desktop=True)
+                _zcode_open_desktop(full_id)
+                return
             # A real resume: the CLI reopens the session by id (verified
             # headlessly, same and cross directory), interactively in the
             # TUI -- unless this install bundles no TUI, which lands back
@@ -2031,42 +2094,23 @@ def cmd_resume(args):
             rc, err = _run_zcode_tui(["zcode", "--resume", full_id, *extra])
             no_tui = zcode_stderr_says_no_tui(err)
             if no_tui:
+                # First discovery of the dead end the memo now records:
+                # land on the desktop route straight away too.
                 zcode_remember_tui_missing()
-            if rc or no_tui:
-                _zcode_tui_failure_hint(full_id, rc or 1)
-                sys.exit(rc or 1)
+                _zcode_tui_failure_hint(full_id, remembered=True, opening_desktop=True)
+                _zcode_open_desktop(full_id)
+                return
+            if rc:
+                _zcode_tui_failure_hint(full_id, rc)
+                sys.exit(rc)
             return
         # No CLI -- the desktop deep link is the closest route in (cb's
-        # desktop handler makes the same compromise). Popen, not exec: the
-        # GUI is not the terminal's successor process, and the wrapper
-        # should exit once the app is up.
-        link = zcode_workspace_link(zcode_session_cwd(full_id))
+        # desktop handler makes the same compromise).
         print("cw resume: the zcode CLI is not on PATH -- opening the desktop app on the "
               "session's workspace", file=sys.stderr)
         print("cw resume: the desktop app has no command that opens one conversation -- "
               "pick the session in its task list", file=sys.stderr)
-        try:
-            subprocess.Popen(["zcode", link])
-        except FileNotFoundError:
-            if os.name == "nt":
-                try:
-                    flags = (getattr(subprocess, "DETACHED_PROCESS", 0)
-                             | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
-                    subprocess.Popen(
-                        ["cmd", "/c", "start", "", link],
-                        stdin=subprocess.DEVNULL,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        creationflags=flags,
-                    )
-                    return
-                except OSError:
-                    pass
-            print("cw: 'zcode' not found on PATH", file=sys.stderr)
-            sys.exit(127)
-        except OSError as exc:
-            print(f"cw resume: could not run zcode: {exc}", file=sys.stderr)
-            sys.exit(1)
+        _zcode_open_desktop(full_id)
         return
     else:
         exec_or_die(["kimi", "-S", full_id, *extra])
