@@ -149,6 +149,16 @@ def test_cli_flags_and_resume_and_update(store, monkeypatch, capsys):
     assert launched[-1] == ["agy"]
 
 
+def test_a_handoff_into_agy_goes_through_prompt_interactive(monkeypatch):
+    monkeypatch.setattr(sessions, "session_handoff_details", lambda t, s: (None, "# x"))
+    monkeypatch.setattr(sessions, "write_handoff_export", lambda *a: "/tmp/x.md")
+    ran = []
+    monkeypatch.setattr(sessions, "exec_or_die", ran.append)
+    sessions.perform_handoff("claude", "abc", "agy", [])
+    assert ran[0][0] == "agy" and ran[0][-2] == "-i"
+    assert ran[0][-1].startswith("Continue the work from this claude session (abc)")
+
+
 def test_doctor_and_search_include_agy(store):
     store.session(SID, title="Doctor check")
     assert ("agy", doctor._check_agy) in doctor.CHECKS

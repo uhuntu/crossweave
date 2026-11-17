@@ -707,6 +707,11 @@ def perform_handoff(source_tool, source_id, target_tool, extra, forced_cwd=None,
         # opencode's bare positional is the directory to start in; the TUI
         # takes an opening prompt as --prompt.
         exec_or_die(["opencode", *extra, "--prompt", prompt])
+    elif target_tool == "agy":
+        # agy rejects a bare positional prompt ("Prompts are read only from
+        # -p/--print, -i/--prompt-interactive, or stdin"); -i runs the seed
+        # and lands in the interactive session it belongs to.
+        exec_or_die(["agy", *extra, "-i", prompt])
     else:
         exec_or_die([target_tool, *extra, prompt])
 
