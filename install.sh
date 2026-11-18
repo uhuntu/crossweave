@@ -116,10 +116,46 @@ for alias_name in crossweave clisweave aim aimux; do
   link_or_launcher "$SCRIPT_DIR/bin/cw" "$BIN_DIR/$alias_name"
 done
 
+add_to_path_rc() {
+  local bin_dir="$1"
+  local rc_file="" line=""
+  case "${SHELL:-}" in
+    */zsh)
+      rc_file="$HOME/.zshrc"
+      line="export PATH=\"$bin_dir:\$PATH\""
+      ;;
+    */bash)
+      if [[ -f "$HOME/.bash_profile" && ! -f "$HOME/.bashrc" ]]; then
+        rc_file="$HOME/.bash_profile"
+      else
+        rc_file="$HOME/.bashrc"
+      fi
+      line="export PATH=\"$bin_dir:\$PATH\""
+      ;;
+    */fish)
+      rc_file="$HOME/.config/fish/config.fish"
+      line="fish_add_path \"$bin_dir\""
+      ;;
+    *)
+      rc_file="$HOME/.profile"
+      line="export PATH=\"$bin_dir:\$PATH\""
+      ;;
+  esac
+
+  mkdir -p "$(dirname "$rc_file")"
+  if [[ -f "$rc_file" ]] && grep -Fq "$bin_dir" "$rc_file"; then
+    echo "Note: $bin_dir is already referenced in $rc_file (restart your shell or run: source $rc_file)"
+    return
+  fi
+
+  printf '\n# Added by crossweave installer\n%s\n' "$line" >> "$rc_file"
+  echo "Added $bin_dir to PATH in $rc_file"
+  echo "Restart your shell or run: source $rc_file"
+}
+
 case ":$PATH:" in
   *":$BIN_DIR:"*) ;;
-  *) echo "Note: $BIN_DIR is not on your PATH. Add it in your shell rc file, e.g.:" ;
-     echo "  export PATH=\"$BIN_DIR:\$PATH\"" ;;
+  *) add_to_path_rc "$BIN_DIR" ;;
 esac
 
 echo "Done. Try: cw --help"
