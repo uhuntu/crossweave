@@ -46,6 +46,29 @@ def test_judge_call_has_timeout(monkeypatch):
     assert calls[0][1]["timeout"] == search.JUDGE_TIMEOUT_SECONDS
 
 
+def test_agy_judge_passes_prompt_via_flag_not_stdin(monkeypatch):
+    calls = []
+
+    class FakeResult:
+        returncode = 0
+        stdout = "none"
+        stderr = ""
+
+    monkeypatch.setattr(
+        search.subprocess,
+        "run",
+        lambda argv, **kwargs: calls.append((argv, kwargs)) or FakeResult(),
+    )
+
+    search._call_judge("agy", "prompt text")
+
+    argv, kwargs = calls[0]
+    assert argv[0] == "agy"
+    assert "--disable-slash-commands" in argv
+    assert "--print=prompt text" in argv
+    assert kwargs["input"] is None
+
+
 def test_judge_timeout_reports_cleanly(monkeypatch, capsys):
     def time_out(*args, **kwargs):
         raise search.subprocess.TimeoutExpired(args[0], kwargs["timeout"])

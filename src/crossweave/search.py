@@ -83,9 +83,10 @@ JUDGE_CMD = {
              "--non-interactive-approval", "deny"],
     "pi": ["pi", "-p", "--no-session", "--no-tools", "--no-mcp", "--no-extensions",
            "--no-skills", "--no-prompt-templates", "--no-context-files"],
+    "agy": ["agy", "--disable-slash-commands", "--output-format", "text"],
 }
 DEFAULT_JUDGE = "step"
-JUDGE_USES_STDIN = set(JUDGE_CMD)
+JUDGE_USES_STDIN = {"claude", "step", "pi"}
 
 # Smaller batches limit loss of relevant entries in a long candidate list.
 CHUNK_SIZE = 50
@@ -304,12 +305,18 @@ def parse_numbered_reasons(text, max_n):
 def _call_judge(judge, prompt):
     """Run a single judge and return its subprocess.CompletedProcess."""
     judge_cmd = JUDGE_CMD[judge]
+    if judge in JUDGE_USES_STDIN:
+        cmd = judge_cmd
+        stdin_input = prompt
+    else:
+        cmd = [*judge_cmd, f"--print={prompt}"]
+        stdin_input = None
     try:
         # Do not inherit the caller's repository or project instruction files.
         # Preserve HOME/provider configuration so the normal login still works.
         with tempfile.TemporaryDirectory(prefix="cw-judge-") as cwd:
             return subprocess.run(
-                sessions.spawnable(judge_cmd), input=prompt, capture_output=True, text=True,
+                sessions.spawnable(cmd), input=stdin_input, capture_output=True, text=True,
                 encoding="utf-8", errors="replace", cwd=cwd,
                 timeout=JUDGE_TIMEOUT_SECONDS,
                 preexec_fn=_die_with_parent,
