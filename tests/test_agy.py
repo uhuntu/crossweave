@@ -244,3 +244,15 @@ def test_agy_cli_brain_transcript_fallback(store, monkeypatch, tmp_path):
 
     assert agy.agy_transcript_path(SID) == str(tpath)
     assert agy.agy_handoff_messages(SID) == [("user", "Fix agy rename"), ("assistant", "Checking agy.py.")]
+
+
+def test_agy_judge_cwd_uses_judge_session_title(store):
+    store.session(
+        SID,
+        title="Each line below describes a past AI coding-assistant session",
+        workspace_uris=json.dumps(["file:///tmp/cw-judge-j2u85r13"]),
+    )
+
+    records = agy.agy_light_records()
+    assert len(records) == 1
+    assert records[0]["title"] == common.JUDGE_SESSION_TITLE

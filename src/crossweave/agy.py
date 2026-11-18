@@ -249,9 +249,15 @@ def agy_clear_custom_title(sid):
         _write_custom_titles(mapping)
 
 
-def _row_title(sid, stored, preview=None, custom_titles=None):
+def _is_judge_cwd(cwd):
+    return bool(cwd) and os.path.basename(os.path.normpath(cwd)).startswith("cw-judge-")
+
+
+def _row_title(sid, stored, preview=None, custom_titles=None, cwd=None):
     if custom_titles and sid in custom_titles:
         return custom_titles[sid]
+    if _is_judge_cwd(cwd):
+        return common.JUDGE_SESSION_TITLE
     title = common._as_title(stored)
     if title:
         return title
@@ -274,13 +280,16 @@ def agy_light_records(show_all=False):
             continue
         if not show_all and (parent_id or (depth or 0) > 0):
             continue
+        cwd = _workspace_cwd(workspace_uris)
         records.append({
             "tool": "agy",
             "id": sid,
             "ts": _ts(modified),
             "path": agy_transcript_path(sid),
-            "cwd": _workspace_cwd(workspace_uris),
-            "title": _row_title(sid, title, preview=preview, custom_titles=custom_titles),
+            "cwd": cwd,
+            "title": _row_title(
+                sid, title, preview=preview, custom_titles=custom_titles, cwd=cwd,
+            ),
         })
     return records
 
