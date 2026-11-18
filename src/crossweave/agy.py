@@ -27,6 +27,8 @@ def _default_dir():
 AGY_DIR = _default_dir()
 AGY_DB = os.path.join(AGY_DIR, "conversation_summaries.db")
 AGY_BRAIN = os.path.join(AGY_DIR, "brain")
+AGY_CLI_DIR = os.path.join(common.HOME, ".gemini", "antigravity-cli")
+AGY_CLI_BRAIN = os.path.join(AGY_CLI_DIR, "brain")
 AGY_TITLES_FILE = os.path.join(common.HOME, ".config", "crossweave", "agy_titles.json")
 
 _USER_REQUEST_RE = re.compile(r"<USER_REQUEST>\s*(.*?)\s*</USER_REQUEST>", re.S)
@@ -149,8 +151,11 @@ def agy_transcript_path(sid):
     """Path to a session's transcript.jsonl, or None if not on disk."""
     if not sid:
         return None
-    path = os.path.join(AGY_BRAIN, sid, ".system_generated", "logs", "transcript.jsonl")
-    return path if os.path.isfile(path) else None
+    for brain_dir in (AGY_BRAIN, AGY_CLI_BRAIN):
+        path = os.path.join(brain_dir, sid, ".system_generated", "logs", "transcript.jsonl")
+        if os.path.isfile(path):
+            return path
+    return None
 
 
 def _clean_user_text(raw):

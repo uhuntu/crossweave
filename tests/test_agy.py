@@ -225,3 +225,22 @@ def test_delete_agy(store, tmp_path):
     assert manifest["id"] == SID
     assert manifest["db_row"]["title"] == "Delete me"
     assert len(manifest["files"]) == 3
+
+
+def test_agy_cli_brain_transcript_fallback(store, monkeypatch, tmp_path):
+    store.session(SID, title="CLI session", step_count=4)
+    cli_brain = tmp_path / "antigravity-cli" / "brain"
+    monkeypatch.setattr(agy, "AGY_CLI_BRAIN", str(cli_brain))
+    logs = cli_brain / SID / ".system_generated" / "logs"
+    logs.mkdir(parents=True, exist_ok=True)
+    tpath = logs / "transcript.jsonl"
+    tpath.write_text(
+        "\n".join([
+            json.dumps({"step_index": 0, "type": "USER_INPUT", "content": "<USER_REQUEST>\nFix agy rename\n</USER_REQUEST>"}),
+            json.dumps({"step_index": 1, "type": "PLANNER_RESPONSE", "content": "Checking agy.py."}),
+        ]) + "\n",
+        encoding="utf-8",
+    )
+
+    assert agy.agy_transcript_path(SID) == str(tpath)
+    assert agy.agy_handoff_messages(SID) == [("user", "Fix agy rename"), ("assistant", "Checking agy.py.")]

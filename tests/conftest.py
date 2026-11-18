@@ -36,6 +36,8 @@ def _isolate_stores(monkeypatch, tmp_path):
     monkeypatch.setattr(agy, "AGY_DIR", str(nowhere / "agy"))
     monkeypatch.setattr(agy, "AGY_DB", str(nowhere / "agy" / "conversation_summaries.db"))
     monkeypatch.setattr(agy, "AGY_BRAIN", str(nowhere / "agy" / "brain"))
+    monkeypatch.setattr(agy, "AGY_CLI_DIR", str(nowhere / "agy-cli"))
+    monkeypatch.setattr(agy, "AGY_CLI_BRAIN", str(nowhere / "agy-cli" / "brain"))
     monkeypatch.setattr(agy, "AGY_TITLES_FILE", str(nowhere / "agy_titles.json"))
     monkeypatch.setattr(sessions, "LIST_CACHE_FILE", str(nowhere / "last_list.json"))
     monkeypatch.setattr(sessions, "HANDOFF_DIR", str(nowhere / "handoffs"))
