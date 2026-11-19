@@ -829,8 +829,9 @@ def cmd_list(args):
             sys.exit(1)
 
     # If --home names a mounted directory directly (e.g. --home /mnt/win)
-    # that isn't configured yet, include it for this listing so the flag
-    # works without prior setup.
+    # that isn't configured yet, keep it in CROSSWEAVE_EXTRA_HOMES for the
+    # whole listing (including render_rows' turn/last-message lookups for
+    # DB-backed tools like agy/zcode/opencode).
     prev_extra_env = os.environ.get("CROSSWEAVE_EXTRA_HOMES")
     injected_extra = False
     if home_filter:
@@ -847,6 +848,19 @@ def cmd_list(args):
                 os.environ["CROSSWEAVE_EXTRA_HOMES"] = os.pathsep.join([*existing, expanded_home])
                 injected_extra = True
 
+    try:
+        _run_list(limit, tool_filter, home_filter, cwd_filter, show_all,
+                  with_machines, machine_targets)
+    finally:
+        if injected_extra:
+            if prev_extra_env is None:
+                os.environ.pop("CROSSWEAVE_EXTRA_HOMES", None)
+            else:
+                os.environ["CROSSWEAVE_EXTRA_HOMES"] = prev_extra_env
+
+
+def _run_list(limit, tool_filter, home_filter, cwd_filter, show_all,
+              with_machines, machine_targets):
     # The machines index describes the machine, not the question, so when
     # the sync directory exists every listing publishes the full set --
     # and therefore gathers every store, --tool or not. Without the
@@ -854,25 +868,18 @@ def cmd_list(args):
     # always been: the directory's existence is the switch (see machines).
     publish = os.path.isdir(machines.MACHINES_DIR)
     light = []
-    try:
-        for tool, gather in (
-            ("claude", claude_light_records),
-            ("codex", codex_light_records),
-            ("kimi", lambda: kimi_light_records(show_all)),
-            ("step", lambda: step_light_records(show_all)),
-            ("pi", lambda: pi_light_records(show_all)),
-            ("opencode", lambda: opencode_light_records(show_all)),
-            ("zcode", lambda: zcode_light_records(show_all)),
-            ("agy", lambda: agy_light_records(show_all)),
-        ):
-            if publish or tool_filter in (None, tool):
-                light += gather()
-    finally:
-        if injected_extra:
-            if prev_extra_env is None:
-                os.environ.pop("CROSSWEAVE_EXTRA_HOMES", None)
-            else:
-                os.environ["CROSSWEAVE_EXTRA_HOMES"] = prev_extra_env
+    for tool, gather in (
+        ("claude", claude_light_records),
+        ("codex", codex_light_records),
+        ("kimi", lambda: kimi_light_records(show_all)),
+        ("step", lambda: step_light_records(show_all)),
+        ("pi", lambda: pi_light_records(show_all)),
+        ("opencode", lambda: opencode_light_records(show_all)),
+        ("zcode", lambda: zcode_light_records(show_all)),
+        ("agy", lambda: agy_light_records(show_all)),
+    ):
+        if publish or tool_filter in (None, tool):
+            light += gather()
     if publish:
         machines.write_own_index(light)
     if tool_filter is not None:
