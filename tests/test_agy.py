@@ -95,8 +95,7 @@ def test_light_records_and_subagent_filtering(store):
     assert r["tool"] == "agy"
     assert r["title"] == "Integrate agy into crossweave"
     assert r["ts"] > 0
-    expected_cwd = os.path.normpath("c:/Users/huntl/work/crossweave") if os.name == "nt" else "/c:/Users/huntl/work/crossweave"
-    assert r["cwd"] == expected_cwd
+    assert r["cwd"] == r"c:\Users\huntl\work\crossweave"
     assert r["path"] is not None
 
     all_recs = agy.agy_light_records(show_all=True)

@@ -11,6 +11,7 @@ per-thread like opencode/zcode), and cw never writes to it.
 """
 from datetime import datetime
 import json
+import ntpath
 import os
 import re
 import sqlite3
@@ -138,12 +139,14 @@ def _decode_uri(uri):
     if uri.startswith("file://"):
         parsed = urlparse(uri)
         path = unquote(parsed.path or "")
-        if os.name == "nt" and len(path) >= 3 and path[0] == "/" and path[2] == ":":
+        if len(path) >= 3 and path[0] == "/" and path[1].isalpha() and path[2] == ":":
             path = path[1:]
     else:
         path = uri
     if not path:
         return None
+    if len(path) >= 2 and path[0].isalpha() and path[1] == ":":
+        return ntpath.normpath(path)
     return os.path.normpath(path) if os.name == "nt" else path
 
 

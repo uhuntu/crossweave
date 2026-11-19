@@ -203,7 +203,7 @@ def test_agy_extra_home_cli_db_and_transcript(monkeypatch, tmp_path):
     recs = agy.agy_light_records()
     assert len(recs) == 1
     assert recs[0]["id"] == sid
-    assert recs[0]["cwd"] == (os.path.normpath("C:/Users/Administrator") if os.name == "nt" else "/C:/Users/Administrator")
+    assert recs[0]["cwd"] == r"C:\Users\Administrator"
     assert recs[0]["extra_home"] == str(win_home)
     assert recs[0]["path"] == str(tpath)
     assert agy.agy_resolve("aaaa1111") == [sid]
