@@ -301,3 +301,34 @@ def test_rename_and_delete_refuse_extra_home_sessions(monkeypatch, tmp_path, cap
 def test_note_project_handles_windows_paths():
     assert note._project(r"C:\Users\Administrator\Desktop\Qwen3.0_VLM") == "Qwen3.0_VLM"
     assert note._project(r"C:\Users\Administrator\\") == "Administrator"
+
+
+def test_cmd_list_home_filter(monkeypatch, tmp_path, capsys):
+    win = tmp_path / "mnt_win"
+    win_file = win / "Users" / "Admin" / ".claude" / "projects" / "C--Users-Admin" / "win-only.jsonl"
+    _write_jsonl(str(win_file), [
+        {"type": "user", "cwd": r"C:\Users\Admin", "message": {"content": "Windows task"}},
+    ])
+    linux_file = tmp_path / "no-stores" / "claude" / "home-proj" / "linux-only.jsonl"
+    _write_jsonl(str(linux_file), [
+        {"type": "user", "cwd": "/home/hunt", "message": {"content": "Linux task"}},
+    ])
+
+    # Zero-config direct path works even without CROSSWEAVE_EXTRA_HOMES
+    sessions.cmd_list(["--home", str(win)])
+    out = capsys.readouterr().out
+    assert "Windows task" in out
+    assert "Linux task" not in out
+
+    # Substring match when configured
+    monkeypatch.setenv("CROSSWEAVE_EXTRA_HOMES", str(win))
+    sessions.cmd_list(["--home", "win"])
+    out = capsys.readouterr().out
+    assert "Windows task" in out
+    assert "Linux task" not in out
+
+    # --home local shows only primary home
+    sessions.cmd_list(["--home", "local"])
+    out = capsys.readouterr().out
+    assert "Linux task" in out
+    assert "Windows task" not in out

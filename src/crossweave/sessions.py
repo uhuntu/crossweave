@@ -757,9 +757,29 @@ def _all_light_records():
     return light
 
 
+def _matches_home(record, home_filter):
+    eh = record.get("extra_home")
+    low = home_filter.lower()
+    if low in ("local", "primary", "~"):
+        return not eh
+    expanded = os.path.expanduser(home_filter)
+    if os.path.isdir(expanded):
+        target = os.path.realpath(expanded)
+        if target == os.path.realpath(HOME):
+            return not eh
+        if not eh:
+            return False
+        eh_real = os.path.realpath(eh)
+        return eh_real == target or eh_real.startswith(target + os.sep)
+    if not eh:
+        return False
+    return low in eh.lower()
+
+
 def cmd_list(args):
     limit = 20
     tool_filter = None
+    home_filter = None
     cwd_filter = False
     show_all = False
     with_machines = False
@@ -790,6 +810,9 @@ def cmd_list(args):
                 print(f"cw sessions: --tool must be one of {', '.join(TOOLS)}", file=sys.stderr)
                 sys.exit(1)
             i += 2
+        elif a == "--home":
+            home_filter = next_value(a, i)
+            i += 2
         elif a == "--cwd":
             cwd_filter = True; i += 1
         elif a == "--all":
@@ -805,6 +828,25 @@ def cmd_list(args):
             print(f"cw sessions: unknown option '{a}'", file=sys.stderr)
             sys.exit(1)
 
+    # If --home names a mounted directory directly (e.g. --home /mnt/win)
+    # that isn't configured yet, include it for this listing so the flag
+    # works without prior setup.
+    prev_extra_env = os.environ.get("CROSSWEAVE_EXTRA_HOMES")
+    injected_extra = False
+    if home_filter:
+        expanded_home = os.path.expanduser(home_filter)
+        if os.path.isdir(expanded_home) and os.path.realpath(expanded_home) != os.path.realpath(HOME):
+            from . import common as _common
+            existing = _common.extra_homes()
+            target_real = os.path.realpath(expanded_home)
+            if not any(
+                os.path.realpath(h) == target_real
+                or os.path.realpath(h).startswith(target_real + os.sep)
+                for h in existing
+            ):
+                os.environ["CROSSWEAVE_EXTRA_HOMES"] = os.pathsep.join([*existing, expanded_home])
+                injected_extra = True
+
     # The machines index describes the machine, not the question, so when
     # the sync directory exists every listing publishes the full set --
     # and therefore gathers every store, --tool or not. Without the
@@ -812,22 +854,31 @@ def cmd_list(args):
     # always been: the directory's existence is the switch (see machines).
     publish = os.path.isdir(machines.MACHINES_DIR)
     light = []
-    for tool, gather in (
-        ("claude", claude_light_records),
-        ("codex", codex_light_records),
-        ("kimi", lambda: kimi_light_records(show_all)),
-        ("step", lambda: step_light_records(show_all)),
-        ("pi", lambda: pi_light_records(show_all)),
-        ("opencode", lambda: opencode_light_records(show_all)),
-        ("zcode", lambda: zcode_light_records(show_all)),
-        ("agy", lambda: agy_light_records(show_all)),
-    ):
-        if publish or tool_filter in (None, tool):
-            light += gather()
+    try:
+        for tool, gather in (
+            ("claude", claude_light_records),
+            ("codex", codex_light_records),
+            ("kimi", lambda: kimi_light_records(show_all)),
+            ("step", lambda: step_light_records(show_all)),
+            ("pi", lambda: pi_light_records(show_all)),
+            ("opencode", lambda: opencode_light_records(show_all)),
+            ("zcode", lambda: zcode_light_records(show_all)),
+            ("agy", lambda: agy_light_records(show_all)),
+        ):
+            if publish or tool_filter in (None, tool):
+                light += gather()
+    finally:
+        if injected_extra:
+            if prev_extra_env is None:
+                os.environ.pop("CROSSWEAVE_EXTRA_HOMES", None)
+            else:
+                os.environ["CROSSWEAVE_EXTRA_HOMES"] = prev_extra_env
     if publish:
         machines.write_own_index(light)
     if tool_filter is not None:
         light = [r for r in light if r["tool"] == tool_filter]
+    if home_filter is not None:
+        light = [r for r in light if _matches_home(r, home_filter)]
 
     light.sort(key=lambda r: r["ts"], reverse=True)
 
