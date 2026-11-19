@@ -101,7 +101,7 @@ cw --home /mnt/win              # also works directly without prior configuratio
 cw --home local                 # primary home only
 ```
 
-A Windows mount root (such as `/mnt/win`) automatically expands its `Users/*` subdirectories (skipping built-in system folders like `Public`, `Default`, `All Users`); a direct user home path (such as `/mnt/win/Users/Administrator`) is read as-is, and an unmounted path is skipped quietly. Extra-home sessions merge into `cw`, `cw sessions`, `cw ui`, `cw search`, `cw show`, `cw note`, and `cw wiki`, while staying **read-only** (`cw rename` and `cw delete` refuse to modify them). Resuming one (`cw resume <N>` / `cw <N>`) automatically hands its context off to a fresh session of the same tool in your current environment instead of attempting an in-place native resume.
+A Windows mount root (such as `/mnt/win`) automatically expands its `Users/*` subdirectories (skipping built-in system folders like `Public`, `Default`, `All Users`); a direct user home path (such as `/mnt/win/Users/Administrator`) is read as-is, and an unmounted path is skipped quietly. Extra-home sessions merge into `cw`, `cw sessions`, `cw ui`, `cw search`, `cw show`, `cw note`, and `cw wiki`; `cw delete` works with the usual confirmation and backup, while `cw rename` refuses to modify extra-home stores in place. Resuming one (`cw resume <N>` / `cw <N>`) automatically hands its context off to a fresh session of the same tool in your current environment instead of attempting an in-place native resume.
 
 ## Other machines
 

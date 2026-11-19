@@ -274,7 +274,7 @@ def test_resume_extra_home_session_uses_same_tool_handoff(monkeypatch, tmp_path,
     assert "read-only extra home" in capsys.readouterr().err
 
 
-def test_rename_and_delete_refuse_extra_home_sessions(monkeypatch, tmp_path, capsys):
+def test_rename_refuses_and_delete_supports_extra_home_sessions(monkeypatch, tmp_path, capsys):
     win_home = tmp_path / "win_user"
     win_file = win_home / ".claude" / "projects" / "C--Users-Admin" / "win-ro-1.jsonl"
     _write_jsonl(str(win_file), [
@@ -282,20 +282,56 @@ def test_rename_and_delete_refuse_extra_home_sessions(monkeypatch, tmp_path, cap
     ])
     monkeypatch.setenv("CROSSWEAVE_EXTRA_HOMES", str(win_home))
 
-    sessions.write_list_cache([{"tool": "claude", "id": "win-ro-1"}])
+    sessions.write_list_cache([{"tool": "claude", "id": "win-ro-1", "extra_home": str(win_home)}])
 
-    # Manual rename refused
+    # Manual rename still refused
     assert rename.cmd_rename(["1", "New Title"]) == 1
     assert "read-only extra home" in capsys.readouterr().err
 
-    # Direct _apply refused
+    # Direct _apply still refused
     rec = sessions._find_record("claude", "win-ro-1")
     assert rename._apply(rec, "New Title") is False
 
-    # Delete refused and file stays intact
-    assert delete.cmd_delete(["1", "-y"]) == 1
-    assert "read-only extra home" in capsys.readouterr().err
-    assert win_file.is_file()
+    # Delete succeeds with backup
+    assert delete.cmd_delete(["1", "-y"]) == 0
+    out = capsys.readouterr().out
+    assert str(win_home) in out
+    assert "Backup:" in out
+    assert not win_file.exists()
+
+
+def test_delete_extra_home_agy_cli_db_and_brain(monkeypatch, tmp_path, capsys):
+    win_home = tmp_path / "win_user"
+    cli_dir = win_home / ".gemini" / "antigravity-cli"
+    cli_dir.mkdir(parents=True)
+    db_path = cli_dir / "conversation_summaries.db"
+    con = sqlite3.connect(str(db_path))
+    con.execute(
+        "CREATE TABLE conversation_summaries ("
+        "conversation_id TEXT, title TEXT, preview TEXT, last_modified_time TEXT, "
+        "workspace_uris TEXT, parent_conversation_id TEXT, nesting_depth INTEGER, step_count INTEGER)"
+    )
+    sid = "bbbb1111-2222-3333-4444-555566667777"
+    con.execute(
+        "INSERT INTO conversation_summaries VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (sid, "Win AGY Del", "hi", "2026-11-17T10:00:00Z",
+         json.dumps(["file:///C:/Users/Administrator"]), None, 0, 1),
+    )
+    con.commit()
+    con.close()
+    brain_dir = cli_dir / "brain" / sid
+    _write_jsonl(str(brain_dir / ".system_generated" / "logs" / "transcript.jsonl"), [
+        {"type": "USER_INPUT", "content": "<USER_REQUEST>Hello</USER_REQUEST>"},
+    ])
+
+    # Zero-config listing via --home, then delete by row number
+    sessions.cmd_list(["--home", str(win_home)])
+    capsys.readouterr()
+    assert delete.cmd_delete(["1", "-y"]) == 0
+    assert not brain_dir.exists()
+    con = sqlite3.connect(str(db_path))
+    assert con.execute("SELECT COUNT(*) FROM conversation_summaries WHERE conversation_id = ?", (sid,)).fetchone()[0] == 0
+    con.close()
 
 
 def test_note_project_handles_windows_paths():
@@ -342,11 +378,12 @@ def test_cmd_list_home_filter(monkeypatch, tmp_path, capsys):
     assert "Linux task" not in out
 
     # Zero-config `cw --home /mnt/win` records extra_home in list cache so
-    # subsequent `cw 1 delete` / `cw 1 rename` report read-only instead of "no longer exists".
+    # subsequent `cw 1 rename` reports read-only instead of "no longer exists",
+    # and `cw 1 delete` finds and removes the session cleanly.
     monkeypatch.delenv("CROSSWEAVE_EXTRA_HOMES", raising=False)
     sessions.cmd_list(["--home", str(win)])
     capsys.readouterr()
-    assert delete.cmd_delete(["1", "-y"]) == 1
-    assert "read-only extra home" in capsys.readouterr().err
     assert rename.cmd_rename(["1", "New Title"]) == 1
     assert "read-only extra home" in capsys.readouterr().err
+    assert delete.cmd_delete(["1", "-y"]) == 0
+    assert not win_file.exists()

@@ -10,12 +10,41 @@ import tempfile
 from . import agy, codex, common, opencode, sessions, zcode
 
 
+def _agy_dirs(extra_home=None):
+    if extra_home:
+        return (
+            os.path.join(extra_home, '.gemini', 'antigravity'),
+            os.path.join(extra_home, '.gemini', 'antigravity-cli'),
+        )
+    return (agy.AGY_DIR, agy.AGY_CLI_DIR)
+
+
+def _agy_dbs(extra_home=None):
+    if extra_home:
+        return [os.path.join(d, 'conversation_summaries.db') for d in _agy_dirs(extra_home)]
+    return [agy.AGY_DB, agy.AGY_CLI_DB]
+
+
+def _opencode_db(extra_home=None):
+    if extra_home:
+        return os.path.join(extra_home, '.local', 'share', 'opencode', 'opencode.db')
+    return opencode.OPENCODE_DB
+
+
+def _zcode_db(extra_home=None):
+    if extra_home:
+        return os.path.join(extra_home, '.zcode', 'cli', 'db', 'db.sqlite')
+    return zcode.ZCODE_DB
+
+
 def _paths(record):
     tool = record['tool']
+    extra_home = record.get('extra_home')
     if tool == 'codex':
         # A resumed thread can own multiple rollouts; removing just the newest
         # would expose the older conversation again on the next scan.
-        return [p for p in codex.codex_rollout_files()
+        codex_home = os.path.join(extra_home, '.codex') if extra_home else None
+        return [p for p in codex.codex_rollout_files(codex_home)
                 if (m := common.UUID_RE.search(os.path.basename(p)))
                 and m.group() == record['id']]
     if tool == 'kimi':
@@ -24,60 +53,81 @@ def _paths(record):
         return [record['path']] if record.get('path') else []
     if tool == 'agy':
         sid = record['id']
-        candidates = [
-            os.path.join(agy.AGY_BRAIN, sid),
-            os.path.join(agy.AGY_DIR, 'annotations', f'{sid}.pbtxt'),
-            os.path.join(agy.AGY_DIR, 'conversations', f'{sid}.db'),
-            os.path.join(agy.AGY_DIR, 'conversations', f'{sid}.db-wal'),
-            os.path.join(agy.AGY_DIR, 'conversations', f'{sid}.db-shm'),
-        ]
+        candidates = []
+        if extra_home:
+            for base in _agy_dirs(extra_home):
+                candidates.extend([
+                    os.path.join(base, 'brain', sid),
+                    os.path.join(base, 'annotations', f'{sid}.pbtxt'),
+                    os.path.join(base, 'conversations', f'{sid}.db'),
+                    os.path.join(base, 'conversations', f'{sid}.db-wal'),
+                    os.path.join(base, 'conversations', f'{sid}.db-shm'),
+                ])
+        else:
+            candidates.extend([
+                os.path.join(agy.AGY_BRAIN, sid),
+                os.path.join(agy.AGY_DIR, 'annotations', f'{sid}.pbtxt'),
+                os.path.join(agy.AGY_DIR, 'conversations', f'{sid}.db'),
+                os.path.join(agy.AGY_DIR, 'conversations', f'{sid}.db-wal'),
+                os.path.join(agy.AGY_DIR, 'conversations', f'{sid}.db-shm'),
+                os.path.join(agy.AGY_CLI_BRAIN, sid),
+                os.path.join(agy.AGY_CLI_DIR, 'annotations', f'{sid}.pbtxt'),
+                os.path.join(agy.AGY_CLI_DIR, 'conversations', f'{sid}.db'),
+                os.path.join(agy.AGY_CLI_DIR, 'conversations', f'{sid}.db-wal'),
+                os.path.join(agy.AGY_CLI_DIR, 'conversations', f'{sid}.db-shm'),
+            ])
         return [p for p in candidates if os.path.exists(p)]
     return []
 
 
-def _agy_backup_row(sid):
-    if not os.path.isfile(agy.AGY_DB):
-        return None
-    con = sqlite3.connect(f'file:{agy.AGY_DB.replace(chr(92), "/")}?mode=ro', uri=True)
-    try:
-        cur = con.execute(
-            'SELECT * FROM conversation_summaries WHERE conversation_id = ?', (sid,))
-        row = cur.fetchone()
-        if not row:
-            return None
-        cols = [d[0] for d in cur.description]
-        out = {}
-        for k, v in zip(cols, row):
-            out[k] = base64.b64encode(v).decode('ascii') if isinstance(v, (bytes, bytearray)) else v
-        return out
-    except sqlite3.Error:
-        return None
-    finally:
-        con.close()
+def _agy_backup_row(sid, extra_home=None):
+    for db in _agy_dbs(extra_home):
+        if not os.path.isfile(db):
+            continue
+        con = sqlite3.connect(f'file:{db.replace(chr(92), "/")}?mode=ro', uri=True)
+        try:
+            cur = con.execute(
+                'SELECT * FROM conversation_summaries WHERE conversation_id = ?', (sid,))
+            row = cur.fetchone()
+            if not row:
+                continue
+            cols = [d[0] for d in cur.description]
+            out = {}
+            for k, v in zip(cols, row):
+                out[k] = base64.b64encode(v).decode('ascii') if isinstance(v, (bytes, bytearray)) else v
+            return out
+        except sqlite3.Error:
+            continue
+        finally:
+            con.close()
+    return None
 
 
-def _agy_delete_db(sid):
-    if not os.path.isfile(agy.AGY_DB):
-        return
-    con = sqlite3.connect(agy.AGY_DB, timeout=10)
-    try:
-        with con:
-            con.execute('DELETE FROM conversation_summaries WHERE conversation_id = ?', (sid,))
-            for table in ('conversations_fts', 'conversation_parents'):
-                try:
-                    con.execute(f'DELETE FROM {table} WHERE conversation_id = ?', (sid,))
-                except sqlite3.OperationalError:
-                    pass
-    finally:
-        con.close()
-    agy.agy_clear_custom_title(sid)
+def _agy_delete_db(sid, extra_home=None):
+    for db in _agy_dbs(extra_home):
+        if not os.path.isfile(db):
+            continue
+        con = sqlite3.connect(db, timeout=10)
+        try:
+            with con:
+                con.execute('DELETE FROM conversation_summaries WHERE conversation_id = ?', (sid,))
+                for table in ('conversations_fts', 'conversation_parents'):
+                    try:
+                        con.execute(f'DELETE FROM {table} WHERE conversation_id = ?', (sid,))
+                    except sqlite3.OperationalError:
+                        pass
+        finally:
+            con.close()
+    if not extra_home:
+        agy.agy_clear_custom_title(sid)
     agy._drop_connection()
 
 
-def _opencode_backup_rows(sid):
-    if not os.path.isfile(opencode.OPENCODE_DB):
+def _opencode_backup_rows(sid, extra_home=None):
+    db = _opencode_db(extra_home)
+    if not os.path.isfile(db):
         return None
-    con = sqlite3.connect(f'file:{opencode.OPENCODE_DB.replace(chr(92), "/")}?mode=ro', uri=True)
+    con = sqlite3.connect(f'file:{db.replace(chr(92), "/")}?mode=ro', uri=True)
     try:
         cur = con.execute('SELECT * FROM session_v2 WHERE id = ?', (sid,))
         row = cur.fetchone()
@@ -96,10 +146,11 @@ def _opencode_backup_rows(sid):
         con.close()
 
 
-def _opencode_delete_db(sid):
-    if not os.path.isfile(opencode.OPENCODE_DB):
+def _opencode_delete_db(sid, extra_home=None):
+    db = _opencode_db(extra_home)
+    if not os.path.isfile(db):
         return
-    con = sqlite3.connect(opencode.OPENCODE_DB, timeout=10)
+    con = sqlite3.connect(db, timeout=10)
     try:
         with con:
             con.execute('DELETE FROM session_message WHERE session_id = ?', (sid,))
@@ -109,10 +160,11 @@ def _opencode_delete_db(sid):
     opencode._drop_connection()
 
 
-def _zcode_backup_rows(sid):
-    if not os.path.isfile(zcode.ZCODE_DB):
+def _zcode_backup_rows(sid, extra_home=None):
+    db = _zcode_db(extra_home)
+    if not os.path.isfile(db):
         return None
-    con = sqlite3.connect(f'file:{zcode.ZCODE_DB.replace(chr(92), "/")}?mode=ro', uri=True)
+    con = sqlite3.connect(f'file:{db.replace(chr(92), "/")}?mode=ro', uri=True)
     try:
         cur = con.execute('SELECT * FROM session WHERE id = ?', (sid,))
         row = cur.fetchone()
@@ -135,10 +187,11 @@ def _zcode_backup_rows(sid):
         con.close()
 
 
-def _zcode_delete_db(sid):
-    if not os.path.isfile(zcode.ZCODE_DB):
+def _zcode_delete_db(sid, extra_home=None):
+    db = _zcode_db(extra_home)
+    if not os.path.isfile(db):
         return
-    con = sqlite3.connect(zcode.ZCODE_DB, timeout=10)
+    con = sqlite3.connect(db, timeout=10)
     try:
         with con:
             con.execute(
@@ -170,23 +223,18 @@ def cmd_delete(args):
     if entry.get('machine'):
         print(f"cw delete: row lives on {entry['machine']} -- delete it there", file=sys.stderr)
         return 1
-    if entry.get('extra_home'):
-        print(f"cw delete: row lives in read-only extra home {entry['extra_home']} "
-              "-- refusing to delete", file=sys.stderr)
-        return 1
-    record = sessions._find_record(entry['tool'], entry['id'])
+    with sessions._with_extra_home(entry.get('extra_home')):
+        record = sessions._find_record(entry['tool'], entry['id'])
     if record is None:
         print('cw delete: session no longer exists -- run `cw` to refresh', file=sys.stderr)
         return 1
-    if record.get('extra_home'):
-        print(f"cw delete: row lives in read-only extra home {record['extra_home']} "
-              "-- refusing to delete", file=sys.stderr)
-        return 1
+    extra_home = record.get('extra_home')
     paths = _paths(record)
     if not paths and entry['tool'] not in ('agy', 'opencode', 'zcode'):
         print(f"cw delete: {entry['tool']} deletion is not supported", file=sys.stderr)
         return 1
-    print(f"Delete [{entry['tool']}] {entry['id']}?")
+    where = f' (in {extra_home})' if extra_home else ''
+    print(f"Delete [{entry['tool']}] {entry['id']}{where}?")
     if not yes:
         if not sys.stdin.isatty():
             print('cw delete: not a terminal -- pass -y to delete', file=sys.stderr)
@@ -205,16 +253,18 @@ def cmd_delete(args):
         os.makedirs(root, exist_ok=True)
         backup = tempfile.mkdtemp(prefix=entry['tool'] + '-', dir=root)
         manifest = {'tool': entry['tool'], 'id': entry['id'], 'files': []}
+        if extra_home:
+            manifest['extra_home'] = extra_home
         if entry['tool'] == 'agy':
-            row = _agy_backup_row(entry['id'])
+            row = _agy_backup_row(entry['id'], extra_home)
             if row is not None:
                 manifest['db_row'] = row
         elif entry['tool'] == 'opencode':
-            rows = _opencode_backup_rows(entry['id'])
+            rows = _opencode_backup_rows(entry['id'], extra_home)
             if rows is not None:
                 manifest['db_rows'] = rows
         elif entry['tool'] == 'zcode':
-            rows = _zcode_backup_rows(entry['id'])
+            rows = _zcode_backup_rows(entry['id'], extra_home)
             if rows is not None:
                 manifest['db_rows'] = rows
         for i, path in enumerate(paths):
@@ -226,11 +276,11 @@ def cmd_delete(args):
             shutil.move(item['original'], item['backup'])
             moved.append(item)
         if entry['tool'] == 'agy':
-            _agy_delete_db(entry['id'])
+            _agy_delete_db(entry['id'], extra_home)
         elif entry['tool'] == 'opencode':
-            _opencode_delete_db(entry['id'])
+            _opencode_delete_db(entry['id'], extra_home)
         elif entry['tool'] == 'zcode':
-            _zcode_delete_db(entry['id'])
+            _zcode_delete_db(entry['id'], extra_home)
     except (OSError, sqlite3.Error) as exc:
         # Restore earlier moves if a multi-file deletion fails partway through.
         for item in reversed(moved):
