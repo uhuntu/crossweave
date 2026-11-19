@@ -332,3 +332,11 @@ def test_cmd_list_home_filter(monkeypatch, tmp_path, capsys):
     out = capsys.readouterr().out
     assert "Linux task" in out
     assert "Windows task" not in out
+
+    # Top-level shorthand `cw --home win`
+    from crossweave import cli
+    monkeypatch.setattr("sys.argv", ["cw", "--home", "win"])
+    cli.main()
+    out = capsys.readouterr().out
+    assert "Windows task" in out
+    assert "Linux task" not in out

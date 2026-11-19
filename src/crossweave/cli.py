@@ -538,6 +538,10 @@ def main():
         sessions.cmd_list(rest)
         autoexport.maybe_start()
         return
+    if tool == "--home":
+        sessions.cmd_list(["--limit", default_list_limit(), *argv])
+        autoexport.maybe_start()
+        return
     if tool == "full":
         # `cw full` is shorthand for `cw sessions --limit all`.
         sessions.cmd_list(["--limit", "all", *rest])
