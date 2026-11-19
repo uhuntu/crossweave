@@ -340,3 +340,13 @@ def test_cmd_list_home_filter(monkeypatch, tmp_path, capsys):
     out = capsys.readouterr().out
     assert "Windows task" in out
     assert "Linux task" not in out
+
+    # Zero-config `cw --home /mnt/win` records extra_home in list cache so
+    # subsequent `cw 1 delete` / `cw 1 rename` report read-only instead of "no longer exists".
+    monkeypatch.delenv("CROSSWEAVE_EXTRA_HOMES", raising=False)
+    sessions.cmd_list(["--home", str(win)])
+    capsys.readouterr()
+    assert delete.cmd_delete(["1", "-y"]) == 1
+    assert "read-only extra home" in capsys.readouterr().err
+    assert rename.cmd_rename(["1", "New Title"]) == 1
+    assert "read-only extra home" in capsys.readouterr().err

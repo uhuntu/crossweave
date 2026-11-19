@@ -170,6 +170,10 @@ def cmd_delete(args):
     if entry.get('machine'):
         print(f"cw delete: row lives on {entry['machine']} -- delete it there", file=sys.stderr)
         return 1
+    if entry.get('extra_home'):
+        print(f"cw delete: row lives in read-only extra home {entry['extra_home']} "
+              "-- refusing to delete", file=sys.stderr)
+        return 1
     record = sessions._find_record(entry['tool'], entry['id'])
     if record is None:
         print('cw delete: session no longer exists -- run `cw` to refresh', file=sys.stderr)

@@ -488,6 +488,9 @@ def _resolve_row(n, cache):
     if entry.get("machine"):
         return None, (f"row {n} lives on {entry['machine']} -- rename it "
                       "there, or mirror that machine's session store")
+    if entry.get("extra_home"):
+        return None, (f"row {n} lives in read-only extra home {entry['extra_home']} "
+                      "-- refusing to modify")
     r = sessions._find_record(entry["tool"], entry["id"])
     if r is None:
         return None, (f"row {n} ({entry['tool']} {entry['id'][:sessions.ID_SHOW]}) is no "

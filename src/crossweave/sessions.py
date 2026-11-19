@@ -17,6 +17,7 @@ session pickers) is patched through this namespace, and moving it would
 trade one long file for a circular import.
 """
 import codecs
+import contextlib
 import glob
 import json
 import os
@@ -716,6 +717,38 @@ def perform_handoff(source_tool, source_id, target_tool, extra, forced_cwd=None,
         exec_or_die([target_tool, *extra, prompt])
 
 
+@contextlib.contextmanager
+def _with_extra_home(path):
+    """Temporarily include `path` in CROSSWEAVE_EXTRA_HOMES when it is a
+    mounted directory not already covered by extra_homes()."""
+    if not path:
+        yield
+        return
+    expanded = os.path.expanduser(path)
+    if not os.path.isdir(expanded) or os.path.realpath(expanded) == os.path.realpath(HOME):
+        yield
+        return
+    from . import common as _common
+    existing = _common.extra_homes()
+    target_real = os.path.realpath(expanded)
+    if any(
+        os.path.realpath(h) == target_real
+        or os.path.realpath(h).startswith(target_real + os.sep)
+        for h in existing
+    ):
+        yield
+        return
+    prev = os.environ.get("CROSSWEAVE_EXTRA_HOMES")
+    os.environ["CROSSWEAVE_EXTRA_HOMES"] = os.pathsep.join([*existing, expanded])
+    try:
+        yield
+    finally:
+        if prev is None:
+            os.environ.pop("CROSSWEAVE_EXTRA_HOMES", None)
+        else:
+            os.environ["CROSSWEAVE_EXTRA_HOMES"] = prev
+
+
 def handoff_by_number(n, target_tool, extra, forced_cwd=None):
     """Export row n's full transcript and start target_tool with it."""
     cache = read_list_cache()
@@ -738,7 +771,8 @@ def handoff_by_number(n, target_tool, extra, forced_cwd=None):
               "handoff there, or mirror that machine's session store to do "
               "it here", file=sys.stderr)
         sys.exit(1)
-    perform_handoff(entry["tool"], entry["id"], target_tool, extra, forced_cwd=forced_cwd, label=f"row {n}")
+    with _with_extra_home(entry.get("extra_home")):
+        perform_handoff(entry["tool"], entry["id"], target_tool, extra, forced_cwd=forced_cwd, label=f"row {n}")
 
 
 
@@ -828,35 +862,9 @@ def cmd_list(args):
             print(f"cw sessions: unknown option '{a}'", file=sys.stderr)
             sys.exit(1)
 
-    # If --home names a mounted directory directly (e.g. --home /mnt/win)
-    # that isn't configured yet, keep it in CROSSWEAVE_EXTRA_HOMES for the
-    # whole listing (including render_rows' turn/last-message lookups for
-    # DB-backed tools like agy/zcode/opencode).
-    prev_extra_env = os.environ.get("CROSSWEAVE_EXTRA_HOMES")
-    injected_extra = False
-    if home_filter:
-        expanded_home = os.path.expanduser(home_filter)
-        if os.path.isdir(expanded_home) and os.path.realpath(expanded_home) != os.path.realpath(HOME):
-            from . import common as _common
-            existing = _common.extra_homes()
-            target_real = os.path.realpath(expanded_home)
-            if not any(
-                os.path.realpath(h) == target_real
-                or os.path.realpath(h).startswith(target_real + os.sep)
-                for h in existing
-            ):
-                os.environ["CROSSWEAVE_EXTRA_HOMES"] = os.pathsep.join([*existing, expanded_home])
-                injected_extra = True
-
-    try:
+    with _with_extra_home(home_filter):
         _run_list(limit, tool_filter, home_filter, cwd_filter, show_all,
                   with_machines, machine_targets)
-    finally:
-        if injected_extra:
-            if prev_extra_env is None:
-                os.environ.pop("CROSSWEAVE_EXTRA_HOMES", None)
-            else:
-                os.environ["CROSSWEAVE_EXTRA_HOMES"] = prev_extra_env
 
 
 def _run_list(limit, tool_filter, home_filter, cwd_filter, show_all,
@@ -987,7 +995,8 @@ def _run_list(limit, tool_filter, home_filter, cwd_filter, show_all,
     # when) as well: the steer hint reads them back to name a topic this
     # directory keeps reopening, without walking the stores again.
     write_list_cache(
-        [list_cache_entry(r, folded.get(r[1])) for r in rows]
+        [list_cache_entry(r, folded.get(r[1]), extra_home=sources.get(r[1], {}).get("extra_home"))
+         for r in rows]
         + [{"tool": s["tool"], "id": s["id"], "machine": s["machine"],
             **({"ssh": s["ssh"]} if s.get("ssh") else {})}
            for s in remotes])
@@ -1101,7 +1110,7 @@ def _without_inherited_mark(title):
     return title
 
 
-def list_cache_entry(row, members=None):
+def list_cache_entry(row, members=None, extra_home=None):
     """One listing row as a cache entry: {tool, id} plus the display facts
     (cwd, title, when) a resolve_row-shaped tuple carries, when it does.
     The resume-by-number readers use only tool/id -- the extra fields are
@@ -1116,6 +1125,8 @@ def list_cache_entry(row, members=None):
             entry["title"] = row[5]
         if isinstance(row[2], str) and row[2]:
             entry["when"] = row[2]
+    if extra_home:
+        entry["extra_home"] = extra_home
     if members and len(members) > 1:
         # A folded row stands for its whole topic: `cw note <N>` notes it
         # from these, and the steer hint counts them.
@@ -1800,7 +1811,8 @@ def resume_by_number(n, extra, forced_cwd=None):
             return
         extra = extra[1:]
     cwd_args = ["--cwd", forced_cwd] if forced_cwd else []
-    cmd_resume([entry["tool"], entry["id"], *extra, *cwd_args])
+    with _with_extra_home(entry.get("extra_home")):
+        cmd_resume([entry["tool"], entry["id"], *extra, *cwd_args])
 
 
 def _run_zcode_tui(argv):
