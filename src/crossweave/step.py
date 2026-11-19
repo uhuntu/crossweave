@@ -88,6 +88,21 @@ def step_session_id_from_filename(path):
     return m.group(1) if m else stem
 
 
+def merge_tree_store_records(primary_root, rel_parts, tool, show_all=False):
+    """Primary store plus any configured extra homes; primary wins per id."""
+    by_id = {r["id"]: r for r in tree_store_records(primary_root, tool, show_all)}
+    for home in common.extra_homes():
+        root = os.path.join(home, *rel_parts)
+        for rec in tree_store_records(root, tool, show_all):
+            prev = by_id.get(rec["id"])
+            if prev is not None:
+                if not prev.get("extra_home") or prev["ts"] >= rec["ts"]:
+                    continue
+            rec["extra_home"] = home
+            by_id[rec["id"]] = rec
+    return list(by_id.values())
+
+
 def step_light_records(show_all=False):
     """One record per step session, newest write wins per id.
 
@@ -95,7 +110,7 @@ def step_light_records(show_all=False):
     tool started for itself, holding another session's context rather than a
     request of anyone's. Like codex's approval reviews, those are left out
     unless --all asks for them."""
-    return tree_store_records(STEP_SESSIONS, "step", show_all)
+    return merge_tree_store_records(STEP_SESSIONS, (".stepcode", "agent", "sessions"), "step", show_all)
 
 
 def tree_store_files(root):

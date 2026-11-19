@@ -86,6 +86,19 @@ Equivalent manual commands for updating crossweave itself, if you'd rather:
 
 `cw` is the command the project ships; what your hands type is yours. `cw alias add <name>...` creates launchers in `~/.local/bin` (override with `CROSSWEAVE_BIN_DIR`) pointing at the installation you are running — `cw alias add xx ai` is the whole ritual, and the launchers follow that install through `cw update`. `cw alias list` reads the set back; `cw alias remove` undoes it. The names live in `~/.config/crossweave/aliases.json`, and `cw alias add` with no arguments re-creates every name in it — on a fresh machine: install, copy that one file over (or just remember the names), run the one command. Names have to survive every namespace a command name lives in — bin-dir filenames, PyPI-adjacent words (PEP 503), shell words (`#` starts a comment in all three major shells) — so letters, digits, `.`, `_` and `-` only; the installer's own commands (`cw`, `cx`, `crossweave`) are refused, and a file the mechanism did not create is never overwritten. The installer itself never creates or removes personal aliases; this command is their only manager.
 
+## Extra homes (dual-boot / mounted partitions)
+
+On a dual-boot machine or when another OS's disk is mounted locally (e.g. a Windows partition at `/mnt/win`), `cw` can read those session stores directly alongside your primary home — no sync, no ssh, no daemon:
+
+```bash
+# ~/.config/crossweave/homes (one path per line; `#` comments ignored)
+echo /mnt/win > ~/.config/crossweave/homes
+# or per-run via env var (colon-separated on POSIX, semicolon on Windows):
+CROSSWEAVE_EXTRA_HOMES=/mnt/win cw
+```
+
+A Windows mount root (such as `/mnt/win`) automatically expands its `Users/*` subdirectories (skipping built-in system folders like `Public`, `Default`, `All Users`); a direct user home path (such as `/mnt/win/Users/Administrator`) is read as-is, and an unmounted path is skipped quietly. Extra-home sessions merge into `cw`, `cw sessions`, `cw ui`, `cw search`, `cw show`, `cw note`, and `cw wiki`, while staying **read-only** (`cw rename` and `cw delete` refuse to modify them). Resuming one (`cw resume <N>` / `cw <N>`) automatically hands its context off to a fresh session of the same tool in your current environment instead of attempting an in-place native resume.
+
 ## Other machines
 
 A session that happened on the laptop does not exist on the desktop — each tool's store is per-machine, and no amount of local reading can answer "where was that conversation". crossweave's answer is an index, not a service: every machine publishes a small JSON file describing its own sessions, and the files meet in a directory you sync yourself (Syncthing, git, Dropbox — anything that moves files):

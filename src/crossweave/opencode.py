@@ -54,47 +54,68 @@ TITLE_SCAN_MESSAGES = 50
 _local = threading.local()
 
 
-def _drop_connection():
-    con = getattr(_local, "connection", None)
-    if con is not None:
-        try:
-            con.close()
-        except sqlite3.Error:
-            pass
-    _local.connection = None
-    _local.key = None
+def _all_dbs():
+    dbs = [(OPENCODE_DB, None)]
+    for home in common.extra_homes():
+        dbs.append((os.path.join(home, ".local", "share", "opencode", "opencode.db"), home))
+    return dbs
 
 
-def _connect():
-    db = OPENCODE_DB
+def _drop_connection(db=None):
+    conns = getattr(_local, "connections", None)
+    if not conns:
+        return
+    keys = [db] if db is not None else list(conns.keys())
+    for k in keys:
+        entry = conns.pop(k, None)
+        if entry is not None:
+            try:
+                entry[1].close()
+            except sqlite3.Error:
+                pass
+
+
+def _connect(db=None):
+    db = OPENCODE_DB if db is None else db
+    conns = getattr(_local, "connections", None)
+    if conns is None:
+        conns = {}
+        _local.connections = conns
     try:
         st = os.stat(db)
     except OSError:
-        _drop_connection()
+        _drop_connection(db)
         return None
     key = (db, st.st_dev, st.st_ino)
-    if getattr(_local, "connection", None) is not None and getattr(_local, "key", None) == key:
-        return _local.connection
-    _drop_connection()
+    cached = conns.get(db)
+    if cached is not None and cached[0] == key:
+        return cached[1]
+    _drop_connection(db)
     try:
-        _local.connection = sqlite3.connect("file:%s?mode=ro" % db.replace("\\", "/"), uri=True)
-        _local.key = key
+        con = sqlite3.connect("file:%s?mode=ro" % db.replace("\\", "/"), uri=True)
+        conns[db] = (key, con)
+        return con
     except sqlite3.Error:
-        _local.connection = None
-        _local.key = None
-    return _local.connection
+        return None
 
 
-def _query(query, params=()):
-    """All rows, or [] when the store is missing or not the schema this
-    reader knows -- an unreadable store lists as an empty one."""
-    con = _connect()
+def _query_db(db, query, params=()):
+    con = _connect(db)
     if con is None:
         return []
     try:
         return con.execute(query, params).fetchall()
     except sqlite3.Error:
         return []
+
+
+def _query(query, params=()):
+    """All rows, or [] when the store is missing or not the schema this
+    reader knows -- an unreadable store lists as an empty one."""
+    rows = []
+    for db, _extra in _all_dbs():
+        rows.extend(_query_db(db, query, params))
+    return rows
 
 
 def _json(data):
@@ -207,23 +228,34 @@ def _row_title(sid, stored):
 def opencode_light_records(show_all=False):
     """One record per opencode session. Subagent runs (a parent_id) and
     archived sessions are left out unless --all asks for them."""
-    records = []
-    for sid, directory, title, created, updated, parent, archived in _query(
-            "SELECT id, directory, title, time_created, time_updated, parent_id, time_archived "
-            "FROM session_v2"):
-        if not isinstance(sid, str) or not sid:
-            continue
-        if not show_all and (parent or archived):
-            continue
-        records.append({
-            "tool": "opencode", "id": sid,
-            "ts": _epoch(updated if updated is not None else created),
-            "path": None,  # the transcript is in the store, not in a file
-            "cwd": _directory(directory),
-            "title": _row_title(sid, title),
-            "started": _epoch(created),
-        })
-    return records
+    by_id = {}
+    sql = ("SELECT id, directory, title, time_created, time_updated, parent_id, time_archived "
+           "FROM session_v2")
+    for db, extra_home in _all_dbs():
+        for sid, directory, title, created, updated, parent, archived in _query_db(db, sql):
+            if not isinstance(sid, str) or not sid:
+                continue
+            if not show_all and (parent or archived):
+                continue
+            ts = _epoch(updated if updated is not None else created)
+            prev = by_id.get(sid)
+            if prev is not None:
+                if extra_home is not None and not prev.get("extra_home"):
+                    continue
+                if prev["ts"] >= ts:
+                    continue
+            rec = {
+                "tool": "opencode", "id": sid,
+                "ts": ts,
+                "path": None,  # the transcript is in the store, not in a file
+                "cwd": _directory(directory),
+                "title": _row_title(sid, title),
+                "started": _epoch(created),
+            }
+            if extra_home is not None:
+                rec["extra_home"] = extra_home
+            by_id[sid] = rec
+    return list(by_id.values())
 
 
 def opencode_resolve(prefix):
@@ -247,7 +279,7 @@ def opencode_session_turns(sid):
     sessions.session_turns documents."""
     rows = _query("SELECT COUNT(*) FROM session_message WHERE session_id = ? AND type = 'user'",
                   (sid,))
-    turns = rows[0][0] if rows else 0
+    turns = sum(r[0] for r in rows if r and isinstance(r[0], int))
     return turns or None
 
 

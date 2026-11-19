@@ -78,18 +78,28 @@ TITLE_SCAN_MESSAGES = 50
 _local = threading.local()
 
 
-def _drop_connection():
-    con = getattr(_local, "connection", None)
-    if con is not None:
-        try:
-            con.close()
-        except sqlite3.Error:
-            pass
-    _local.connection = None
-    _local.key = None
+def _all_dbs():
+    dbs = [(ZCODE_DB, None)]
+    for home in common.extra_homes():
+        dbs.append((os.path.join(home, ".zcode", "cli", "db", "db.sqlite"), home))
+    return dbs
 
 
-def _connect():
+def _drop_connection(db=None):
+    conns = getattr(_local, "connections", None)
+    if not conns:
+        return
+    keys = [db] if db is not None else list(conns.keys())
+    for k in keys:
+        entry = conns.pop(k, None)
+        if entry is not None:
+            try:
+                entry[1].close()
+            except sqlite3.Error:
+                pass
+
+
+def _connect(db=None):
     """A read-only connection to the store, or None when there is nothing
     to read.
 
@@ -97,25 +107,40 @@ def _connect():
     checkpoints a read-write connection performs), which is what sharing a
     database with a running app requires. The backslash swap keeps the URI
     legal on Windows."""
-    if not os.path.isfile(ZCODE_DB):
-        _drop_connection()
+    db = ZCODE_DB if db is None else db
+    conns = getattr(_local, "connections", None)
+    if conns is None:
+        conns = {}
+        _local.connections = conns
+    if not os.path.isfile(db):
+        _drop_connection(db)
         return None
     try:
-        st = os.stat(ZCODE_DB)
+        st = os.stat(db)
     except OSError:
-        _drop_connection()
+        _drop_connection(db)
         return None
-    key = (ZCODE_DB, st.st_dev, st.st_ino)
-    if getattr(_local, "connection", None) is not None and getattr(_local, "key", None) == key:
-        return _local.connection
-    _drop_connection()
+    key = (db, st.st_dev, st.st_ino)
+    cached = conns.get(db)
+    if cached is not None and cached[0] == key:
+        return cached[1]
+    _drop_connection(db)
     try:
-        _local.connection = sqlite3.connect("file:%s?mode=ro" % ZCODE_DB.replace("\\", "/"), uri=True)
-        _local.key = key
+        con = sqlite3.connect("file:%s?mode=ro" % db.replace("\\", "/"), uri=True)
+        conns[db] = (key, con)
+        return con
     except sqlite3.Error:
-        _local.connection = None
-        _local.key = None
-    return _local.connection
+        return None
+
+
+def _query_db(db, query, params=()):
+    con = _connect(db)
+    if con is None:
+        return []
+    try:
+        return con.execute(query, params).fetchall()
+    except sqlite3.Error:
+        return []
 
 
 def _query(query, params=()):
@@ -125,13 +150,10 @@ def _query(query, params=()):
     not a traceback over every command at once. A failed query keeps the
     connection: schema mismatches are persistent, so reconnecting would
     only reopen the same disappointment."""
-    con = _connect()
-    if con is None:
-        return []
-    try:
-        return con.execute(query, params).fetchall()
-    except sqlite3.Error:
-        return []
+    rows = []
+    for db, _extra in _all_dbs():
+        rows.extend(_query_db(db, query, params))
+    return rows
 
 
 def _json(data):
@@ -168,22 +190,33 @@ def zcode_light_records(show_all=False):
     Sessions with a `parent_id` are subagent runs ZCode started for itself --
     the same category as step's `subagent-` files -- and are left out unless
     --all asks for them."""
-    records = []
-    for sid, directory, title, created, updated, parent in _query(
-            "SELECT id, directory, title, time_created, time_updated, parent_id FROM session"):
-        if not isinstance(sid, str) or not sid:
-            continue
-        if parent and not show_all:
-            continue
-        records.append({
-            "tool": "zcode", "id": sid,
-            "ts": _epoch(updated if updated is not None else created),
-            "path": None,  # the transcript is in the store, not in a file
-            "cwd": directory if isinstance(directory, str) and directory else None,
-            "title": _row_title(sid, title),
-            "started": _epoch(created),
-        })
-    return records
+    by_id = {}
+    sql = "SELECT id, directory, title, time_created, time_updated, parent_id FROM session"
+    for db, extra_home in _all_dbs():
+        for sid, directory, title, created, updated, parent in _query_db(db, sql):
+            if not isinstance(sid, str) or not sid:
+                continue
+            if parent and not show_all:
+                continue
+            ts = _epoch(updated if updated is not None else created)
+            prev = by_id.get(sid)
+            if prev is not None:
+                if extra_home is not None and not prev.get("extra_home"):
+                    continue
+                if prev["ts"] >= ts:
+                    continue
+            rec = {
+                "tool": "zcode", "id": sid,
+                "ts": ts,
+                "path": None,  # the transcript is in the store, not in a file
+                "cwd": directory if isinstance(directory, str) and directory else None,
+                "title": _row_title(sid, title),
+                "started": _epoch(created),
+            }
+            if extra_home is not None:
+                rec["extra_home"] = extra_home
+            by_id[sid] = rec
+    return list(by_id.values())
 
 
 def zcode_resolve(prefix, show_all=False):

@@ -174,6 +174,10 @@ def cmd_delete(args):
     if record is None:
         print('cw delete: session no longer exists -- run `cw` to refresh', file=sys.stderr)
         return 1
+    if record.get('extra_home'):
+        print(f"cw delete: row lives in read-only extra home {record['extra_home']} "
+              "-- refusing to delete", file=sys.stderr)
+        return 1
     paths = _paths(record)
     if not paths and entry['tool'] not in ('agy', 'opencode', 'zcode'):
         print(f"cw delete: {entry['tool']} deletion is not supported", file=sys.stderr)

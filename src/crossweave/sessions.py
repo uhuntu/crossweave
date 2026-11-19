@@ -1331,9 +1331,16 @@ def _find_record(tool, sid):
     if tool == "claude":
         return next((r for r in claude_light_records() if r["id"] == sid), None)
     if tool == "codex":
-        if not codex_rollout_path(sid):
+        path = codex_rollout_path(sid)
+        if not path:
             return None
-        return {"tool": "codex", "id": sid, "ts": 0, "title": codex_thread_names().get(sid)}
+        from . import codex as _codex
+        rec = {"tool": "codex", "id": sid, "ts": 0, "path": path,
+               "title": codex_thread_names().get(sid)}
+        extra_home = _codex.codex_extra_home(sid)
+        if extra_home is not None:
+            rec["extra_home"] = extra_home
+        return rec
     if tool == "kimi":
         return next((r for r in kimi_light_records(show_all=True) if r["id"] == sid), None)
     if tool == "step":
@@ -2003,6 +2010,16 @@ def cmd_resume(args):
 
     if tool == "workbuddy":
         _resume_workbuddy(full_id, extra, forced_cwd)
+        return
+
+    rec = _find_record(tool, full_id)
+    if rec and rec.get("extra_home"):
+        if forced_cwd and not os.path.isdir(forced_cwd):
+            print(f"cw resume: --cwd '{forced_cwd}' is not a directory", file=sys.stderr)
+            sys.exit(1)
+        print(f"cw resume: {tool} session lives in read-only extra home {rec['extra_home']} "
+              "-- starting a fresh session here with its context instead", file=sys.stderr)
+        perform_handoff(tool, full_id, tool, extra, forced_cwd=forced_cwd)
         return
 
     cwd_getter = {"claude": claude_session_cwd, "codex": codex_cwd, "kimi": kimi_session_cwd,

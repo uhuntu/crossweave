@@ -9,9 +9,27 @@ from . import common
 
 
 
-def kimi_index():
-    path = os.path.join(common.KIMI_HOME, "session_index.jsonl")
+def kimi_index(kimi_home=None):
+    base = common.KIMI_HOME if kimi_home is None else kimi_home
+    path = os.path.join(base, "session_index.jsonl")
     return list(common.read_jsonl(path))
+
+
+def _translate_kimi_dir(sdir, kimi_home):
+    """Map a foreign OS's sessionDir (e.g. `C:\\Users\\...\\.kimi-code\\...`)
+    into the mounted `kimi_home` when the raw path does not exist here."""
+    if not sdir or os.path.isdir(sdir):
+        return sdir
+    norm = sdir.replace("\\", "/")
+    marker = "/.kimi-code/"
+    idx = norm.lower().find(marker)
+    if idx != -1:
+        rel = norm[idx + len(marker):].lstrip("/")
+        if rel:
+            cand = os.path.join(kimi_home, *rel.split("/"))
+            if os.path.isdir(cand):
+                return cand
+    return sdir
 
 
 def parse_kimi_timestamp(value):
@@ -44,13 +62,16 @@ def parse_kimi_timestamp(value):
         return 0
 
 
-def kimi_light_records(show_all):
+def _kimi_records_from(kimi_home, show_all, extra_home=None):
     records = []
-    for entry in kimi_index():
+    entries = kimi_index() if extra_home is None else kimi_index(kimi_home)
+    for entry in entries:
         sid = entry.get("sessionId")
         sdir = entry.get("sessionDir")
         if not sid or not sdir:
             continue
+        if extra_home is not None:
+            sdir = _translate_kimi_dir(sdir, kimi_home)
         state = common.read_json(os.path.join(sdir, "state.json")) or {}
         if state.get("archived") and not show_all:
             continue
@@ -62,8 +83,26 @@ def kimi_light_records(show_all):
         # older sessions use "workDir" instead of "cwd" in state.json; the
         # index itself also records workDir as a last-resort fallback.
         cwd = state.get("cwd") or state.get("workDir") or entry.get("workDir")
-        records.append({"tool": "kimi", "id": sid, "ts": ts, "started": started,
-                        "cwd": cwd, "dir": sdir})
+        rec = {"tool": "kimi", "id": sid, "ts": ts, "started": started,
+               "cwd": cwd, "dir": sdir}
+        if extra_home is not None:
+            rec["extra_home"] = extra_home
+        records.append(rec)
+    return records
+
+
+def kimi_light_records(show_all):
+    records = _kimi_records_from(common.KIMI_HOME, show_all, extra_home=None)
+    seen = {r["id"] for r in records}
+    for home in common.extra_homes():
+        kh = os.path.join(home, ".kimi-code")
+        if not os.path.isdir(kh):
+            continue
+        for rec in _kimi_records_from(kh, show_all, extra_home=home):
+            if rec["id"] in seen:
+                continue
+            seen.add(rec["id"])
+            records.append(rec)
     return records
 
 
@@ -229,12 +268,21 @@ def kimi_snippet(sdir, max_messages=12, max_chars=800):
 
 
 
+def _all_kimi_index():
+    entries = list(kimi_index())
+    for home in common.extra_homes():
+        kh = os.path.join(home, ".kimi-code")
+        if os.path.isdir(kh):
+            entries.extend(kimi_index(kh))
+    return entries
+
+
 def kimi_session_cwd(sid):
     """kimi -S refuses to resume a session from a different cwd than the one
     it was created in; session_index.jsonl already records that cwd as
     workDir, so we can chdir there ourselves instead of making the user do
     it by hand."""
-    for entry in kimi_index():
+    for entry in _all_kimi_index():
         if entry.get("sessionId") == sid:
             return entry.get("workDir")
     return None
@@ -260,7 +308,7 @@ def kimi_handoff_messages(sdir):
 
 
 def kimi_resolve(prefix):
-    ids = [e.get("sessionId", "") for e in kimi_index()]
+    ids = [e.get("sessionId", "") for e in _all_kimi_index()]
     matches = [i for i in ids if i.startswith(prefix)]
     if not matches and not prefix.startswith("session_"):
         alt = "session_" + prefix

@@ -26,9 +26,99 @@ HOME = os.path.expanduser("~")
 CLAUDE_PROJECTS = os.path.join(HOME, ".claude", "projects")
 CODEX_HOME = os.path.join(HOME, ".codex")
 KIMI_HOME = os.path.join(HOME, ".kimi-code")
+EXTRA_HOMES_FILE = os.path.join(HOME, ".config", "crossweave", "homes")
 UUID_RE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 
 TOOLS = ("claude", "codex", "kimi", "step", "pi", "opencode", "zcode", "agy")
+
+# Built-in Windows Users\ folders that never hold a user's own sessions.
+_WINDOWS_SKIP_USERS = frozenset({
+    "all users",
+    "default",
+    "default user",
+    "public",
+    "codexsandboxoffline",
+})
+
+# Presence of any of these marks a directory as a user home directly rather
+# than a Windows partition mount root whose Users/ directory should be walked.
+_HOME_STORE_MARKERS = (
+    ".claude",
+    ".codex",
+    ".kimi-code",
+    ".stepcode",
+    ".pi",
+    ".zcode",
+    ".gemini",
+    ".codebuddy",
+    ".workbuddy",
+    ".workbuddy-ai",
+)
+
+
+def _expand_extra_home(path):
+    """Turn one configured path into zero or more existing user-home dirs.
+
+    Accepts either a user home directly (e.g. `/mnt/win/Users/Administrator`)
+    or a mounted Windows root (e.g. `/mnt/win`), expanding `Users/*` when the
+    directory looks like a Windows root rather than a user home itself."""
+    expanded = os.path.expanduser(path.strip())
+    if not expanded or not os.path.isdir(expanded):
+        return []
+    has_store = any(os.path.isdir(os.path.join(expanded, m)) for m in _HOME_STORE_MARKERS)
+    users_dir = os.path.join(expanded, "Users")
+    if not has_store and os.path.isdir(users_dir):
+        found = []
+        try:
+            entries = sorted(os.listdir(users_dir))
+        except OSError:
+            return []
+        for name in entries:
+            if name.lower() in _WINDOWS_SKIP_USERS:
+                continue
+            cand = os.path.join(users_dir, name)
+            if os.path.islink(cand) or not os.path.isdir(cand):
+                continue
+            found.append(cand)
+        return found
+    return [expanded]
+
+
+def extra_homes():
+    """Configured read-only extra user homes (e.g. a mounted Windows partition).
+
+    Configured via `CROSSWEAVE_EXTRA_HOMES` (os.pathsep-separated; an explicit
+    empty string disables extra homes) or `~/.config/crossweave/homes` (one
+    path per line, `#` comments and blank lines ignored). Missing/unmounted
+    paths are skipped quietly; the current `HOME` is never included."""
+    env = os.environ.get("CROSSWEAVE_EXTRA_HOMES")
+    if env is not None:
+        raw_entries = [p for p in env.split(os.pathsep) if p.strip()]
+    else:
+        raw_entries = []
+        if EXTRA_HOMES_FILE and os.path.isfile(EXTRA_HOMES_FILE):
+            try:
+                with open(EXTRA_HOMES_FILE, encoding="utf-8", errors="replace") as fh:
+                    for line in fh:
+                        line = line.strip()
+                        if not line or line.startswith("#"):
+                            continue
+                        raw_entries.append(line)
+            except OSError:
+                raw_entries = []
+    if not raw_entries:
+        return []
+    primary_real = os.path.realpath(HOME)
+    seen = {primary_real}
+    result = []
+    for raw in raw_entries:
+        for cand in _expand_extra_home(raw):
+            real = os.path.realpath(cand)
+            if real in seen:
+                continue
+            seen.add(real)
+            result.append(cand)
+    return result
 
 
 

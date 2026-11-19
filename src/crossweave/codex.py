@@ -16,8 +16,12 @@ from . import common
 
 
 def codex_index():
+    entries = []
+    for home in common.extra_homes():
+        entries.extend(common.read_jsonl(os.path.join(home, ".codex", "session_index.jsonl")))
     path = os.path.join(common.CODEX_HOME, "session_index.jsonl")
-    return list(common.read_jsonl(path))
+    entries.extend(common.read_jsonl(path))
+    return entries
 
 
 def codex_thread_names():
@@ -56,9 +60,10 @@ LITERAL_SCAN_LIMIT_CODEX = 20000
 
 
 _codex_path_index = None
+_codex_extra_homes = {}
 
 
-def codex_rollout_files():
+def codex_rollout_files(codex_home=None):
     """Every rollout file under CODEX_HOME. Order is the filesystem's, not
     recency -- callers must not depend on it (see build_codex_path_index).
 
@@ -67,18 +72,17 @@ def codex_rollout_files():
     made glob return every file once per nesting level -- 64 copies of each
     rollout for a two-level loop, a multi-second listing, and on a filesystem
     with no depth limit a RecursionError."""
+    base = common.CODEX_HOME if codex_home is None else codex_home
     found = []
-    for root, _dirs, files in os.walk(os.path.join(common.CODEX_HOME, "sessions"), followlinks=False):
+    for root, _dirs, files in os.walk(os.path.join(base, "sessions"), followlinks=False):
         for name in files:
             if name.endswith(".jsonl"):
                 found.append(os.path.join(root, name))
     return found
 
 
-def build_codex_path_index():
-    global _codex_path_index
-    index = {}
-    for path in codex_rollout_files():
+def _index_codex_paths(paths, index, extra_homes_map, extra_home=None):
+    for path in paths:
         m = common.UUID_RE.search(os.path.basename(path))
         if not m:
             continue
@@ -92,6 +96,9 @@ def build_codex_path_index():
         # transcript) at the thread as it stood before it was last resumed.
         prev = index.get(sid)
         if prev is not None:
+            # Primary home always wins over an extra home.
+            if extra_home is not None and sid not in extra_homes_map:
+                continue
             try:
                 # mtime first, then the filename: codex stamps the resume time
                 # into it (rollout-<time>-<id>.jsonl), so it breaks an mtime
@@ -106,13 +113,35 @@ def build_codex_path_index():
             except OSError:
                 continue
         index[sid] = path
+        if extra_home is not None:
+            extra_homes_map[sid] = extra_home
+        else:
+            extra_homes_map.pop(sid, None)
+
+
+def build_codex_path_index():
+    global _codex_path_index, _codex_extra_homes
+    index = {}
+    extra_homes_map = {}
+    _index_codex_paths(codex_rollout_files(), index, extra_homes_map, extra_home=None)
+    for home in common.extra_homes():
+        codex_dir = os.path.join(home, ".codex")
+        if os.path.isdir(codex_dir):
+            _index_codex_paths(codex_rollout_files(codex_dir), index, extra_homes_map, extra_home=home)
     _codex_path_index = index
+    _codex_extra_homes = extra_homes_map
     return index
 
 
 def codex_rollout_path(sid):
     index = _codex_path_index if _codex_path_index is not None else build_codex_path_index()
     return index.get(sid)
+
+
+def codex_extra_home(sid):
+    if _codex_path_index is None:
+        build_codex_path_index()
+    return _codex_extra_homes.get(sid)
 
 
 def codex_light_records():
@@ -134,9 +163,13 @@ def codex_light_records():
         except OSError:
             continue
         meta = _codex_session_meta(path)
-        records.append({"tool": "codex", "id": sid, "ts": mtime, "path": path,
-                        "title": thread_names.get(sid),
-                        "cwd": common.dict_field(meta, "payload").get("cwd") if meta else None})
+        rec = {"tool": "codex", "id": sid, "ts": mtime, "path": path,
+               "title": thread_names.get(sid),
+               "cwd": common.dict_field(meta, "payload").get("cwd") if meta else None}
+        extra_home = _codex_extra_homes.get(sid)
+        if extra_home is not None:
+            rec["extra_home"] = extra_home
+        records.append(rec)
     return records
 
 

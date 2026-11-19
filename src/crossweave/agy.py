@@ -28,6 +28,7 @@ AGY_DIR = _default_dir()
 AGY_DB = os.path.join(AGY_DIR, "conversation_summaries.db")
 AGY_BRAIN = os.path.join(AGY_DIR, "brain")
 AGY_CLI_DIR = os.path.join(common.HOME, ".gemini", "antigravity-cli")
+AGY_CLI_DB = os.path.join(AGY_CLI_DIR, "conversation_summaries.db")
 AGY_CLI_BRAIN = os.path.join(AGY_CLI_DIR, "brain")
 AGY_TITLES_FILE = os.path.join(common.HOME, ".config", "crossweave", "agy_titles.json")
 
@@ -40,46 +41,68 @@ _TRAILING_TAGS_RE = re.compile(
 _local = threading.local()
 
 
-def _drop_connection():
-    con = getattr(_local, "connection", None)
-    if con is not None:
-        try:
-            con.close()
-        except sqlite3.Error:
-            pass
-    _local.connection = None
-    _local.key = None
+def _all_dbs():
+    dbs = [(AGY_DB, None), (AGY_CLI_DB, None)]
+    for home in common.extra_homes():
+        dbs.append((os.path.join(home, ".gemini", "antigravity", "conversation_summaries.db"), home))
+        dbs.append((os.path.join(home, ".gemini", "antigravity-cli", "conversation_summaries.db"), home))
+    return dbs
 
 
-def _connect():
-    db = AGY_DB
+def _drop_connection(db=None):
+    conns = getattr(_local, "connections", None)
+    if not conns:
+        return
+    keys = [db] if db is not None else list(conns.keys())
+    for k in keys:
+        entry = conns.pop(k, None)
+        if entry is not None:
+            try:
+                entry[1].close()
+            except sqlite3.Error:
+                pass
+
+
+def _connect(db=None):
+    db = AGY_DB if db is None else db
+    conns = getattr(_local, "connections", None)
+    if conns is None:
+        conns = {}
+        _local.connections = conns
     try:
         st = os.stat(db)
     except OSError:
-        _drop_connection()
+        _drop_connection(db)
         return None
     key = (db, st.st_dev, st.st_ino)
-    if getattr(_local, "connection", None) is not None and getattr(_local, "key", None) == key:
-        return _local.connection
-    _drop_connection()
+    cached = conns.get(db)
+    if cached is not None and cached[0] == key:
+        return cached[1]
+    _drop_connection(db)
     try:
-        _local.connection = sqlite3.connect("file:%s?mode=ro" % db.replace("\\", "/"), uri=True)
-        _local.key = key
+        con = sqlite3.connect("file:%s?mode=ro" % db.replace("\\", "/"), uri=True)
+        conns[db] = (key, con)
+        return con
     except sqlite3.Error:
-        _local.connection = None
-        _local.key = None
-    return _local.connection
+        return None
 
 
-def _query(query, params=()):
-    """All rows, or [] when the store is missing or unreadable."""
-    con = _connect()
+def _query_db(db, query, params=()):
+    con = _connect(db)
     if con is None:
         return []
     try:
         return con.execute(query, params).fetchall()
     except sqlite3.Error:
         return []
+
+
+def _query(query, params=()):
+    """All rows across primary and extra-home DBs, or [] when missing/unreadable."""
+    rows = []
+    for db, _extra in _all_dbs():
+        rows.extend(_query_db(db, query, params))
+    return rows
 
 
 def _ts(value):
@@ -151,7 +174,11 @@ def agy_transcript_path(sid):
     """Path to a session's transcript.jsonl, or None if not on disk."""
     if not sid:
         return None
-    for brain_dir in (AGY_BRAIN, AGY_CLI_BRAIN):
+    brain_dirs = [AGY_BRAIN, AGY_CLI_BRAIN]
+    for home in common.extra_homes():
+        brain_dirs.append(os.path.join(home, ".gemini", "antigravity", "brain"))
+        brain_dirs.append(os.path.join(home, ".gemini", "antigravity-cli", "brain"))
+    for brain_dir in brain_dirs:
         path = os.path.join(brain_dir, sid, ".system_generated", "logs", "transcript.jsonl")
         if os.path.isfile(path):
             return path
@@ -269,29 +296,40 @@ def agy_light_records(show_all=False):
     """One record per Antigravity conversation. Subagent conversations
     (parent_conversation_id or nesting_depth > 0) are omitted unless --all."""
     custom_titles = _read_custom_titles()
-    records = []
-    rows = _query(
+    by_id = {}
+    sql = (
         "SELECT conversation_id, title, preview, last_modified_time, workspace_uris, "
         "parent_conversation_id, nesting_depth "
         "FROM conversation_summaries"
     )
-    for sid, title, preview, modified, workspace_uris, parent_id, depth in rows:
-        if not isinstance(sid, str) or not sid:
-            continue
-        if not show_all and (parent_id or (depth or 0) > 0):
-            continue
-        cwd = _workspace_cwd(workspace_uris)
-        records.append({
-            "tool": "agy",
-            "id": sid,
-            "ts": _ts(modified),
-            "path": agy_transcript_path(sid),
-            "cwd": cwd,
-            "title": _row_title(
-                sid, title, preview=preview, custom_titles=custom_titles, cwd=cwd,
-            ),
-        })
-    return records
+    for db, extra_home in _all_dbs():
+        for sid, title, preview, modified, workspace_uris, parent_id, depth in _query_db(db, sql):
+            if not isinstance(sid, str) or not sid:
+                continue
+            if not show_all and (parent_id or (depth or 0) > 0):
+                continue
+            ts = _ts(modified)
+            prev = by_id.get(sid)
+            if prev is not None:
+                if extra_home is not None and not prev.get("extra_home"):
+                    continue
+                if prev["ts"] >= ts:
+                    continue
+            cwd = _workspace_cwd(workspace_uris)
+            rec = {
+                "tool": "agy",
+                "id": sid,
+                "ts": ts,
+                "path": agy_transcript_path(sid),
+                "cwd": cwd,
+                "title": _row_title(
+                    sid, title, preview=preview, custom_titles=custom_titles, cwd=cwd,
+                ),
+            }
+            if extra_home is not None:
+                rec["extra_home"] = extra_home
+            by_id[sid] = rec
+    return list(by_id.values())
 
 
 def agy_resolve(prefix):

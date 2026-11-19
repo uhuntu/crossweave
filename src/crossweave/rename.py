@@ -413,6 +413,8 @@ def _step_name(title):
 
 
 def _apply(r, title):
+    if r.get("extra_home"):
+        return False
     tool, sid = r["tool"], r["id"]
     if tool == "zcode":
         return _rename_zcode(sid, title)
@@ -490,6 +492,9 @@ def _resolve_row(n, cache):
     if r is None:
         return None, (f"row {n} ({entry['tool']} {entry['id'][:sessions.ID_SHOW]}) is no "
                       "longer in the store -- run `cw sessions` to refresh")
+    if r.get("extra_home"):
+        return None, (f"row {n} lives in read-only extra home {r['extra_home']} "
+                      "-- refusing to modify")
     return r, None
 
 
@@ -870,7 +875,7 @@ def _rename_auto(positional, trivial, judge, yes, judge_explicit=False):
         # and the price of finding the unnamed. The judge batches keep it
         # to a handful of calls.
         for r in sessions._all_light_records():
-            if r["tool"] not in _RENAMABLE:
+            if r["tool"] not in _RENAMABLE or r.get("extra_home"):
                 continue
             row = sessions.resolve_row(r)
             if row[5] in sessions.TOOL_STARTED_TITLES:

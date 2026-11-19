@@ -292,7 +292,8 @@ def _project(cwd):
         return NO_PROJECT
     if os.path.normpath(cwd) == os.path.normpath(os.path.expanduser("~")):
         return HOME_PROJECT
-    name = os.path.basename(os.path.normpath(cwd))
+    norm = cwd.replace("\\", "/").rstrip("/")
+    name = os.path.basename(norm) if norm else ""
     return _safe_name(name) or NO_PROJECT
 
 

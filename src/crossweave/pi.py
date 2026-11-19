@@ -29,7 +29,7 @@ PI_SESSIONS = _default_sessions_dir()
 
 
 def pi_light_records(show_all=False):
-    return step.tree_store_records(PI_SESSIONS, "pi", show_all)
+    return step.merge_tree_store_records(PI_SESSIONS, (".pi", "agent", "sessions"), "pi", show_all)
 
 
 def pi_resolve(prefix):

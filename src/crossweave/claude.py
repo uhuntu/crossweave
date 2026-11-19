@@ -11,20 +11,15 @@ from . import common
 
 
 
-def claude_light_records():
-    # Claude Code stores a session's transcript under more than one project
-    # directory when the session touches more than one cwd (e.g. via `cd` in
-    # tool calls), so the same session id can show up multiple times here.
-    # Keep only the most recently modified copy per id.
-    by_id = {}
-    if not os.path.isdir(common.CLAUDE_PROJECTS):
-        return []
+def _scan_claude_projects(projects_dir, by_id, extra_home=None):
+    if not os.path.isdir(projects_dir):
+        return
     try:
-        proj_dirs = os.listdir(common.CLAUDE_PROJECTS)
+        proj_dirs = os.listdir(projects_dir)
     except OSError:
-        return []  # unreadable store: no claude sessions, same as none stored
+        return  # unreadable store: no claude sessions, same as none stored
     for proj_dir in proj_dirs:
-        full_dir = os.path.join(common.CLAUDE_PROJECTS, proj_dir)
+        full_dir = os.path.join(projects_dir, proj_dir)
         if not os.path.isdir(full_dir):
             continue
         for path in glob.glob(os.path.join(full_dir, "*.jsonl")):
@@ -33,10 +28,30 @@ def claude_light_records():
                 mtime = os.path.getmtime(path)
             except OSError:
                 continue
-            if sid in by_id and by_id[sid]["ts"] >= mtime:
-                continue
+            prev = by_id.get(sid)
+            if prev is not None:
+                # Primary home always wins over an extra home; within the same
+                # tier, keep the most recently modified copy per id.
+                if extra_home is not None and not prev.get("extra_home"):
+                    continue
+                if prev["ts"] >= mtime:
+                    continue
             cwd_guess = common.decode_project_dir_name(proj_dir)
-            by_id[sid] = {"tool": "claude", "id": sid, "ts": mtime, "path": path, "cwd": cwd_guess}
+            rec = {"tool": "claude", "id": sid, "ts": mtime, "path": path, "cwd": cwd_guess}
+            if extra_home is not None:
+                rec["extra_home"] = extra_home
+            by_id[sid] = rec
+
+
+def claude_light_records():
+    # Claude Code stores a session's transcript under more than one project
+    # directory when the session touches more than one cwd (e.g. via `cd` in
+    # tool calls), so the same session id can show up multiple times here.
+    # Keep only the most recently modified copy per id.
+    by_id = {}
+    _scan_claude_projects(common.CLAUDE_PROJECTS, by_id, extra_home=None)
+    for home in common.extra_homes():
+        _scan_claude_projects(os.path.join(home, ".claude", "projects"), by_id, extra_home=home)
     return list(by_id.values())
 
 
