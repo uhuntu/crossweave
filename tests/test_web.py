@@ -202,24 +202,33 @@ def test_open_app_window_and_gui_subcommand(monkeypatch, tmp_path):
 def test_install_and_uninstall_desktop(monkeypatch, tmp_path, capsys):
     desktop = tmp_path / 'applications' / 'crossweave.desktop'
     icon = tmp_path / 'icons' / 'crossweave.svg'
+    env_file = tmp_path / 'gui-env.json'
     monkeypatch.setattr(web, 'DESKTOP_FILE', str(desktop))
     monkeypatch.setattr(web, 'ICON_FILE', str(icon))
-    monkeypatch.setattr(web.shutil, 'which', lambda name: '/home/hunt/.local/bin/cw' if name == 'cw' else None)
+    monkeypatch.setattr(web, 'GUI_ENV_FILE', str(env_file))
+    monkeypatch.setattr(web, '_cw_exec_prefix', lambda: ['/home/hunt/.local/bin/cw'])
     monkeypatch.setenv('CW_LLM_WIKI', '/home/hunt/Documents/work-wiki')
     monkeypatch.setenv('CW_VAULT', '/home/hunt/Documents/Obsidian Vault')
 
     assert web.cmd_web(['--app', '--install-desktop', '--home', '/mnt/win']) == 0
     assert desktop.is_file()
     assert icon.is_file()
+    assert env_file.is_file()
     content = desktop.read_text(encoding='utf-8')
     assert 'Name=CrossWeave' in content
-    assert 'CW_LLM_WIKI=/home/hunt/Documents/work-wiki' in content
-    assert '"CW_VAULT=/home/hunt/Documents/Obsidian Vault"' in content
-    assert '/home/hunt/.local/bin/cw gui --home /mnt/win' in content
+    assert 'Exec=/home/hunt/.local/bin/cw gui --home /mnt/win' in content
     assert f'Icon={icon}' in content
     assert 'StartupWMClass=crossweave' in content
     assert 'Terminal=false' in content
     assert '<svg' in icon.read_text(encoding='utf-8')
+    saved = json.loads(env_file.read_text(encoding='utf-8'))
+    assert saved['CW_LLM_WIKI'] == '/home/hunt/Documents/work-wiki'
+    assert saved['CW_VAULT'] == '/home/hunt/Documents/Obsidian Vault'
+
+    # _load_gui_env restores missing env vars when launched from a bare desktop session
+    monkeypatch.delenv('CW_LLM_WIKI')
+    web._load_gui_env()
+    assert web.os.environ.get('CW_LLM_WIKI') == '/home/hunt/Documents/work-wiki'
 
     assert web.cmd_web(['--app', '--uninstall-desktop']) == 0
     assert not desktop.exists()

@@ -52,8 +52,9 @@ def _isolate_stores(monkeypatch, tmp_path):
     # the developer's own vault would put ✎ marks into every listing test
     monkeypatch.delenv("CW_VAULT", raising=False)
     # ...and so would the default one, when CW_VAULT is unset
-    from crossweave import note
+    from crossweave import note, web
     monkeypatch.setattr(note, "DEFAULT_VAULT", str(nowhere / "default-vault"))
+    monkeypatch.setattr(web, "GUI_ENV_FILE", str(nowhere / "gui-env.json"))
     # the developer's own LLM Wiki would attach its pages to every launch
     # test, and its token would reach a test's fake API
     for name in ("CW_LLM_WIKI", "CW_LLM_WIKI_API", "LLM_WIKI_API_TOKEN"):

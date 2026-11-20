@@ -23,6 +23,7 @@ from . import chat, common, delete, exporter, llmwiki, rename, sessions, ui
 
 ASSETS = Path(__file__).with_name('web_assets')
 APP_PROFILE_DIR = os.path.join(common.HOME, '.cache', 'crossweave', 'gui-profile')
+GUI_ENV_FILE = os.path.join(common.HOME, '.config', 'crossweave', 'gui-env.json')
 DESKTOP_FILE = os.path.join(common.HOME, '.local', 'share', 'applications', 'crossweave.desktop')
 ICON_FILE = os.path.join(common.HOME, '.local', 'share', 'icons', 'hicolor', 'scalable', 'apps', 'crossweave.svg')
 
@@ -344,12 +345,12 @@ def open_app_window(url):
 
 
 def _cw_exec_prefix():
-    found = shutil.which('cw')
-    if found:
-        return [found]
     local_bin = os.path.join(common.HOME, '.local', 'bin', 'cw')
     if os.path.isfile(local_bin):
         return [local_bin]
+    found = shutil.which('cw')
+    if found:
+        return [found]
     return [sys.executable, '-m', 'crossweave.cli']
 
 
@@ -361,6 +362,36 @@ _DESKTOP_ENV_VARS = (
     'CW_VAULT',
     'CROSSWEAVE_EXTRA_HOMES',
 )
+
+
+def _save_gui_env():
+    saved = {k: os.environ[k] for k in _DESKTOP_ENV_VARS if os.environ.get(k)}
+    if not saved:
+        return
+    os.makedirs(os.path.dirname(GUI_ENV_FILE), exist_ok=True)
+    tmp = f'{GUI_ENV_FILE}.{os.getpid()}.tmp'
+    with open(tmp, 'w', encoding='utf-8') as fh:
+        json.dump(saved, fh, ensure_ascii=False, indent=2)
+    os.replace(tmp, GUI_ENV_FILE)
+
+
+def _load_gui_env():
+    data = common.read_json(GUI_ENV_FILE)
+    if not isinstance(data, dict):
+        return
+    for k in _DESKTOP_ENV_VARS:
+        val = data.get(k)
+        if not isinstance(val, str) or not val:
+            continue
+        if k == 'PATH':
+            cur = os.environ.get('PATH', '')
+            cur_parts = [p for p in cur.split(os.pathsep) if p]
+            seen = set(cur_parts)
+            extra = [p for p in val.split(os.pathsep) if p and p not in seen]
+            if extra:
+                os.environ['PATH'] = os.pathsep.join([*cur_parts, *extra])
+        elif not os.environ.get(k):
+            os.environ[k] = val
 
 
 def _desktop_quote(arg):
@@ -378,8 +409,8 @@ def install_desktop(home=None):
     os.makedirs(os.path.dirname(ICON_FILE), exist_ok=True)
     with open(ICON_FILE, 'w', encoding='utf-8') as fh:
         fh.write(_ICON_SVG)
-    env_pairs = [f'{k}={os.environ[k]}' for k in _DESKTOP_ENV_VARS if os.environ.get(k)]
-    cmd = (['env', *env_pairs] if env_pairs else []) + [*_cw_exec_prefix(), 'gui']
+    _save_gui_env()
+    cmd = [*_cw_exec_prefix(), 'gui']
     if home:
         cmd.extend(['--home', home])
     exec_line = ' '.join(_desktop_quote(p) for p in cmd)
@@ -705,6 +736,7 @@ def cmd_web(args):
         return 0
     if opts.port is not None and not 0 <= opts.port <= 65535:
         parser.error('--port must be between 0 and 65535')
+    _load_gui_env()
     with sessions._with_extra_home(opts.home):
         port = 8765 if opts.port is None else opts.port
         try:
