@@ -68,6 +68,8 @@ _SYSTEM_CONTEXT_PREFIXES = (
     'Environment\n',
     '# Environment\n',
     'ZCode Desktop Context\n',
+    'You are powered by the model named ',
+    'Available agent types for the Agent tool:',
     '<environment_context>',
     '<INSTRUCTIONS>',
     '# AGENTS.md instructions',

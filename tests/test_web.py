@@ -291,6 +291,8 @@ def test_injected_system_context_marked_for_folding(monkeypatch):
         '_session_messages',
         lambda t, s, r: [
             ('user', 'Environment\n\nYou have been invoked in the following environment:'),
+            ('user', 'You are powered by the model named account/model.'),
+            ('user', 'Available agent types for the Agent tool:\n- Explore'),
             ('user', '<system-reminder>keep quiet</system-reminder>'),
             ('user', 'Real user question'),
             ('assistant', 'Real reply'),
@@ -299,5 +301,7 @@ def test_injected_system_context_marked_for_folding(monkeypatch):
     info = web.conversation('zcode', 'sess_1')
     assert info['messages'][0].get('system') is True
     assert info['messages'][1].get('system') is True
-    assert 'system' not in info['messages'][2]
-    assert 'system' not in info['messages'][3]
+    assert info['messages'][2].get('system') is True
+    assert info['messages'][3].get('system') is True
+    assert 'system' not in info['messages'][4]
+    assert 'system' not in info['messages'][5]
