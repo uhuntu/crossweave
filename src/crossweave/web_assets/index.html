@@ -126,6 +126,17 @@
     </aside>
   </div>
 </main>
+<div id="dialog-backdrop" class="palette-backdrop" hidden>
+  <form id="dialog-form" class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
+    <h3 id="dialog-title">对话框</h3>
+    <p id="dialog-message" class="dialog-message"></p>
+    <input id="dialog-input" class="dialog-input" type="text" autocomplete="off" hidden>
+    <div class="dialog-actions">
+      <button id="dialog-cancel" class="dialog-btn" type="button">取消</button>
+      <button id="dialog-ok" class="dialog-btn primary" type="submit">确定</button>
+    </div>
+  </form>
+</div>
 <div id="palette-backdrop" class="palette-backdrop" hidden>
   <div class="palette" role="dialog" aria-modal="true" aria-label="全局命令面板">
     <div class="palette-head">

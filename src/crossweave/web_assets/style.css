@@ -84,3 +84,15 @@
 .wiki-leaf:hover{background:#e6ede6}
 .wiki-leaf.active{background:#fff;color:#1f6956;font-weight:600;box-shadow:0 1px 3px #213c2310}
 @media(max-width:650px){.rail{display:none}}
+.dialog{width:min(420px,92vw);background:#fff;border:1px solid #d4e0d5;border-radius:12px;box-shadow:0 18px 48px #182b1f29;padding:20px 22px 16px}
+.dialog h3{margin:0 0 6px;font-size:15px;font-weight:600;color:#23362d}
+.dialog-message{margin:0 0 14px;font-size:12px;line-height:1.7;color:#65776c;white-space:pre-wrap;overflow-wrap:anywhere}
+.dialog-input{width:100%;border:1px solid #d2ddd4;border-radius:8px;padding:9px 11px;font-size:13px;color:#23362d;background:#fbfdfb;outline:0;margin-bottom:14px}
+.dialog-input:focus{border-color:#4e9a7e;box-shadow:0 0 0 3px #4e9a7e22}
+.dialog-actions{display:flex;justify-content:flex-end;gap:8px}
+.dialog-btn{border:1px solid #dce5dd;background:#fff;color:#4f6558;border-radius:7px;padding:7px 14px;font-size:12px}
+.dialog-btn:hover{background:#f3f7f4}
+.dialog-btn.primary{background:var(--green);border-color:var(--green);color:#fff}
+.dialog-btn.primary:hover{background:#185a49}
+.dialog-btn.primary.danger{background:#b0463c;border-color:#b0463c}
+.dialog-btn.primary.danger:hover{background:#97392f}

@@ -948,10 +948,48 @@ async function copyText(text, okMsg) {
 $('copy').onclick = () => copyText($('show-command').textContent, '已复制原文查看命令');
 $('copy-resume').onclick = () => copyText($('resume-command').textContent, '已复制终端恢复命令');
 
+// In-app dialog replacing window.prompt / window.confirm.
+function askDialog({ title, message = '', value = null, okText = '确定', danger = false }) {
+  return new Promise(resolve => {
+    const backdrop = $('dialog-backdrop');
+    const input = $('dialog-input');
+    const ok = $('dialog-ok');
+    $('dialog-title').textContent = title;
+    $('dialog-message').textContent = message;
+    $('dialog-message').hidden = !message;
+    input.hidden = value === null;
+    input.value = value || '';
+    ok.textContent = okText;
+    ok.classList.toggle('danger', danger);
+    backdrop.hidden = false;
+    (value === null ? ok : input).focus();
+    if (value !== null) input.select();
+
+    const finish = result => {
+      backdrop.hidden = true;
+      backdrop.onclick = null;
+      $('dialog-form').onsubmit = null;
+      $('dialog-cancel').onclick = null;
+      window.removeEventListener('keydown', onKey, true);
+      resolve(result);
+    };
+    const onKey = e => {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(null); }
+    };
+    window.addEventListener('keydown', onKey, true);
+    backdrop.onclick = e => { if (e.target === backdrop) finish(null); };
+    $('dialog-cancel').onclick = () => finish(null);
+    $('dialog-form').onsubmit = e => {
+      e.preventDefault();
+      finish(value === null ? true : input.value);
+    };
+  });
+}
+
 $('rename').onclick = async () => {
   if (state.busy || !state.info?.can_rename || !state.selected) return;
   const current = state.selected.title || '';
-  const next = window.prompt('输入新的会话标题：', current);
+  const next = await askDialog({ title: '重命名会话', message: '输入新的会话标题', value: current, okText: '保存' });
   if (next === null) return;
   const trimmed = next.trim();
   if (!trimmed || trimmed === current) return;
@@ -980,9 +1018,12 @@ $('delete').onclick = async () => {
   if (state.busy || !state.info?.can_delete || !state.selected) return;
   const row = state.selected;
   const where = row.extra_home ? `\n来源：${row.extra_home}` : '';
-  const ok = window.confirm(
-    `确定删除 [${row.tool}] ${row.title || row.id}？${where}\n\n文件与数据库记录会自动备份后再删除。`
-  );
+  const ok = await askDialog({
+    title: '删除会话',
+    message: `确定删除 [${row.tool}] ${row.title || row.id}？${where}\n\n文件与数据库记录会自动备份后再删除。`,
+    okText: '删除',
+    danger: true,
+  });
   if (!ok) return;
   state.busy = true;
   composer();
