@@ -206,6 +206,7 @@ def test_install_and_uninstall_desktop(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(web, 'ICON_FILE', str(icon))
     monkeypatch.setattr(web.shutil, 'which', lambda name: '/home/hunt/.local/bin/cw' if name == 'cw' else None)
     monkeypatch.setenv('CW_LLM_WIKI', '/home/hunt/Documents/work-wiki')
+    monkeypatch.setenv('CW_VAULT', '/home/hunt/Documents/Obsidian Vault')
 
     assert web.cmd_web(['--app', '--install-desktop', '--home', '/mnt/win']) == 0
     assert desktop.is_file()
@@ -213,6 +214,7 @@ def test_install_and_uninstall_desktop(monkeypatch, tmp_path, capsys):
     content = desktop.read_text(encoding='utf-8')
     assert 'Name=Crossweave' in content
     assert 'CW_LLM_WIKI=/home/hunt/Documents/work-wiki' in content
+    assert '"CW_VAULT=/home/hunt/Documents/Obsidian Vault"' in content
     assert '/home/hunt/.local/bin/cw gui --home /mnt/win' in content
     assert f'Icon={icon}' in content
     assert 'StartupWMClass=crossweave' in content

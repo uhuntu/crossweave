@@ -22,6 +22,7 @@
 .code-block pre{margin:0;padding:12px 14px;overflow:auto;font:12px/1.65 ui-monospace,monospace;color:#2c4035}
 .context-card button+code{margin-top:18px;padding-top:14px;border-top:1px dashed #d6e0d6}
 .topbar-left,.topbar-right{display:flex;align-items:center;gap:10px}
+[hidden]{display:none !important}
 .mode-tabs{display:inline-flex;background:#edf2ee;padding:3px;border-radius:7px;gap:2px}
 .mode-tab{border:0;background:transparent;color:#5c7064;font-size:11px;padding:4px 10px;border-radius:5px;font-weight:500}
 .mode-tab.active{background:#fff;color:#23362d;box-shadow:0 1px 3px #1d352414}

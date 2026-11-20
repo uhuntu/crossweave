@@ -362,6 +362,15 @@ _DESKTOP_ENV_VARS = (
 )
 
 
+def _desktop_quote(arg):
+    """Quote an Exec= argument per the FreeDesktop Desktop Entry spec
+    (double quotes, not POSIX single quotes)."""
+    if not arg or any(ch in arg for ch in ' \t\n"\'\\><~|&;$*?#()`'):
+        escaped = arg.replace('\\', '\\\\').replace('"', '\\"').replace('$', '\\$').replace('`', '\\`')
+        return f'"{escaped}"'
+    return arg
+
+
 def install_desktop(home=None):
     if os.name != 'posix' or sys.platform == 'darwin':
         raise ValueError('.desktop 仅适用于 Linux 桌面环境')
@@ -372,7 +381,7 @@ def install_desktop(home=None):
     cmd = (['env', *env_pairs] if env_pairs else []) + [*_cw_exec_prefix(), 'gui']
     if home:
         cmd.extend(['--home', home])
-    exec_line = ' '.join(shlex.quote(p) for p in cmd)
+    exec_line = ' '.join(_desktop_quote(p) for p in cmd)
     desktop = (
         '[Desktop Entry]\n'
         'Type=Application\n'
