@@ -30,11 +30,13 @@
       <div class="mode-tabs" role="tablist" aria-label="工作台视图">
         <button id="tab-sessions" class="mode-tab active" role="tab" aria-selected="true" type="button">会话</button>
         <button id="tab-wiki" class="mode-tab" role="tab" aria-selected="false" type="button" hidden>Wiki</button>
+        <button id="tab-graph" class="mode-tab" role="tab" aria-selected="false" type="button" hidden>图谱</button>
       </div>
       <span class="slash">/</span>
       <span id="breadcrumb">会话</span>
     </div>
     <div class="topbar-right">
+      <button id="open-palette" class="kbd-btn" type="button" title="全局搜索会话与 Wiki (Ctrl+K)">⌕ 搜索 <kbd>Ctrl K</kbd></button>
       <button id="wiki-pill" class="wiki-pill" type="button" hidden title="点击触发 LLM Wiki 扫描"><i></i><span id="wiki-pill-text">LLM Wiki</span></button>
       <span class="top-note">从对话，回到上下文。</span>
     </div>
@@ -103,5 +105,15 @@
     </aside>
   </div>
 </main>
+<div id="palette-backdrop" class="palette-backdrop" hidden>
+  <div class="palette" role="dialog" aria-modal="true" aria-label="全局命令面板">
+    <div class="palette-head">
+      <span>⌕</span>
+      <input id="palette-input" type="search" placeholder="搜索所有会话与 Wiki 页面…（↑↓ 选择，Enter 打开，Esc 关闭）" autocomplete="off">
+      <kbd>ESC</kbd>
+    </div>
+    <div id="palette-list" class="palette-list"></div>
+  </div>
+</div>
 </body>
 </html>

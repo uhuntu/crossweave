@@ -259,3 +259,10 @@ def test_wiki_view_and_export_endpoints(workspace, monkeypatch, tmp_path):
     monkeypatch.setattr(web, 'export_to_wiki', lambda t, s: dict(ok=True, path='/tmp/s.md', written=True, rescanned=False, note='offline'))
     status, _, body = request(workspace, 'POST', '/api/export-wiki', dict(tool='claude', id='s1'), auth(workspace))
     assert status == 200 and json.loads(body)['written'] is True
+
+    # Knowledge graph returns resolved nodes & edges
+    status, _, body = request(workspace, 'GET', '/api/wiki/graph')
+    assert status == 200
+    g = json.loads(body)
+    assert {n['id'] for n in g['nodes']} == {'index.md', 'projects/crossweave.md'}
+    assert g['edges'] == [{'source': 'index.md', 'target': 'projects/crossweave.md'}]

@@ -95,21 +95,23 @@ function drawList() {
 }
 
 function composer() {
+  const isSession = state.mode === 'sessions';
   const isWiki = state.mode === 'wiki';
-  $('composer').hidden = isWiki;
-  $('session-card').hidden = isWiki;
+  $('composer').hidden = !isSession;
+  $('session-card').hidden = !isSession;
   $('wiki-links-card').hidden = !isWiki;
-  const ok = !isWiki && !!state.info?.can_chat && !state.busy;
+  const ok = isSession && !!state.info?.can_chat && !state.busy;
   $('message').disabled = !ok;
   $('send').disabled = !ok || !$('message').value.trim();
+  $('export').hidden = state.mode === 'graph';
   $('export').disabled = isWiki ? !state.wikiInfo : (!state.info || state.busy);
-  $('export-wiki').hidden = isWiki || !state.wiki.configured;
-  $('export-wiki').disabled = isWiki || !state.info || state.busy;
-  $('rename').hidden = isWiki;
-  $('rename').disabled = isWiki || !state.info?.can_rename || state.busy;
+  $('export-wiki').hidden = !isSession || !state.wiki.configured;
+  $('export-wiki').disabled = !isSession || !state.info || state.busy;
+  $('rename').hidden = !isSession;
+  $('rename').disabled = !isSession || !state.info?.can_rename || state.busy;
   $('rename').title = state.info?.extra_home ? '外部目录会话为只读，暂不支持重命名' : '';
-  $('delete').hidden = isWiki;
-  $('delete').disabled = isWiki || !state.info?.can_delete || state.busy;
+  $('delete').hidden = !isSession;
+  $('delete').disabled = !isSession || !state.info?.can_delete || state.busy;
   $('copy').disabled = !state.info;
   $('copy-resume').disabled = !state.info;
   $('refresh').disabled = state.busy;
@@ -399,6 +401,7 @@ async function load() {
 function paintWikiStatus() {
   const w = state.wiki;
   $('tab-wiki').hidden = !w.configured;
+  $('tab-graph').hidden = !w.configured;
   $('wiki-pill').hidden = !w.configured;
   if (w.configured) {
     $('tab-wiki').textContent = w.pages ? `Wiki (${w.pages})` : 'Wiki';
@@ -534,15 +537,175 @@ async function loadWikiPages() {
   }
 }
 
+const GRAPH_PALETTE = ['#1f6956', '#4a7c66', '#6b8550', '#4d6f80', '#8c6d5c', '#6e6580'];
+
+function renderGraph(data) {
+  const nodes = (data.nodes || []).map((n, i) => {
+    const angle = (2 * Math.PI * i) / Math.max(1, (data.nodes || []).length);
+    const radius = 140 + (i % 5) * 32;
+    return { ...n, x: Math.cos(angle) * radius, y: Math.sin(angle) * radius, vx: 0, vy: 0 };
+  });
+  if (!nodes.length) {
+    $('thread').replaceChildren(el('p', 'list-empty', 'Wiki 目录中暂无页面可生成图谱。'));
+    return;
+  }
+  const byId = new Map(nodes.map(n => [n.id, n]));
+  const edges = (data.edges || [])
+    .map(e => ({ a: byId.get(e.source), b: byId.get(e.target) }))
+    .filter(e => e.a && e.b);
+
+  // Deterministic spring-repulsion layout
+  const kRep = 4200;
+  const kSpring = 0.045;
+  const ideal = 115;
+  for (let iter = 0; iter < 110; iter++) {
+    for (let i = 0; i < nodes.length; i++) {
+      const a = nodes[i];
+      for (let j = i + 1; j < nodes.length; j++) {
+        const b = nodes[j];
+        let dx = b.x - a.x;
+        let dy = b.y - a.y;
+        const d2 = dx * dx + dy * dy + 25;
+        const f = kRep / d2;
+        const d = Math.sqrt(d2);
+        dx = (dx / d) * f;
+        dy = (dy / d) * f;
+        a.vx -= dx; a.vy -= dy;
+        b.vx += dx; b.vy += dy;
+      }
+    }
+    for (const e of edges) {
+      const dx = e.b.x - e.a.x;
+      const dy = e.b.y - e.a.y;
+      const d = Math.sqrt(dx * dx + dy * dy) || 1;
+      const f = (d - ideal) * kSpring;
+      const fx = (dx / d) * f;
+      const fy = (dy / d) * f;
+      e.a.vx += fx; e.a.vy += fy;
+      e.b.vx -= fx; e.b.vy -= fy;
+    }
+    for (const n of nodes) {
+      n.vx = (n.vx - n.x * 0.012) * 0.82;
+      n.vy = (n.vy - n.y * 0.012) * 0.82;
+      n.x += Math.max(-28, Math.min(28, n.vx));
+      n.y += Math.max(-28, Math.min(28, n.vy));
+    }
+  }
+
+  const NS = 'http://www.w3.org/2000/svg';
+  const sEl = (tag, attrs = {}) => {
+    const node = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, String(v));
+    return node;
+  };
+  const wrap = el('div', 'graph-wrap');
+  const svg = sEl('svg', { class: 'graph-svg', viewBox: '-420 -300 840 600' });
+  const viewport = sEl('g');
+  const edgeLayer = sEl('g');
+  const nodeLayer = sEl('g');
+  viewport.append(edgeLayer, nodeLayer);
+  svg.append(viewport);
+
+  const cats = [...new Set(nodes.map(n => n.category || ''))];
+  const colorOf = cat => GRAPH_PALETTE[cats.indexOf(cat || '') % GRAPH_PALETTE.length];
+  const neighbors = new Map(nodes.map(n => [n.id, new Set([n.id])]));
+  const edgeEls = edges.map(e => {
+    neighbors.get(e.a.id).add(e.b.id);
+    neighbors.get(e.b.id).add(e.a.id);
+    const line = sEl('line', { class: 'graph-edge', x1: e.a.x, y1: e.a.y, x2: e.b.x, y2: e.b.y });
+    edgeLayer.append(line);
+    return { ...e, el: line };
+  });
+
+  const nodeEls = nodes.map(n => {
+    const r = Math.min(15, 6 + Math.sqrt(n.degree || 0) * 2.4);
+    const g = sEl('g', { class: 'graph-node', transform: `translate(${n.x},${n.y})` });
+    const circle = sEl('circle', { r, fill: colorOf(n.category) });
+    const label = sEl('text', { x: r + 5, y: 4 });
+    label.textContent = n.title.length > 22 ? n.title.slice(0, 21) + '…' : n.title;
+    g.append(circle, label);
+    g.addEventListener('mouseenter', () => {
+      const keep = neighbors.get(n.id);
+      for (const item of nodeEls) item.el.classList.toggle('dim', !keep.has(item.n.id));
+      for (const item of edgeEls) {
+        const hit = item.a.id === n.id || item.b.id === n.id;
+        item.el.classList.toggle('hi', hit);
+        item.el.classList.toggle('dim', !hit);
+      }
+    });
+    g.addEventListener('mouseleave', () => {
+      for (const item of nodeEls) item.el.classList.remove('dim');
+      for (const item of edgeEls) item.el.classList.remove('hi', 'dim');
+    });
+    g.addEventListener('click', ev => {
+      ev.stopPropagation();
+      openWikiLink(n.id);
+    });
+    nodeLayer.append(g);
+    return { n, el: g };
+  });
+
+  // Pan & zoom
+  let pan = { x: 0, y: 0, scale: 1 };
+  const applyPan = () => viewport.setAttribute('transform', `translate(${pan.x},${pan.y}) scale(${pan.scale})`);
+  let drag = null;
+  svg.addEventListener('mousedown', ev => {
+    if (ev.target.closest('.graph-node')) return;
+    drag = { x: ev.clientX, y: ev.clientY, px: pan.x, py: pan.y };
+    svg.classList.add('dragging');
+  });
+  window.addEventListener('mousemove', ev => {
+    if (!drag) return;
+    pan.x = drag.px + (ev.clientX - drag.x);
+    pan.y = drag.py + (ev.clientY - drag.y);
+    applyPan();
+  });
+  window.addEventListener('mouseup', () => {
+    drag = null;
+    svg.classList.remove('dragging');
+  });
+  svg.addEventListener('wheel', ev => {
+    ev.preventDefault();
+    const factor = ev.deltaY < 0 ? 1.12 : 0.89;
+    pan.scale = Math.max(0.35, Math.min(3, pan.scale * factor));
+    applyPan();
+  }, { passive: false });
+
+  wrap.append(svg, el('div', 'graph-hint', `${nodes.length} 个页面 · ${edges.length} 条链接 · 滚轮缩放 · 拖拽平移 · 点击节点打开`));
+  $('thread').replaceChildren(wrap);
+}
+
+async function loadWikiGraph() {
+  status('正在构建知识图谱…');
+  $('eyebrow').textContent = 'LLM WIKI / KNOWLEDGE GRAPH';
+  $('title').textContent = `${state.wiki.name || 'LLM Wiki'} 知识图谱`;
+  $('subtitle').textContent = state.wiki.path || '';
+  $('breadcrumb').textContent = '图谱';
+  $('info-tool').textContent = state.wiki.name || 'LLM Wiki';
+  $('info-home-label').hidden = true;
+  $('info-home').hidden = true;
+  $('info-cwd').textContent = state.wiki.path || '—';
+  $('info-id').textContent = 'wiki graph';
+  $('thread').replaceChildren(el('p', 'list-empty', '正在计算节点布局…'));
+  try {
+    const [data] = await Promise.all([api('/api/wiki/graph'), state.wikiPages.length ? Promise.resolve() : loadWikiPages()]);
+    renderGraph(data);
+    status(`图谱已加载：${data.nodes.length} 个页面，${data.edges.length} 条链接`);
+  } catch (e) {
+    $('thread').replaceChildren(el('p', 'list-empty', e.message));
+    status(e.message, true);
+  }
+}
+
 async function setMode(mode) {
   if (state.busy || state.mode === mode) return;
   state.mode = mode;
-  $('tab-sessions').classList.toggle('active', mode === 'sessions');
-  $('tab-sessions').setAttribute('aria-selected', String(mode === 'sessions'));
-  $('tab-wiki').classList.toggle('active', mode === 'wiki');
-  $('tab-wiki').setAttribute('aria-selected', String(mode === 'wiki'));
+  for (const [m, id] of [['sessions', 'tab-sessions'], ['wiki', 'tab-wiki'], ['graph', 'tab-graph']]) {
+    $(id).classList.toggle('active', mode === m);
+    $(id).setAttribute('aria-selected', String(mode === m));
+  }
   $('search').value = '';
-  $('search').placeholder = mode === 'wiki' ? '搜索 Wiki 标题、路径、分类' : '搜索标题、目录、会话 ID';
+  $('search').placeholder = mode === 'sessions' ? '搜索标题、目录、会话 ID' : '搜索 Wiki 标题、路径、分类';
   if (mode === 'wiki') {
     await loadWikiPages();
     if (state.wikiSelected) selectWikiPage(state.wikiSelected);
@@ -554,6 +717,9 @@ async function setMode(mode) {
       $('thread').replaceChildren(el('p', 'list-empty', 'Wiki 目录中暂无 Markdown 页面。'));
       composer();
     }
+  } else if (mode === 'graph') {
+    composer();
+    await loadWikiGraph();
   } else {
     await load();
     if (state.selected) select(state.selected);
@@ -561,16 +727,107 @@ async function setMode(mode) {
   }
 }
 
-$('search').oninput = () => (state.mode === 'wiki' ? drawWikiList() : drawList());
-$('tool').onchange = () => (state.mode === 'wiki' ? drawWikiList() : drawList());
+$('search').oninput = () => (state.mode === 'sessions' ? drawList() : drawWikiList());
+$('tool').onchange = () => (state.mode === 'sessions' ? drawList() : drawWikiList());
 $('home').onchange = drawList;
 $('refresh').onclick = () => {
   loadWikiStatus();
   if (state.mode === 'wiki') loadWikiPages();
+  else if (state.mode === 'graph') loadWikiGraph();
   else load();
 };
 $('tab-sessions').onclick = () => setMode('sessions');
 $('tab-wiki').onclick = () => setMode('wiki');
+$('tab-graph').onclick = () => setMode('graph');
+
+// ---------- Ctrl+K Global Command Palette ----------
+const palette = { open: false, items: [], cursor: 0 };
+
+function paletteItems(query) {
+  const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const out = [];
+  for (const p of state.wikiPages) {
+    const hay = `wiki ${p.title} ${p.rel} ${p.category}`.toLowerCase();
+    if (words.every(w => hay.includes(w))) {
+      out.push({ kind: 'wiki', badge: 'Wiki', title: p.title, sub: p.rel, data: p });
+    }
+  }
+  for (const r of state.rows) {
+    const hay = `${r.tool} ${r.title} ${r.cwd} ${r.id} ${r.extra_home || ''}`.toLowerCase();
+    if (words.every(w => hay.includes(w))) {
+      out.push({ kind: 'session', badge: r.tool, title: r.title || '未命名会话', sub: `${r.cwd || ''} · ${r.age}`, data: r });
+    }
+  }
+  return out.slice(0, 40);
+}
+
+function drawPalette() {
+  palette.items = paletteItems($('palette-input').value);
+  palette.cursor = Math.min(palette.cursor, Math.max(0, palette.items.length - 1));
+  const box = $('palette-list');
+  box.replaceChildren();
+  if (!palette.items.length) {
+    box.append(el('div', 'palette-empty', '没有匹配的会话或 Wiki 页面'));
+    return;
+  }
+  palette.items.forEach((item, idx) => {
+    const btn = el('button', 'palette-item' + (idx === palette.cursor ? ' active' : ''));
+    btn.type = 'button';
+    btn.append(el('span', 'palette-kind' + (item.kind === 'wiki' ? ' wiki' : ''), item.badge));
+    const main = el('div', 'palette-main');
+    main.append(el('div', 'palette-title', item.title), el('div', 'palette-sub', item.sub));
+    btn.append(main);
+    btn.onmouseenter = () => { palette.cursor = idx; drawPalette(); };
+    btn.onclick = () => pickPalette(item);
+    box.append(btn);
+  });
+}
+
+async function pickPalette(item) {
+  closePalette();
+  if (item.kind === 'wiki') {
+    if (state.mode !== 'wiki') await setMode('wiki');
+    selectWikiPage(item.data);
+  } else {
+    if (state.mode !== 'sessions') await setMode('sessions');
+    select(item.data);
+  }
+}
+
+async function openPalette() {
+  if (state.busy) return;
+  palette.open = true;
+  palette.cursor = 0;
+  $('palette-backdrop').hidden = false;
+  $('palette-input').value = '';
+  if (state.wiki.configured && !state.wikiPages.length) {
+    try { state.wikiPages = await api('/api/wiki/pages'); } catch (e) {}
+  }
+  drawPalette();
+  $('palette-input').focus();
+}
+
+function closePalette() {
+  palette.open = false;
+  $('palette-backdrop').hidden = true;
+}
+
+$('open-palette').onclick = openPalette;
+$('palette-backdrop').onclick = e => { if (e.target === $('palette-backdrop')) closePalette(); };
+$('palette-input').oninput = () => { palette.cursor = 0; drawPalette(); };
+$('palette-input').onkeydown = e => {
+  if (e.key === 'Escape') { e.preventDefault(); closePalette(); }
+  else if (e.key === 'ArrowDown') { e.preventDefault(); palette.cursor = Math.min(palette.items.length - 1, palette.cursor + 1); drawPalette(); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); palette.cursor = Math.max(0, palette.cursor - 1); drawPalette(); }
+  else if (e.key === 'Enter' && palette.items[palette.cursor]) { e.preventDefault(); pickPalette(palette.items[palette.cursor]); }
+};
+window.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    if (palette.open) closePalette();
+    else openPalette();
+  }
+});
 $('wiki-pill').onclick = async () => {
   if (state.busy || !state.wiki.configured) return;
   if (!state.wiki.online) {

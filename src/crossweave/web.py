@@ -232,6 +232,56 @@ def rescan_wiki():
     return dict(ok=True)
 
 
+def wiki_graph():
+    project = llmwiki.wiki_dir()
+    if project is None:
+        return dict(nodes=[], edges=[])
+    wiki_root = project / 'wiki'
+    pages = []
+    by_key = {}
+    try:
+        paths = sorted(wiki_root.rglob('*.md'))
+    except OSError:
+        return dict(nodes=[], edges=[])
+    for p in paths:
+        if not p.is_file():
+            continue
+        rel = p.relative_to(wiki_root).as_posix()
+        parts = rel.split('/')
+        if any(part in llmwiki.SKIP_DIRS for part in parts):
+            continue
+        try:
+            raw = p.read_bytes()[:llmwiki.READ_BYTES].decode('utf-8', errors='replace')
+        except OSError:
+            continue
+        fm_title, body = llmwiki._split(raw)
+        title = fm_title or llmwiki._title(raw, p.stem)
+        category = parts[0] if len(parts) > 1 else ''
+        pages.append((rel, p.stem, title, category, body))
+        for k in (rel.lower(), rel[:-3].lower() if rel.lower().endswith('.md') else rel.lower(),
+                  p.stem.lower(), title.lower()):
+            by_key.setdefault(k, rel)
+    edge_set = set()
+    degree = {rel: 0 for rel, *_ in pages}
+    for rel, _stem, _title, _cat, body in pages:
+        for m in _WIKILINK_RE.finditer(body):
+            raw_t = m.group(1).strip().lower()
+            if raw_t.endswith('.md'):
+                raw_t = raw_t[:-3]
+            dst = by_key.get(raw_t)
+            if not dst or dst == rel:
+                continue
+            pair = (rel, dst) if rel < dst else (dst, rel)
+            if pair not in edge_set:
+                edge_set.add(pair)
+                degree[rel] += 1
+                degree[dst] += 1
+    nodes = [dict(id=rel, stem=stem, title=title, category=cat, degree=degree[rel])
+             for rel, stem, title, cat, _ in pages]
+    edges = [dict(source=a, target=b) for a, b in sorted(edge_set)]
+    return dict(nodes=nodes, edges=edges)
+
+
 def _find_app_browser():
     names = (
         'google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser',
@@ -444,6 +494,8 @@ class Handler(BaseHTTPRequestHandler):
             if url.path == '/api/wiki/page':
                 query = parse_qs(url.query)
                 return self.reply(self.server.read(read_wiki_page, query.get('rel', [''])[0]))
+            if url.path == '/api/wiki/graph':
+                return self.reply(self.server.read(wiki_graph))
             self.reply(dict(error='Not found'), 404)
         except ValueError as exc:
             self.reply(dict(error=str(exc)), 404)

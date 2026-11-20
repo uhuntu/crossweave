@@ -36,3 +36,31 @@
 .wiki-link-item{text-align:left;border:1px solid #d5e0d0;background:#fff;color:#355947;border-radius:6px;padding:6px 10px;font-size:11px}
 .wiki-link-item:hover{background:#f3f8f4;border-color:#b8ccb9}
 .wiki-links-empty{font-size:10px;color:#8c9b8d;margin:4px 0 0}
+.kbd-btn{display:inline-flex;align-items:center;gap:6px;border:1px solid #dce5dd;background:#f7faf7;color:#52685b;border-radius:7px;padding:4px 9px;font-size:10px}
+.kbd-btn:hover{background:#eef5ef;border-color:#c6d6c8}
+.kbd-btn kbd,.palette-head kbd{font:9px/1 ui-monospace,monospace;background:#fff;border:1px solid #d4dfd5;border-radius:4px;padding:2px 5px;color:#6c7e73}
+.palette-backdrop{position:fixed;inset:0;background:#1c2b2342;display:grid;place-items:start center;padding-top:11vh;z-index:50;backdrop-filter:blur(2px)}
+.palette-backdrop[hidden]{display:none}
+.palette{width:min(620px,92vw);background:#fff;border:1px solid #d4e0d5;border-radius:12px;box-shadow:0 18px 48px #182b1f29;overflow:hidden;display:flex;flex-direction:column;max-height:70vh}
+.palette-head{display:flex;align-items:center;gap:10px;padding:13px 16px;border-bottom:1px solid #edf1ed;color:#788a7f}
+.palette-head input{flex:1;min-width:0;border:0;outline:0;background:none;font-size:13px;color:#23362d}
+.palette-list{overflow:auto;padding:8px}
+.palette-item{display:flex;align-items:center;gap:10px;width:100%;text-align:left;border:0;background:transparent;border-radius:8px;padding:9px 11px;color:inherit}
+.palette-item:hover,.palette-item.active{background:#edf4ee}
+.palette-kind{font-size:9px;padding:2px 6px;border-radius:4px;background:#e5eee6;color:#456c54;flex-shrink:0}
+.palette-kind.wiki{background:#eef1e5;color:#647142}
+.palette-main{min-width:0;flex:1}
+.palette-title{font-size:12px;font-weight:600;color:#24372d;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.palette-sub{font-size:10px;color:#7e8e84;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+.palette-empty{padding:24px 12px;text-align:center;font-size:12px;color:#8a998f}
+.graph-wrap{position:relative;width:100%;height:100%;min-height:420px;background:#fbfdfb;border:1px solid #e7eee8;border-radius:10px;overflow:hidden;user-select:none}
+.graph-svg{width:100%;height:100%;display:block;cursor:grab}
+.graph-svg.dragging{cursor:grabbing}
+.graph-edge{stroke:#cbd8ce;stroke-width:1.3;transition:opacity .15s,stroke .15s}
+.graph-edge.hi{stroke:#1f6956;stroke-width:2.1}
+.graph-edge.dim{opacity:.14}
+.graph-node{cursor:pointer;transition:opacity .15s}
+.graph-node.dim{opacity:.18}
+.graph-node circle{stroke:#fff;stroke-width:2}
+.graph-node text{font:11px/1 Inter,"Noto Sans CJK SC",system-ui,sans-serif;fill:#2b4035;pointer-events:none}
+.graph-hint{position:absolute;left:14px;bottom:12px;font-size:10px;color:#7e8e84;background:#ffffffd9;padding:4px 9px;border-radius:6px;border:1px solid #e4ece5}
