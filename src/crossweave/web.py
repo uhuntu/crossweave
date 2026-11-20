@@ -8,17 +8,33 @@ import json
 import os
 from pathlib import Path
 import secrets
+import shlex
 import shutil
 import signal
 import subprocess
 import sys
 import threading
+import time
 from urllib.parse import parse_qs, urlsplit
 import webbrowser
 
-from . import chat, delete, rename, sessions, ui
+from . import chat, common, delete, rename, sessions, ui
 
 ASSETS = Path(__file__).with_name('web_assets')
+APP_PROFILE_DIR = os.path.join(common.HOME, '.cache', 'crossweave', 'gui-profile')
+DESKTOP_FILE = os.path.join(common.HOME, '.local', 'share', 'applications', 'crossweave.desktop')
+ICON_FILE = os.path.join(common.HOME, '.local', 'share', 'icons', 'hicolor', 'scalable', 'apps', 'crossweave.svg')
+
+_ICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <rect width="128" height="128" rx="28" fill="#1f6956"/>
+  <g stroke="#f8faf8" stroke-width="10" stroke-linecap="round">
+    <line x1="64" y1="26" x2="64" y2="102"/>
+    <line x1="26" y1="64" x2="102" y2="64"/>
+    <line x1="37" y1="37" x2="91" y2="91"/>
+    <line x1="91" y1="37" x2="37" y2="91"/>
+  </g>
+</svg>
+"""
 
 
 def _session_messages(tool, sid, record):
@@ -132,19 +148,82 @@ def _find_app_browser():
 def open_app_window(url):
     browser = _find_app_browser()
     if browser:
+        argv = [
+            browser,
+            f'--app={url}',
+            f'--user-data-dir={APP_PROFILE_DIR}',
+            '--no-first-run',
+            '--no-default-browser-check',
+        ]
+        if os.name == 'posix':
+            argv.append('--class=crossweave')
         try:
-            subprocess.Popen(
-                [browser, f'--app={url}'],
+            os.makedirs(APP_PROFILE_DIR, exist_ok=True)
+            return subprocess.Popen(
+                argv,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 start_new_session=os.name == 'posix',
             )
-            return True
         except OSError:
             pass
     webbrowser.open(url)
-    return False
+    return None
+
+
+def _cw_exec_prefix():
+    found = shutil.which('cw')
+    if found:
+        return [found]
+    local_bin = os.path.join(common.HOME, '.local', 'bin', 'cw')
+    if os.path.isfile(local_bin):
+        return [local_bin]
+    return [sys.executable, '-m', 'crossweave.cli']
+
+
+def install_desktop(home=None):
+    if os.name != 'posix' or sys.platform == 'darwin':
+        raise ValueError('.desktop 仅适用于 Linux 桌面环境')
+    os.makedirs(os.path.dirname(ICON_FILE), exist_ok=True)
+    with open(ICON_FILE, 'w', encoding='utf-8') as fh:
+        fh.write(_ICON_SVG)
+    cmd = [*_cw_exec_prefix(), 'gui']
+    if home:
+        cmd.extend(['--home', home])
+    exec_line = ' '.join(shlex.quote(p) for p in cmd)
+    desktop = (
+        '[Desktop Entry]\n'
+        'Type=Application\n'
+        'Name=Crossweave\n'
+        'Comment=Local AI coding-agent session workspace\n'
+        f'Exec={exec_line}\n'
+        f'Icon={ICON_FILE}\n'
+        'Terminal=false\n'
+        'Categories=Development;Utility;\n'
+        'StartupWMClass=crossweave\n'
+    )
+    os.makedirs(os.path.dirname(DESKTOP_FILE), exist_ok=True)
+    with open(DESKTOP_FILE, 'w', encoding='utf-8') as fh:
+        fh.write(desktop)
+    updater = shutil.which('update-desktop-database')
+    if updater:
+        try:
+            subprocess.run([updater, os.path.dirname(DESKTOP_FILE)],
+                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, timeout=5)
+        except Exception:
+            pass
+    return DESKTOP_FILE, ICON_FILE
+
+
+def uninstall_desktop():
+    removed = []
+    for path in (DESKTOP_FILE, ICON_FILE):
+        if os.path.exists(path):
+            os.unlink(path)
+            removed.append(path)
+    return removed
 
 
 def stop_process(proc):
@@ -370,30 +449,74 @@ class Handler(BaseHTTPRequestHandler):
 
 def cmd_web(args):
     parser = argparse.ArgumentParser(prog='cw web', description='本地会话工作台')
-    parser.add_argument('--port', type=int, default=8765)
+    parser.add_argument('--port', type=int, default=None)
     parser.add_argument('--no-open', action='store_true', help='不自动打开浏览器')
     parser.add_argument('--app', action='store_true', help='以独立应用窗口模式打开')
     parser.add_argument('--home', default=None, help='临时包含并筛选指定目录（如 /mnt/win）')
+    parser.add_argument('--install-desktop', action='store_true', help='安装 Linux .desktop 启动图标')
+    parser.add_argument('--uninstall-desktop', action='store_true', help='卸载 Linux .desktop 启动图标')
     opts = parser.parse_args(args)
-    if not 0 <= opts.port <= 65535:
+    if opts.install_desktop:
+        try:
+            desktop_path, icon_path = install_desktop(home=opts.home)
+        except (OSError, ValueError) as exc:
+            print(f'cw gui: {exc}', file=sys.stderr)
+            return 1
+        print(f'Installed desktop entry: {desktop_path}\nIcon: {icon_path}')
+        return 0
+    if opts.uninstall_desktop:
+        removed = uninstall_desktop()
+        if removed:
+            for p in removed:
+                print(f'Removed: {p}')
+        else:
+            print('No desktop entry installed.')
+        return 0
+    if opts.port is not None and not 0 <= opts.port <= 65535:
         parser.error('--port must be between 0 and 65535')
     with sessions._with_extra_home(opts.home):
+        port = 8765 if opts.port is None else opts.port
         try:
-            server = Workspace(('127.0.0.1', opts.port), initial_home=opts.home or '')
+            server = Workspace(('127.0.0.1', port), initial_home=opts.home or '')
         except OSError as exc:
-            print(f'cw web: {exc}', file=sys.stderr)
-            return 1
+            if opts.port is None:
+                # Default port is busy (e.g. another cw web/gui window is open);
+                # pick an ephemeral free port so launching from .desktop never fails.
+                try:
+                    server = Workspace(('127.0.0.1', 0), initial_home=opts.home or '')
+                except OSError as exc2:
+                    print(f'cw web: {exc2}', file=sys.stderr)
+                    return 1
+            else:
+                print(f'cw web: {exc}', file=sys.stderr)
+                return 1
         url = f'http://127.0.0.1:{server.server_port}'
         print(f'Crossweave: {url}\nCtrl-C stops the local workspace.', flush=True)
+        app_proc = None
         if not opts.no_open:
             if opts.app:
-                open_app_window(url)
+                app_proc = open_app_window(url)
             else:
                 webbrowser.open(url)
         try:
-            server.serve_forever()
+            if app_proc is not None:
+                thread = threading.Thread(target=server.serve_forever, daemon=True)
+                thread.start()
+                started = time.monotonic()
+                app_proc.wait()
+                # If the browser handed off to an already-running profile and
+                # exited immediately, stay alive until Ctrl-C rather than
+                # killing the freshly opened tab.
+                if time.monotonic() - started < 1.5:
+                    thread.join()
+                else:
+                    server.shutdown()
+                    thread.join()
+            else:
+                server.serve_forever()
         except KeyboardInterrupt:
             print()
+            server.shutdown()
         finally:
             server.server_close()
     return 0

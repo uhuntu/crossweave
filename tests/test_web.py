@@ -168,17 +168,24 @@ def test_conversation_returns_messages_for_all_tools_and_extra_home_flags(monkey
     assert info['can_delete'] is True
 
 
-def test_open_app_window_and_gui_subcommand(monkeypatch):
+def test_open_app_window_and_gui_subcommand(monkeypatch, tmp_path):
     launched = []
+    fake_proc = object()
+    profile = tmp_path / 'gui-profile'
+    monkeypatch.setattr(web, 'APP_PROFILE_DIR', str(profile))
     monkeypatch.setattr(web, '_find_app_browser', lambda: '/usr/bin/google-chrome')
-    monkeypatch.setattr(web.subprocess, 'Popen', lambda argv, **kw: launched.append(argv))
-    assert web.open_app_window('http://127.0.0.1:8765') is True
-    assert launched == [['/usr/bin/google-chrome', '--app=http://127.0.0.1:8765']]
+    monkeypatch.setattr(web.subprocess, 'Popen', lambda argv, **kw: (launched.append(argv), fake_proc)[1])
+    assert web.open_app_window('http://127.0.0.1:8765') is fake_proc
+    assert launched[0][:3] == [
+        '/usr/bin/google-chrome',
+        '--app=http://127.0.0.1:8765',
+        f'--user-data-dir={profile}',
+    ]
 
     opened = []
     monkeypatch.setattr(web, '_find_app_browser', lambda: None)
     monkeypatch.setattr(web.webbrowser, 'open', lambda url: opened.append(url))
-    assert web.open_app_window('http://127.0.0.1:8765') is False
+    assert web.open_app_window('http://127.0.0.1:8765') is None
     assert opened == ['http://127.0.0.1:8765']
 
     from crossweave import cli
@@ -189,3 +196,26 @@ def test_open_app_window_and_gui_subcommand(monkeypatch):
         cli.main()
     assert exc.value.code == 0
     assert seen == [['--app', '--home', '/mnt/win']]
+
+
+def test_install_and_uninstall_desktop(monkeypatch, tmp_path, capsys):
+    desktop = tmp_path / 'applications' / 'crossweave.desktop'
+    icon = tmp_path / 'icons' / 'crossweave.svg'
+    monkeypatch.setattr(web, 'DESKTOP_FILE', str(desktop))
+    monkeypatch.setattr(web, 'ICON_FILE', str(icon))
+    monkeypatch.setattr(web.shutil, 'which', lambda name: '/home/hunt/.local/bin/cw' if name == 'cw' else None)
+
+    assert web.cmd_web(['--app', '--install-desktop', '--home', '/mnt/win']) == 0
+    assert desktop.is_file()
+    assert icon.is_file()
+    content = desktop.read_text(encoding='utf-8')
+    assert 'Name=Crossweave' in content
+    assert 'Exec=/home/hunt/.local/bin/cw gui --home /mnt/win' in content
+    assert f'Icon={icon}' in content
+    assert 'StartupWMClass=crossweave' in content
+    assert 'Terminal=false' in content
+    assert '<svg' in icon.read_text(encoding='utf-8')
+
+    assert web.cmd_web(['--app', '--uninstall-desktop']) == 0
+    assert not desktop.exists()
+    assert not icon.exists()
