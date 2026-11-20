@@ -1132,7 +1132,8 @@ $('composer').onsubmit = async e => {
   composer();
   drawList();
   bubble('user', text, true);
-  const output = bubble('assistant', '', false);
+  const output = bubble('assistant', '正在思考…', false);
+  output.classList.add('thinking');
   $('thread').scrollTop = $('thread').scrollHeight;
   status(`正在启动 ${row.tool}…`);
   let success = false;
@@ -1160,6 +1161,10 @@ $('composer').onsubmit = async e => {
         if (!line) continue;
         const event = JSON.parse(line);
         if (event.output) {
+          if (!gotOutput) {
+            output.classList.remove('thinking');
+            output.textContent = '';
+          }
           output.textContent += event.output;
           gotOutput = true;
           status(`${row.tool} 正在回复…`);
@@ -1178,6 +1183,7 @@ $('composer').onsubmit = async e => {
   } catch (e) {
     status(e.message, true);
     if (!gotOutput) {
+      output.classList.remove('thinking');
       output.textContent = e.message;
       $('message').value = draft;
     }

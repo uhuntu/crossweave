@@ -84,6 +84,24 @@ def test_stream_preserves_session_cwd_and_unicode(workspace, monkeypatch):
     assert calls == [['zcode', '--resume', 'sess_test', '-p', 'continue']]
 
 
+def test_stream_strips_claude_diagnostic_lines(workspace, monkeypatch):
+    def spawnable(_argv):
+        script = (
+            'import sys; '
+            'sys.stdout.write(\'[claude-code:unrecognized_model]{"model":"glm-5.3-flash[1m]"}\\n真实回复内容\\n\'); '
+            'sys.stdout.flush()'
+        )
+        return [sys.executable, '-c', script]
+
+    monkeypatch.setattr(web.sessions, 'spawnable', spawnable)
+    status, _, body = request(workspace, 'POST', '/api/chat',
+                              dict(tool='claude', id='sess_test', text='hi'), auth(workspace))
+    assert status == 200
+    events = [json.loads(line) for line in body.splitlines()]
+    assert ''.join(e.get('output', '') for e in events) == '真实回复内容\n'
+    assert events[-1] == dict(done=True, code=0)
+
+
 def test_concurrent_turn_and_invalid_message_rejected(workspace):
     workspace.active.add(('zcode', 'sess_test'))
     assert request(workspace, 'POST', '/api/chat', dict(id='sess_test', text='hello'), auth(workspace))[0] == 409

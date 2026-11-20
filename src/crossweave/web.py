@@ -518,6 +518,13 @@ def stop_process(proc):
             pass
 
 
+_CLI_DIAGNOSTIC_LINE_RE = re.compile(r'^\[claude-code:[^\]]+\]\{[^\n]*\}\r?\n?', re.M)
+
+
+def _strip_cli_diagnostics(text):
+    return _CLI_DIAGNOSTIC_LINE_RE.sub('', text)
+
+
 class Workspace(ThreadingHTTPServer):
     daemon_threads = True
 
@@ -668,8 +675,10 @@ class Handler(BaseHTTPRequestHandler):
                 chunk = proc.stdout.read1(4096)
                 if not chunk:
                     break
-                self.event(dict(output=decoder.decode(chunk)))
-            tail = decoder.decode(b'', final=True)
+                text_out = _strip_cli_diagnostics(decoder.decode(chunk))
+                if text_out:
+                    self.event(dict(output=text_out))
+            tail = _strip_cli_diagnostics(decoder.decode(b'', final=True))
             if tail:
                 self.event(dict(output=tail))
             self.event(dict(done=True, code=proc.wait()))
