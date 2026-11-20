@@ -21,3 +21,18 @@
 .code-copy:hover{background:#f3f7f4}
 .code-block pre{margin:0;padding:12px 14px;overflow:auto;font:12px/1.65 ui-monospace,monospace;color:#2c4035}
 .context-card button+code{margin-top:18px;padding-top:14px;border-top:1px dashed #d6e0d6}
+.topbar-left,.topbar-right{display:flex;align-items:center;gap:10px}
+.mode-tabs{display:inline-flex;background:#edf2ee;padding:3px;border-radius:7px;gap:2px}
+.mode-tab{border:0;background:transparent;color:#5c7064;font-size:11px;padding:4px 10px;border-radius:5px;font-weight:500}
+.mode-tab.active{background:#fff;color:#23362d;box-shadow:0 1px 3px #1d352414}
+.wiki-pill{display:inline-flex;align-items:center;gap:6px;border:1px solid #dce5dd;background:#f7faf7;color:#5b6f63;border-radius:999px;padding:4px 10px;font-size:10px}
+.wiki-pill i{width:6px;height:6px;border-radius:50%;background:#b5bfb8}
+.wiki-pill.online{border-color:#c6decb;background:#eef7f0;color:#245c44}
+.wiki-pill.online i{background:#2d9d66}
+.wikilink{border:0;background:#ebf3ec;color:#1f6956;padding:1px 6px;border-radius:4px;font-size:12px;cursor:pointer;text-decoration:none}
+.wikilink:hover{background:#dcebe0;text-decoration:underline}
+.wiki-doc{margin-left:0;max-width:780px}
+.wiki-links{display:flex;flex-direction:column;gap:6px;margin-top:10px}
+.wiki-link-item{text-align:left;border:1px solid #d5e0d0;background:#fff;color:#355947;border-radius:6px;padding:6px 10px;font-size:11px}
+.wiki-link-item:hover{background:#f3f8f4;border-color:#b8ccb9}
+.wiki-links-empty{font-size:10px;color:#8c9b8d;margin:4px 0 0}

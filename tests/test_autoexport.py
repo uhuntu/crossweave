@@ -282,3 +282,30 @@ def test_history_runs_between_recent_notes_and_sorting(steps, vault, monkeypatch
     assert autoexport.run() == 1
     assert [s[0] for s in steps] == ['pick', 'notes', 'history', 'sort', 'project']
     assert state()['error'] == 'backfill failed'
+
+
+def test_offline_llm_wiki_defers_rescan_without_failing_upkeep(monkeypatch, tmp_path):
+    wiki = tmp_path / 'work-wiki'
+    (wiki / 'wiki').mkdir(parents=True)
+    (wiki / 'raw' / 'sources').mkdir(parents=True)
+    monkeypatch.setattr(exporter, '_export_all', lambda opts, client: 0)
+
+    class OfflineClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def rescan(self, *args, **kwargs):
+            raise exporter.ExportError('LLM Wiki API unavailable; start the app and enable its local API')
+
+    monkeypatch.setattr(exporter, 'WikiClient', OfflineClient)
+    flags = {}
+    assert autoexport._export_to_wiki(wiki, 86400, flags) is None
+    assert flags.get('pending_rescan') is True
+
+    class AuthErrorClient(OfflineClient):
+        def rescan(self, *args, **kwargs):
+            raise exporter.ExportError('LLM Wiki API returned HTTP 401; bad token')
+
+    monkeypatch.setattr(exporter, 'WikiClient', AuthErrorClient)
+    err = autoexport._export_to_wiki(wiki, 86400, flags)
+    assert err and '401' in err

@@ -25,7 +25,20 @@
   <footer class="sidebar-footer"><i></i> 本地存储 · 原文查看无需模型</footer>
 </aside>
 <main>
-  <header class="topbar"><span>工作台 <span class="slash">/</span> <span id="breadcrumb">会话</span></span><span class="top-note">从对话，回到上下文。</span></header>
+  <header class="topbar">
+    <div class="topbar-left">
+      <div class="mode-tabs" role="tablist" aria-label="工作台视图">
+        <button id="tab-sessions" class="mode-tab active" role="tab" aria-selected="true" type="button">会话</button>
+        <button id="tab-wiki" class="mode-tab" role="tab" aria-selected="false" type="button" hidden>Wiki</button>
+      </div>
+      <span class="slash">/</span>
+      <span id="breadcrumb">会话</span>
+    </div>
+    <div class="topbar-right">
+      <button id="wiki-pill" class="wiki-pill" type="button" hidden title="点击触发 LLM Wiki 扫描"><i></i><span id="wiki-pill-text">LLM Wiki</span></button>
+      <span class="top-note">从对话，回到上下文。</span>
+    </div>
+  </header>
   <div class="workspace">
     <section class="conversation" aria-label="会话原文">
       <div class="conversation-head">
@@ -35,6 +48,7 @@
           <p id="subtitle">选择一个会话，查看原文或继续工作。</p>
         </div>
         <div class="head-actions">
+          <button id="export-wiki" class="outline" hidden disabled>↗ 导出到 Wiki</button>
           <button id="rename" class="outline" disabled>重命名</button>
           <button id="export" class="outline" disabled>↓ 导出 Markdown</button>
           <button id="delete" class="outline danger" disabled>删除</button>
@@ -68,7 +82,7 @@
         <dt>工作目录</dt><dd id="info-cwd">—</dd>
         <dt>会话 ID</dt><dd id="info-id">—</dd>
       </dl>
-      <div class="context-card">
+      <div class="context-card" id="session-card">
         <span class="card-icon">↗</span>
         <h3>回到终端继续</h3>
         <p>在终端里恢复或查看同一份对话。</p>
@@ -76,6 +90,11 @@
         <button id="copy-resume" disabled>复制恢复命令</button>
         <code id="show-command">cw show &lt;工具&gt; &lt;会话ID&gt;</code>
         <button id="copy" disabled>复制查看命令</button>
+      </div>
+      <div class="context-card" id="wiki-links-card" hidden>
+        <span class="card-icon">⌗</span>
+        <h3>关联页面</h3>
+        <div id="wiki-links" class="wiki-links"></div>
       </div>
       <div class="context-foot">
         <strong>一个会话，持续的上下文</strong>

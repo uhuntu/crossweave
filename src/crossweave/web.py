@@ -7,6 +7,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import shlex
 import shutil
@@ -18,7 +19,7 @@ import time
 from urllib.parse import parse_qs, urlsplit
 import webbrowser
 
-from . import chat, common, delete, rename, sessions, ui
+from . import chat, common, delete, exporter, llmwiki, rename, sessions, ui
 
 ASSETS = Path(__file__).with_name('web_assets')
 APP_PROFILE_DIR = os.path.join(common.HOME, '.cache', 'crossweave', 'gui-profile')
@@ -111,6 +112,124 @@ def delete_session(tool, sid):
         raise ValueError('会话不存在')
     backup = delete.delete_record(record)
     return dict(ok=True, backup=backup)
+
+
+_WIKILINK_RE = re.compile(r'\[\[([^\]|]+)(?:\|([^\]]+))?\]\]')
+
+
+def _wiki_client():
+    api_url = os.environ.get(llmwiki.API_ENV, '').strip() or exporter.API_URL
+    token = os.environ.get(exporter.TOKEN_ENV, '')
+    return exporter.WikiClient(api_url, token)
+
+
+def wiki_status():
+    project = llmwiki.wiki_dir()
+    if project is None:
+        return dict(configured=False, path='', name='', online=False, pages=0)
+    wiki_root = project / 'wiki'
+    pages = 0
+    try:
+        for p in wiki_root.rglob('*.md'):
+            rel = p.relative_to(wiki_root).as_posix()
+            if any(part in llmwiki.SKIP_DIRS for part in rel.split('/')):
+                continue
+            pages += 1
+    except OSError:
+        pass
+    online = False
+    try:
+        client = _wiki_client()
+        client.request('GET', '/health', timeout=1.5)
+        online = True
+    except Exception:
+        online = False
+    return dict(configured=True, path=str(project), name=project.name, online=online, pages=pages)
+
+
+def list_wiki_pages():
+    project = llmwiki.wiki_dir()
+    if project is None:
+        return []
+    wiki_root = project / 'wiki'
+    items = []
+    try:
+        paths = sorted(wiki_root.rglob('*.md'))
+    except OSError:
+        return []
+    for p in paths:
+        if not p.is_file():
+            continue
+        rel = p.relative_to(wiki_root).as_posix()
+        parts = rel.split('/')
+        if any(part in llmwiki.SKIP_DIRS for part in parts):
+            continue
+        try:
+            st = p.stat()
+            head = p.read_bytes()[:4096].decode('utf-8', errors='replace')
+        except OSError:
+            continue
+        title = llmwiki._title(head, p.stem)
+        category = parts[0] if len(parts) > 1 else ''
+        items.append(dict(rel=rel, stem=p.stem, title=title, category=category, mtime=int(st.st_mtime)))
+    items.sort(key=lambda x: (0 if x['rel'] in ('index.md', 'overview.md') else 1, -x['mtime'], x['rel']))
+    return items
+
+
+def read_wiki_page(rel):
+    project = llmwiki.wiki_dir()
+    if project is None:
+        raise ValueError('未配置 CW_LLM_WIKI')
+    if not isinstance(rel, str) or not rel.strip():
+        raise ValueError('页面路径为空')
+    wiki_root = (project / 'wiki').resolve()
+    target = (wiki_root / rel).resolve()
+    try:
+        rel_clean = target.relative_to(wiki_root).as_posix()
+    except ValueError:
+        raise ValueError('非法页面路径')
+    if not target.is_file():
+        raise ValueError('页面不存在')
+    raw = target.read_bytes()[:llmwiki.READ_BYTES].decode('utf-8', errors='replace')
+    fm_title, body = llmwiki._split(raw)
+    title = fm_title or llmwiki._title(raw, target.stem)
+    links = []
+    seen = set()
+    for m in _WIKILINK_RE.finditer(body):
+        t = m.group(1).strip()
+        if t and t not in seen:
+            seen.add(t)
+            links.append(dict(target=t, label=(m.group(2) or t).strip()))
+    return dict(rel=rel_clean, stem=target.stem, title=title, body=body, markdown=raw,
+                path=str(target), links=links)
+
+
+def export_to_wiki(tool, sid):
+    project = llmwiki.wiki_dir()
+    if project is None:
+        raise ValueError('未配置 CW_LLM_WIKI 环境变量')
+    if tool not in sessions.TOOLS:
+        raise ValueError('不支持的工具')
+    record = sessions._find_record(tool, sid)
+    if record is None:
+        raise ValueError('会话不存在')
+    target, written = exporter.snapshot(project, tool, sid, record=record)
+    rescanned = False
+    note = ''
+    try:
+        _wiki_client().rescan(project)
+        rescanned = True
+    except exporter.ExportError as exc:
+        note = str(exc)
+    return dict(ok=True, path=str(target), written=written, rescanned=rescanned, note=note)
+
+
+def rescan_wiki():
+    project = llmwiki.wiki_dir()
+    if project is None:
+        raise ValueError('未配置 CW_LLM_WIKI 环境变量')
+    _wiki_client().rescan(project)
+    return dict(ok=True)
 
 
 def _find_app_browser():
@@ -318,6 +437,13 @@ class Handler(BaseHTTPRequestHandler):
                 query = parse_qs(url.query)
                 return self.reply(self.server.read(conversation, query.get('tool', [''])[0],
                                                    query.get('id', [''])[0]))
+            if url.path == '/api/wiki/status':
+                return self.reply(self.server.read(wiki_status))
+            if url.path == '/api/wiki/pages':
+                return self.reply(self.server.read(list_wiki_pages))
+            if url.path == '/api/wiki/page':
+                query = parse_qs(url.query)
+                return self.reply(self.server.read(read_wiki_page, query.get('rel', [''])[0]))
             self.reply(dict(error='Not found'), 404)
         except ValueError as exc:
             self.reply(dict(error=str(exc)), 404)
@@ -335,6 +461,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._handle_rename()
         if self.path == '/api/delete':
             return self._handle_delete()
+        if self.path == '/api/export-wiki':
+            return self._handle_export_wiki()
+        if self.path == '/api/wiki/rescan':
+            return self._handle_wiki_rescan()
         if self.path != '/api/chat':
             return self.reply(dict(error='Not found'), 404)
         try:
@@ -441,6 +571,31 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(dict(error=str(exc)), 400)
         except Exception as exc:
             return self.reply(dict(error=f'删除失败: {exc}'), 500)
+
+    def _handle_export_wiki(self):
+        try:
+            data = self._read_json_body()
+            tool, sid = data.get('tool'), data.get('id')
+            if not isinstance(tool, str) or not isinstance(sid, str):
+                raise ValueError('参数不完整')
+        except (ValueError, TypeError) as exc:
+            return self.reply(dict(error=str(exc)), 400)
+        try:
+            result = self.server.read(export_to_wiki, tool, sid)
+            return self.reply(result)
+        except (ValueError, exporter.ExportError) as exc:
+            return self.reply(dict(error=str(exc)), 400)
+        except Exception as exc:
+            return self.reply(dict(error=f'导出失败: {exc}'), 500)
+
+    def _handle_wiki_rescan(self):
+        try:
+            result = self.server.read(rescan_wiki)
+            return self.reply(result)
+        except (ValueError, exporter.ExportError) as exc:
+            return self.reply(dict(error=str(exc)), 400)
+        except Exception as exc:
+            return self.reply(dict(error=f'刷新失败: {exc}'), 500)
 
     def event(self, data):
         self.wfile.write((json.dumps(data, ensure_ascii=False) + '\n').encode())

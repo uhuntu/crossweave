@@ -219,3 +219,43 @@ def test_install_and_uninstall_desktop(monkeypatch, tmp_path, capsys):
     assert web.cmd_web(['--app', '--uninstall-desktop']) == 0
     assert not desktop.exists()
     assert not icon.exists()
+
+
+def test_wiki_view_and_export_endpoints(workspace, monkeypatch, tmp_path):
+    project = tmp_path / 'work-wiki'
+    (project / 'wiki' / 'projects').mkdir(parents=True)
+    (project / 'raw' / 'sources').mkdir(parents=True)
+    (project / 'wiki' / 'index.md').write_text('# Wiki Index\n\nSee [[projects/crossweave|Crossweave]].\n', encoding='utf-8')
+    (project / 'wiki' / 'projects' / 'crossweave.md').write_text('---\ntitle: Crossweave\n---\n# Crossweave\nBody text.\n', encoding='utf-8')
+    monkeypatch.setenv('CW_LLM_WIKI', str(project))
+    # Ensure health check returns offline cleanly without hitting a real port
+    monkeypatch.setenv('CW_LLM_WIKI_API', 'http://127.0.0.1:1')
+
+    status, _, body = request(workspace, 'GET', '/api/wiki/status')
+    assert status == 200
+    st = json.loads(body)
+    assert st['configured'] is True
+    assert st['pages'] == 2
+    assert st['online'] is False
+
+    status, _, body = request(workspace, 'GET', '/api/wiki/pages')
+    assert status == 200
+    pages = json.loads(body)
+    assert [p['rel'] for p in pages] == ['index.md', 'projects/crossweave.md']
+
+    status, _, body = request(workspace, 'GET', '/api/wiki/page?rel=index.md')
+    assert status == 200
+    page = json.loads(body)
+    assert page['title'] == 'Wiki Index'
+    assert page['links'] == [{'target': 'projects/crossweave', 'label': 'Crossweave'}]
+
+    # Path traversal blocked
+    assert request(workspace, 'GET', '/api/wiki/page?rel=../../etc/passwd')[0] == 404
+
+    # Export & rescan require CSRF auth
+    assert request(workspace, 'POST', '/api/export-wiki', dict(tool='claude', id='s1'))[0] == 403
+    assert request(workspace, 'POST', '/api/wiki/rescan', {})[0] == 403
+
+    monkeypatch.setattr(web, 'export_to_wiki', lambda t, s: dict(ok=True, path='/tmp/s.md', written=True, rescanned=False, note='offline'))
+    status, _, body = request(workspace, 'POST', '/api/export-wiki', dict(tool='claude', id='s1'), auth(workspace))
+    assert status == 200 and json.loads(body)['written'] is True

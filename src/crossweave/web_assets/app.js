@@ -1,5 +1,11 @@
 const $ = id => document.getElementById(id);
-const state = { rows: [], selected: null, info: null, busy: false, version: 0, initHomeApplied: false };
+const state = {
+  mode: 'sessions',
+  rows: [], selected: null, info: null,
+  wiki: { configured: false, online: false, path: '', name: '', pages: 0 },
+  wikiPages: [], wikiSelected: null, wikiInfo: null,
+  busy: false, version: 0, initHomeApplied: false,
+};
 const token = document.querySelector('meta[name="cw-token"]').content;
 const initialHome = (document.querySelector('meta[name="cw-home"]')?.content || '').trim();
 
@@ -89,13 +95,21 @@ function drawList() {
 }
 
 function composer() {
-  const ok = !!state.info?.can_chat && !state.busy;
+  const isWiki = state.mode === 'wiki';
+  $('composer').hidden = isWiki;
+  $('session-card').hidden = isWiki;
+  $('wiki-links-card').hidden = !isWiki;
+  const ok = !isWiki && !!state.info?.can_chat && !state.busy;
   $('message').disabled = !ok;
   $('send').disabled = !ok || !$('message').value.trim();
-  $('export').disabled = !state.info || state.busy;
-  $('rename').disabled = !state.info?.can_rename || state.busy;
+  $('export').disabled = isWiki ? !state.wikiInfo : (!state.info || state.busy);
+  $('export-wiki').hidden = isWiki || !state.wiki.configured;
+  $('export-wiki').disabled = isWiki || !state.info || state.busy;
+  $('rename').hidden = isWiki;
+  $('rename').disabled = isWiki || !state.info?.can_rename || state.busy;
   $('rename').title = state.info?.extra_home ? '外部目录会话为只读，暂不支持重命名' : '';
-  $('delete').disabled = !state.info?.can_delete || state.busy;
+  $('delete').hidden = isWiki;
+  $('delete').disabled = isWiki || !state.info?.can_delete || state.busy;
   $('copy').disabled = !state.info;
   $('copy-resume').disabled = !state.info;
   $('refresh').disabled = state.busy;
@@ -111,8 +125,17 @@ function composer() {
       : '保留各工具权限设置 · 暂不支持网页交互审批';
 }
 
+function resolveWikiTarget(target) {
+  const clean = target.replace(/\.md$/i, '').trim().toLowerCase();
+  return state.wikiPages.find(p =>
+    p.rel.replace(/\.md$/i, '').toLowerCase() === clean
+    || p.stem.toLowerCase() === clean
+    || p.title.toLowerCase() === clean
+  );
+}
+
 function appendInline(parent, text) {
-  const re = /(`[^`\n]+`|\*\*[^*\n]+\*\*)/g;
+  const re = /(`[^`\n]+`|\*\*[^*\n]+\*\*|\[\[[^\]\n]+\]\])/g;
   let last = 0;
   let m;
   while ((m = re.exec(text)) !== null) {
@@ -120,6 +143,16 @@ function appendInline(parent, text) {
     const tok = m[0];
     if (tok.startsWith('`')) {
       parent.append(el('code', 'inline-code', tok.slice(1, -1)));
+    } else if (tok.startsWith('[[')) {
+      const inner = tok.slice(2, -2);
+      const [rawTarget, rawLabel] = inner.split('|');
+      const target = (rawTarget || '').trim();
+      const label = (rawLabel || target).trim();
+      const btn = el('button', 'wikilink', label);
+      btn.type = 'button';
+      btn.title = target;
+      btn.onclick = () => openWikiLink(target);
+      parent.append(btn);
     } else {
       parent.append(el('strong', null, tok.slice(2, -2)));
     }
@@ -363,10 +396,220 @@ async function load() {
   }
 }
 
-$('search').oninput = drawList;
-$('tool').onchange = drawList;
+function paintWikiStatus() {
+  const w = state.wiki;
+  $('tab-wiki').hidden = !w.configured;
+  $('wiki-pill').hidden = !w.configured;
+  if (w.configured) {
+    $('tab-wiki').textContent = w.pages ? `Wiki (${w.pages})` : 'Wiki';
+    $('wiki-pill').classList.toggle('online', !!w.online);
+    $('wiki-pill-text').textContent = w.online ? `LLM Wiki · 在线` : `LLM Wiki · 离线`;
+    $('wiki-pill').title = w.online
+      ? `${w.path}\n点击触发 LLM Wiki 重新扫描`
+      : `${w.path}\nLLM Wiki 应用未启动（仍可直接浏览和导出快照）`;
+  }
+  composer();
+}
+
+async function loadWikiStatus() {
+  try {
+    state.wiki = await api('/api/wiki/status');
+  } catch (e) {
+    state.wiki = { configured: false, online: false, path: '', name: '', pages: 0 };
+  }
+  paintWikiStatus();
+}
+
+function filteredWikiPages() {
+  const words = $('search').value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const cat = $('tool').value;
+  return state.wikiPages.filter(p => {
+    if (cat && p.category !== cat) return false;
+    const hay = `${p.title} ${p.rel} ${p.category}`.toLowerCase();
+    return words.every(w => hay.includes(w));
+  });
+}
+
+function drawWikiList() {
+  const pages = filteredWikiPages();
+  $('count').textContent = `${pages.length} 个页面`;
+  $('sessions').replaceChildren();
+  for (const p of pages) {
+    const active = state.wikiSelected?.rel === p.rel;
+    const b = el('button', 'session' + (active ? ' active' : ''));
+    b.disabled = state.busy;
+    b.title = `${p.title}\n${p.rel}`;
+    b.append(el('div', 'session-title', p.title));
+    const meta = el('div', 'session-meta');
+    if (p.category) meta.append(el('span', 'tool-badge', p.category));
+    meta.append(el('span', 'session-path', p.rel));
+    b.append(meta);
+    b.onclick = () => selectWikiPage(p);
+    $('sessions').append(b);
+  }
+  if (!pages.length) $('sessions').append(el('p', 'list-empty', '没有匹配的 Wiki 页面。'));
+}
+
+async function selectWikiPage(page) {
+  if (state.busy) return;
+  const version = ++state.version;
+  state.wikiSelected = page;
+  state.wikiInfo = null;
+  drawWikiList();
+  composer();
+  $('eyebrow').textContent = 'LLM WIKI / PAGE';
+  $('title').textContent = page.title;
+  $('subtitle').textContent = page.rel;
+  $('breadcrumb').textContent = page.category || 'wiki';
+  $('info-tool').textContent = state.wiki.name || 'LLM Wiki';
+  $('info-home-label').hidden = true;
+  $('info-home').hidden = true;
+  $('info-cwd').textContent = state.wiki.path || '—';
+  $('info-id').textContent = page.rel;
+  $('wiki-links').replaceChildren();
+  $('thread').replaceChildren(el('p', 'list-empty', '正在读取 Wiki 页面…'));
+  status('读取 Wiki 页面…');
+  try {
+    const info = await api(`/api/wiki/page?${new URLSearchParams({ rel: page.rel })}`);
+    if (version !== state.version) return;
+    state.wikiInfo = info;
+    $('title').textContent = info.title;
+    const article = el('article', 'wiki-doc message-body md');
+    renderMarkdown(article, info.body);
+    $('thread').replaceChildren(article);
+    $('wiki-links').replaceChildren();
+    if (info.links && info.links.length) {
+      for (const link of info.links) {
+        const btn = el('button', 'wiki-link-item', link.label);
+        btn.type = 'button';
+        btn.onclick = () => openWikiLink(link.target);
+        $('wiki-links').append(btn);
+      }
+    } else {
+      $('wiki-links').append(el('p', 'wiki-links-empty', '本页暂无双向链接'));
+    }
+    status(`已加载 ${info.rel}`);
+  } catch (e) {
+    if (version === state.version) {
+      $('thread').replaceChildren(el('p', 'list-empty', e.message));
+      status(e.message, true);
+    }
+  } finally {
+    if (version === state.version) composer();
+  }
+}
+
+async function openWikiLink(target) {
+  if (state.mode !== 'wiki') await setMode('wiki');
+  const match = resolveWikiTarget(target);
+  if (match) {
+    selectWikiPage(match);
+  } else {
+    status(`未找到 Wiki 页面：${target}`, true);
+  }
+}
+
+async function loadWikiPages() {
+  status('正在读取 LLM Wiki 页面…');
+  $('refresh').disabled = true;
+  try {
+    state.wikiPages = await api('/api/wiki/pages');
+    const previous = $('tool').value;
+    $('tool').replaceChildren(el('option', null, '所有分类'));
+    $('tool').firstChild.value = '';
+    for (const cat of [...new Set(state.wikiPages.map(p => p.category).filter(Boolean))].sort()) {
+      const opt = el('option', null, cat);
+      opt.value = cat;
+      $('tool').append(opt);
+    }
+    $('tool').value = previous;
+    $('home').hidden = true;
+    drawWikiList();
+    status(`已读取 ${state.wikiPages.length} 个 Wiki 页面`);
+  } catch (e) {
+    status(e.message, true);
+    $('sessions').replaceChildren(el('p', 'list-empty', '读取 Wiki 页面失败。'));
+  } finally {
+    $('refresh').disabled = state.busy;
+  }
+}
+
+async function setMode(mode) {
+  if (state.busy || state.mode === mode) return;
+  state.mode = mode;
+  $('tab-sessions').classList.toggle('active', mode === 'sessions');
+  $('tab-sessions').setAttribute('aria-selected', String(mode === 'sessions'));
+  $('tab-wiki').classList.toggle('active', mode === 'wiki');
+  $('tab-wiki').setAttribute('aria-selected', String(mode === 'wiki'));
+  $('search').value = '';
+  $('search').placeholder = mode === 'wiki' ? '搜索 Wiki 标题、路径、分类' : '搜索标题、目录、会话 ID';
+  if (mode === 'wiki') {
+    await loadWikiPages();
+    if (state.wikiSelected) selectWikiPage(state.wikiSelected);
+    else if (state.wikiPages.length) selectWikiPage(state.wikiPages[0]);
+    else {
+      $('eyebrow').textContent = 'LLM WIKI';
+      $('title').textContent = state.wiki.name || 'LLM Wiki';
+      $('subtitle').textContent = state.wiki.path || '';
+      $('thread').replaceChildren(el('p', 'list-empty', 'Wiki 目录中暂无 Markdown 页面。'));
+      composer();
+    }
+  } else {
+    await load();
+    if (state.selected) select(state.selected);
+    else resetSelection();
+  }
+}
+
+$('search').oninput = () => (state.mode === 'wiki' ? drawWikiList() : drawList());
+$('tool').onchange = () => (state.mode === 'wiki' ? drawWikiList() : drawList());
 $('home').onchange = drawList;
-$('refresh').onclick = load;
+$('refresh').onclick = () => {
+  loadWikiStatus();
+  if (state.mode === 'wiki') loadWikiPages();
+  else load();
+};
+$('tab-sessions').onclick = () => setMode('sessions');
+$('tab-wiki').onclick = () => setMode('wiki');
+$('wiki-pill').onclick = async () => {
+  if (state.busy || !state.wiki.configured) return;
+  if (!state.wiki.online) {
+    await loadWikiStatus();
+    if (!state.wiki.online) {
+      status('LLM Wiki 应用当前离线，请先启动桌面端并开启本地 API', true);
+      return;
+    }
+  }
+  status('正在触发 LLM Wiki 扫描…');
+  try {
+    await postJson('/api/wiki/rescan', {});
+    status('已触发 LLM Wiki 扫描，可在 LLM Wiki 应用中查看进度');
+  } catch (e) {
+    status(e.message, true);
+    loadWikiStatus();
+  }
+};
+$('export-wiki').onclick = async () => {
+  if (state.busy || !state.selected || !state.wiki.configured) return;
+  state.busy = true;
+  composer();
+  status('正在导出会话到 LLM Wiki…');
+  try {
+    const res = await postJson('/api/export-wiki', {
+      tool: state.selected.tool,
+      id: state.selected.id,
+    });
+    const verb = res.written ? '已导出到 LLM Wiki' : '快照已是最新';
+    const tail = res.rescanned ? '并已触发扫描' : '（LLM Wiki 离线，快照已落盘，启动后可点右上角扫描）';
+    status(`${verb}${tail}`);
+    loadWikiStatus();
+  } catch (e) {
+    status(e.message, true);
+  } finally {
+    state.busy = false;
+    composer();
+  }
+};
 $('message').oninput = composer;
 $('message').onkeydown = e => {
   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
@@ -376,12 +619,13 @@ $('message').onkeydown = e => {
 };
 
 $('export').onclick = () => {
-  if (!state.info) return;
-  const blob = new Blob([state.info.markdown], { type: 'text/markdown;charset=utf-8' });
+  const doc = state.mode === 'wiki' ? state.wikiInfo : state.info;
+  if (!doc) return;
+  const blob = new Blob([doc.markdown], { type: 'text/markdown;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = el('a');
   a.href = url;
-  a.download = `${state.info.tool}-${state.info.id}.md`;
+  a.download = state.mode === 'wiki' ? `${doc.stem}.md` : `${doc.tool}-${doc.id}.md`;
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 };
@@ -537,4 +781,5 @@ window.addEventListener('beforeunload', e => {
   }
 });
 
+loadWikiStatus();
 load();

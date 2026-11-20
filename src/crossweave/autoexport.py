@@ -296,11 +296,19 @@ class _LastError:
         self.stream.flush()
 
 
-def _export_to_wiki(wiki, since):
+def _is_api_offline(exc):
+    return str(exc).startswith('LLM Wiki API unavailable')
+
+
+def _export_to_wiki(wiki, since, state_flags=None):
     """Step 3: the notes into the LLM Wiki, and a rescan. Returns the
-    failure's text, or None."""
+    failure's text, or None.
+
+    When the LLM Wiki app is simply closed, the snapshots are already on
+    disk; deferring the rescan avoids marking the entire daily upkeep as
+    failed and warning on every `cw` run."""
     opts = argparse.Namespace(since=f'{-(-since // 3600)}h', older_than=QUIET, cwd=None,
-                              dry_run=False, yes=True, llm_wiki=str(wiki), rescan=True,
+                              dry_run=False, yes=True, llm_wiki=str(wiki), rescan=False,
                               content=exporter.CONTENT_NOTES, judge=None,
                               api_url=os.environ.get(llmwiki.API_ENV, '').strip() or exporter.API_URL,
                               project_id=None)
@@ -308,9 +316,24 @@ def _export_to_wiki(wiki, since):
     sys.stderr = said
     error = None
     try:
-        client = exporter.WikiClient(opts.api_url, os.environ.get(exporter.TOKEN_ENV, ''))
-        if exporter._export_all(opts, client) != 0:
-            error = said.last or 'export or rescan failed'
+        if exporter._export_all(opts, None) != 0:
+            error = said.last or 'export failed'
+        else:
+            client = exporter.WikiClient(opts.api_url, os.environ.get(exporter.TOKEN_ENV, ''))
+            try:
+                client.rescan(opts.llm_wiki, opts.project_id)
+                print('LLM Wiki source rescan accepted; check the app for ingest progress.')
+                if state_flags is not None:
+                    state_flags['pending_rescan'] = False
+            except exporter.ExportError as exc:
+                if _is_api_offline(exc):
+                    print('cw export: snapshots saved; LLM Wiki app is offline, '
+                          'rescan deferred until it is running', file=sys.stderr)
+                    if state_flags is not None:
+                        state_flags['pending_rescan'] = True
+                else:
+                    print(f'cw export: {exc}', file=sys.stderr)
+                    error = str(exc)
     except (exporter.ExportError, OSError) as exc:
         print(f'cw export: {exc}', file=sys.stderr)
         error = str(exc)
@@ -340,13 +363,14 @@ def run():
     print(f"\n== {time.strftime('%Y-%m-%d %H:%M:%S')} cw daily upkeep "
           f"(last {since // 3600}h, quiet for {QUIET}) ==", flush=True)
     errors = []
+    wiki_flags = {}
     if vault:
         errors.append(_step('notes', _write_quiet_notes, vault, since))
         errors.append(_step('historical notes', _backfill_notes, vault, since))
         errors.append(_step('sorting _home', _sort_home, vault))
         errors.append(_step('project pages', _refresh_project_pages, vault))
     if wiki:
-        errors.append(_step('LLM Wiki export', _export_to_wiki, wiki, since))
+        errors.append(_step('LLM Wiki export', _export_to_wiki, wiki, since, wiki_flags))
     sys.stdout.flush()
     sys.stderr.flush()
     errors = [e for e in errors if e]
@@ -354,6 +378,11 @@ def run():
     mine = state.get(KEY) if isinstance(state.get(KEY), dict) else {}
     mine.update(finished=time.time(), result='failed' if errors else 'ok',
                 error=errors[0] if errors else None)
+    if 'pending_rescan' in wiki_flags:
+        if wiki_flags['pending_rescan']:
+            mine['pending_rescan'] = True
+        else:
+            mine.pop('pending_rescan', None)
     if not errors:
         mine['succeeded'] = began
     state[KEY] = mine
