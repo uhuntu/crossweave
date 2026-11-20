@@ -6,7 +6,7 @@ import sys
 
 from . import sessions
 
-CHAT_TOOLS = ('claude', 'codex', 'kimi', 'step', 'pi', 'zcode')
+CHAT_TOOLS = ('claude', 'codex', 'kimi', 'step', 'pi', 'zcode', 'agy')
 
 
 def available(tool):
@@ -19,6 +19,8 @@ def turn_command(tool, sid, text):
     """Continue the exact session, keeping each tool's permission defaults."""
     if tool == 'zcode':
         return ['zcode', '--resume', sid, '-p', text]
+    if tool == 'agy':
+        return ['agy', '--conversation', sid, '-p', text]
     if tool == 'kimi':
         return ['kimi', '-S', sid, '-p', text]
     if tool == 'codex':

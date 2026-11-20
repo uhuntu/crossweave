@@ -354,6 +354,7 @@ def _cw_exec_prefix():
 
 
 _DESKTOP_ENV_VARS = (
+    'PATH',
     'CW_LLM_WIKI',
     'CW_LLM_WIKI_API',
     'LLM_WIKI_API_TOKEN',

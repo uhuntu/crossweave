@@ -115,11 +115,13 @@ function composer() {
   $('copy').disabled = !state.info;
   $('copy-resume').disabled = !state.info;
   $('refresh').disabled = state.busy;
-  $('message').placeholder = state.info?.can_chat
-    ? '继续这段对话…（Ctrl / ⌘ + Enter 发送）'
-    : state.info?.extra_home
-      ? '外部目录会话仅供查看；请在终端用 cw resume 自动 handoff 续接'
-      : '该会话仅供查看；工具暂不支持聊天或未安装 CLI';
+  $('message').placeholder = !state.info
+    ? '选择左侧会话后可继续对话…'
+    : state.info.can_chat
+      ? '继续这段对话…（Ctrl / ⌘ + Enter 发送）'
+      : state.info.extra_home
+        ? '外部目录会话仅供查看；请在终端用 cw resume 自动 handoff 续接'
+        : '该会话仅供查看；工具暂不支持聊天或未安装 CLI';
   $('compose-hint').textContent = state.busy
     ? '正在处理，请等待本轮完成…'
     : state.info?.can_chat
