@@ -212,7 +212,7 @@ def test_install_and_uninstall_desktop(monkeypatch, tmp_path, capsys):
     assert desktop.is_file()
     assert icon.is_file()
     content = desktop.read_text(encoding='utf-8')
-    assert 'Name=Crossweave' in content
+    assert 'Name=CrossWeave' in content
     assert 'CW_LLM_WIKI=/home/hunt/Documents/work-wiki' in content
     assert '"CW_VAULT=/home/hunt/Documents/Obsidian Vault"' in content
     assert '/home/hunt/.local/bin/cw gui --home /mnt/win' in content

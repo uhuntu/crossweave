@@ -385,7 +385,7 @@ def install_desktop(home=None):
     desktop = (
         '[Desktop Entry]\n'
         'Type=Application\n'
-        'Name=Crossweave\n'
+        'Name=CrossWeave\n'
         'Comment=Local AI coding-agent session workspace\n'
         f'Exec={exec_line}\n'
         f'Icon={ICON_FILE}\n'
@@ -721,7 +721,7 @@ def cmd_web(args):
                 print(f'cw web: {exc}', file=sys.stderr)
                 return 1
         url = f'http://127.0.0.1:{server.server_port}'
-        print(f'Crossweave: {url}\nCtrl-C stops the local workspace.', flush=True)
+        print(f'CrossWeave: {url}\nCtrl-C stops the local workspace.', flush=True)
         app_proc = None
         if not opts.no_open:
             if opts.app:
