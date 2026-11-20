@@ -74,6 +74,7 @@ from .agy import (
     agy_contains,
     agy_first_user_text,
     agy_handoff_messages,
+    agy_has_custom_title,
     agy_last_message,
     agy_light_records,
     agy_resolve,
@@ -167,6 +168,7 @@ from .zcode import (
     zcode_cli_on_path,
     zcode_contains,
     zcode_handoff_messages,
+    zcode_has_custom_title,
     zcode_last_message,
     zcode_light_records,
     zcode_newest_session_since,
@@ -1442,6 +1444,10 @@ def _has_user_title(r):
         return bool(r.get("path") and _step_display_name(r["path"]))
     if tool == "kimi":
         return bool(r.get("dir") and kimi_has_custom_title(r["dir"]))
+    if tool == "agy":
+        return agy_has_custom_title(r["id"])
+    if tool == "zcode":
+        return zcode_has_custom_title(r["id"])
     return False
 
 

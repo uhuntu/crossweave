@@ -234,6 +234,10 @@ def zcode_session_cwd(sid):
     return row[1] if isinstance(row[1], str) and row[1] else None
 
 
+def zcode_has_custom_title(sid):
+    return any(r and r[0] == "custom" for r in _query("SELECT title_source FROM session WHERE id = ?", (sid,)))
+
+
 def _message_parts(message_id):
     """The typed part rows of one message, in stored order."""
     return [_json(data) for (data,) in _query(

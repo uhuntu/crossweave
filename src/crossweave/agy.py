@@ -279,6 +279,10 @@ def agy_clear_custom_title(sid):
         _write_custom_titles(mapping)
 
 
+def agy_has_custom_title(sid):
+    return bool(sid) and sid in _read_custom_titles()
+
+
 def _is_judge_cwd(cwd):
     return bool(cwd) and os.path.basename(os.path.normpath(cwd)).startswith("cw-judge-")
 

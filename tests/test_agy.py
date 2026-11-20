@@ -199,6 +199,25 @@ def test_rename_agy(store, tmp_path):
     assert agy.agy_light_records()[0]["title"] == "新标题 agy"
 
 
+def test_renamed_agy_handoff_keeps_custom_title(store):
+    src_sid = "bbbbbbbb-1111-2222-3333-444444444444"
+    store.session(src_sid, title="Original source topic")
+    store.session(SID, title="Continue the work from this agy session")
+    store.con.execute("ALTER TABLE conversation_summaries ADD COLUMN raw_summary blob")
+    store.con.commit()
+    store.transcript(SID, [
+        {"step_index": 0, "type": "USER_INPUT",
+         "content": f"<USER_REQUEST>\nContinue the work from this agy session ({src_sid}).\n</USER_REQUEST>"},
+    ])
+
+    rec = next(r for r in agy.agy_light_records() if r["id"] == SID)
+    assert sessions.resolve_row(rec)[5] == "(handoff) Original source topic"
+
+    assert rename._apply({"tool": "agy", "id": SID}, "Custom renamed title") is True
+    rec = next(r for r in agy.agy_light_records() if r["id"] == SID)
+    assert sessions.resolve_row(rec)[5] == "Custom renamed title"
+
+
 def test_delete_agy(store, tmp_path):
     store.session(SID, title="Delete me")
     tpath = store.transcript(SID, [{"step_index": 0, "type": "USER_INPUT", "content": "hi"}])
