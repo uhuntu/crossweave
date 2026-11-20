@@ -204,6 +204,59 @@ def _zcode_delete_db(sid, extra_home=None):
     zcode._drop_connection()
 
 
+def delete_record(record):
+    """Back up and remove `record`'s session files / DB rows. Returns backup path."""
+    tool, sid = record['tool'], record['id']
+    extra_home = record.get('extra_home')
+    paths = _paths(record)
+    if not paths and tool not in ('agy', 'opencode', 'zcode'):
+        raise ValueError(f'{tool} deletion is not supported')
+    moved = []
+    try:
+        root = os.path.join(os.path.dirname(sessions.LIST_CACHE_FILE), 'deleted')
+        os.makedirs(root, exist_ok=True)
+        backup = tempfile.mkdtemp(prefix=tool + '-', dir=root)
+        manifest = {'tool': tool, 'id': sid, 'files': []}
+        if extra_home:
+            manifest['extra_home'] = extra_home
+        if tool == 'agy':
+            row = _agy_backup_row(sid, extra_home)
+            if row is not None:
+                manifest['db_row'] = row
+        elif tool == 'opencode':
+            rows = _opencode_backup_rows(sid, extra_home)
+            if rows is not None:
+                manifest['db_rows'] = rows
+        elif tool == 'zcode':
+            rows = _zcode_backup_rows(sid, extra_home)
+            if rows is not None:
+                manifest['db_rows'] = rows
+        for i, path in enumerate(paths):
+            target = os.path.join(backup, str(i))
+            manifest['files'].append({'original': os.path.abspath(path), 'backup': target})
+        with open(os.path.join(backup, 'manifest.json'), 'w', encoding='utf-8') as fh:
+            json.dump(manifest, fh, ensure_ascii=False, indent=2)
+        for item in manifest['files']:
+            shutil.move(item['original'], item['backup'])
+            moved.append(item)
+        if tool == 'agy':
+            _agy_delete_db(sid, extra_home)
+        elif tool == 'opencode':
+            _opencode_delete_db(sid, extra_home)
+        elif tool == 'zcode':
+            _zcode_delete_db(sid, extra_home)
+    except (OSError, sqlite3.Error):
+        # Restore earlier moves if a multi-file deletion fails partway through.
+        for item in reversed(moved):
+            try:
+                shutil.move(item['backup'], item['original'])
+            except OSError as restore_error:
+                print(f'cw delete: restore failed: {restore_error}', file=sys.stderr)
+        raise
+    codex._codex_path_index = None
+    return backup
+
+
 def cmd_delete(args):
     if args in (['-h'], ['--help']):
         print('Usage: cw delete <N> [-y]  (or cw <N> delete [-y])\n'
@@ -247,50 +300,11 @@ def cmd_delete(args):
         if answer.strip().lower() not in ('y', 'yes'):
             print('Nothing deleted.')
             return 0
-    moved = []
     try:
-        root = os.path.join(os.path.dirname(sessions.LIST_CACHE_FILE), 'deleted')
-        os.makedirs(root, exist_ok=True)
-        backup = tempfile.mkdtemp(prefix=entry['tool'] + '-', dir=root)
-        manifest = {'tool': entry['tool'], 'id': entry['id'], 'files': []}
-        if extra_home:
-            manifest['extra_home'] = extra_home
-        if entry['tool'] == 'agy':
-            row = _agy_backup_row(entry['id'], extra_home)
-            if row is not None:
-                manifest['db_row'] = row
-        elif entry['tool'] == 'opencode':
-            rows = _opencode_backup_rows(entry['id'], extra_home)
-            if rows is not None:
-                manifest['db_rows'] = rows
-        elif entry['tool'] == 'zcode':
-            rows = _zcode_backup_rows(entry['id'], extra_home)
-            if rows is not None:
-                manifest['db_rows'] = rows
-        for i, path in enumerate(paths):
-            target = os.path.join(backup, str(i))
-            manifest['files'].append({'original': os.path.abspath(path), 'backup': target})
-        with open(os.path.join(backup, 'manifest.json'), 'w', encoding='utf-8') as fh:
-            json.dump(manifest, fh, ensure_ascii=False, indent=2)
-        for item in manifest['files']:
-            shutil.move(item['original'], item['backup'])
-            moved.append(item)
-        if entry['tool'] == 'agy':
-            _agy_delete_db(entry['id'], extra_home)
-        elif entry['tool'] == 'opencode':
-            _opencode_delete_db(entry['id'], extra_home)
-        elif entry['tool'] == 'zcode':
-            _zcode_delete_db(entry['id'], extra_home)
-    except (OSError, sqlite3.Error) as exc:
-        # Restore earlier moves if a multi-file deletion fails partway through.
-        for item in reversed(moved):
-            try:
-                shutil.move(item['backup'], item['original'])
-            except OSError as restore_error:
-                print(f'cw delete: restore failed: {restore_error}', file=sys.stderr)
+        backup = delete_record(record)
+    except (OSError, sqlite3.Error, ValueError) as exc:
         print(f'cw delete: {exc}', file=sys.stderr)
         return 1
-    codex._codex_path_index = None
     # Keep the cached numbering: shifting it could delete the wrong row when
     # the user runs another delete against the list still on their screen.
     print(f'Deleted session files. Backup: {backup}')

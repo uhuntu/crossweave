@@ -121,3 +121,71 @@ def test_browser_chat_dispatches_selected_tool(workspace, monkeypatch, tool):
 def test_unsupported_tool_cannot_execute(workspace):
     assert request(workspace, 'POST', '/api/chat',
                    dict(tool='workbuddy', id='sess_test', text='hi'), auth(workspace))[0] == 400
+
+
+def test_rename_and_delete_endpoints_enforce_auth_and_work(workspace, monkeypatch):
+    # Without auth -> 403
+    assert request(workspace, 'POST', '/api/rename', dict(tool='claude', id='s1', title='New'))[0] == 403
+    assert request(workspace, 'POST', '/api/delete', dict(tool='claude', id='s1'))[0] == 403
+
+    monkeypatch.setattr(web, 'rename_session', lambda tool, sid, title: dict(ok=True, title=title.strip()))
+    monkeypatch.setattr(web, 'delete_session', lambda tool, sid: dict(ok=True, backup='/tmp/bak'))
+
+    status, _, body = request(workspace, 'POST', '/api/rename',
+                              dict(tool='claude', id='s1', title='Better title'), auth(workspace))
+    assert status == 200 and json.loads(body) == dict(ok=True, title='Better title')
+
+    status, _, body = request(workspace, 'POST', '/api/delete',
+                              dict(tool='claude', id='s1'), auth(workspace))
+    assert status == 200 and json.loads(body) == dict(ok=True, backup='/tmp/bak')
+
+    # Active session rejected with 409
+    workspace.active.add(('claude', 's1'))
+    assert request(workspace, 'POST', '/api/rename',
+                   dict(tool='claude', id='s1', title='X'), auth(workspace))[0] == 409
+    assert request(workspace, 'POST', '/api/delete',
+                   dict(tool='claude', id='s1'), auth(workspace))[0] == 409
+
+
+def test_conversation_returns_messages_for_all_tools_and_extra_home_flags(monkeypatch, tmp_path):
+    win_home = tmp_path / 'win_user'
+    f = win_home / '.claude' / 'projects' / 'C--Users-Admin' / 'c-win-1.jsonl'
+    f.parent.mkdir(parents=True)
+    f.write_text(
+        json.dumps({'type': 'user', 'cwd': r'C:\Users\Admin', 'message': {'content': 'Hello from Win'}}) + '\n' +
+        json.dumps({'type': 'assistant', 'message': {'content': 'Hi back!'}}) + '\n',
+        encoding='utf-8',
+    )
+    monkeypatch.setenv('CROSSWEAVE_EXTRA_HOMES', str(win_home))
+    info = web.conversation('claude', 'c-win-1')
+    assert info['messages'] == [
+        {'role': 'user', 'text': 'Hello from Win'},
+        {'role': 'assistant', 'text': 'Hi back!'},
+    ]
+    assert info['extra_home'] == str(win_home)
+    assert info['can_chat'] is False
+    assert info['can_rename'] is False
+    assert info['can_delete'] is True
+
+
+def test_open_app_window_and_gui_subcommand(monkeypatch):
+    launched = []
+    monkeypatch.setattr(web, '_find_app_browser', lambda: '/usr/bin/google-chrome')
+    monkeypatch.setattr(web.subprocess, 'Popen', lambda argv, **kw: launched.append(argv))
+    assert web.open_app_window('http://127.0.0.1:8765') is True
+    assert launched == [['/usr/bin/google-chrome', '--app=http://127.0.0.1:8765']]
+
+    opened = []
+    monkeypatch.setattr(web, '_find_app_browser', lambda: None)
+    monkeypatch.setattr(web.webbrowser, 'open', lambda url: opened.append(url))
+    assert web.open_app_window('http://127.0.0.1:8765') is False
+    assert opened == ['http://127.0.0.1:8765']
+
+    from crossweave import cli
+    seen = []
+    monkeypatch.setattr(web, 'cmd_web', lambda args: (seen.append(args), 0)[1])
+    monkeypatch.setattr('sys.argv', ['cw', 'gui', '--home', '/mnt/win'])
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+    assert exc.value.code == 0
+    assert seen == [['--app', '--home', '/mnt/win']]

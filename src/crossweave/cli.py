@@ -149,7 +149,7 @@ Examples:
 # this list, and the test asserts it matches what main() actually dispatches,
 # so adding a subcommand cannot leave the message stale the way it was when
 # `stats` and `step` were both missing from it.
-SUBCOMMANDS = ("sessions", "full", "search", "resume", "show", "export", "chat", "web", "update", "stats", "doctor", "alias", "machines", "rename", "delete", "note", "context", "wiki", "ask", "ui")
+SUBCOMMANDS = ("sessions", "full", "search", "resume", "show", "export", "chat", "web", "gui", "update", "stats", "doctor", "alias", "machines", "rename", "delete", "note", "context", "wiki", "ask", "ui")
 
 
 def usage(name="cw"):
@@ -558,6 +558,8 @@ def main():
         sys.exit(chat.cmd_chat(rest))
     if tool == "web":
         sys.exit(web.cmd_web(rest))
+    if tool == "gui":
+        sys.exit(web.cmd_web(["--app", *rest]))
     if sessions.ROW_NUMBER_RE.match(tool):
         # `cw <N>` is shorthand for `cw resume <N>`.
         if rest and rest[0] == "delete":
