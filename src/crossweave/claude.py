@@ -198,15 +198,44 @@ def claude_custom_title(path):
     it marks a name the user chose. "New session" is the default, not a
     choice, and a seed restatement is a handoff's own label."""
     custom = None
+    needle = b'"custom-title"'
+    chunk_size = 131072
     try:
-        with common.open_text(path) as fh:
-            for line in fh:
-                if '"custom-title"' not in line:
-                    continue
-                try:
-                    custom = common._as_title(json.loads(line).get("customTitle")) or custom
-                except Exception:
-                    pass
+        with open(path, "rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            pos = fh.tell()
+            carry = b""
+            while pos > 0:
+                step = min(chunk_size, pos)
+                pos -= step
+                fh.seek(pos)
+                buf = fh.read(step) + carry
+                idx = buf.rfind(needle)
+                while idx != -1:
+                    ls = buf.rfind(b"\n", 0, idx)
+                    if ls == -1 and pos > 0:
+                        # This line began before the current chunk; carry its
+                        # prefix into the next earlier read so it parses whole.
+                        break
+                    le = buf.find(b"\n", idx)
+                    raw = buf[ls + 1 : len(buf) if le == -1 else le]
+                    text = raw.decode("utf-8", errors="replace")
+                    if pos == 0 and ls == -1:
+                        text = text.lstrip("\ufeff")
+                    try:
+                        d = json.loads(text)
+                    except Exception:
+                        d = None
+                    if isinstance(d, dict) and d.get("type") == "custom-title":
+                        val = common._as_title(d.get("customTitle"))
+                        if val:
+                            custom = val
+                            break
+                    idx = buf.rfind(needle, 0, idx)
+                if custom is not None:
+                    break
+                nl = buf.find(b"\n")
+                carry = buf if nl == -1 else buf[: nl + 1]
     except OSError:
         return None
     custom = common._as_title(custom)

@@ -9,11 +9,12 @@ launch-time hint.
 """
 
 import json
+import os
 import re
 
 import pytest
 
-from crossweave import cli, codex, render, sessions
+from crossweave import claude, cli, codex, render, sessions
 
 
 def _row(tool, sid, title, cwd="/work", when="2h ago"):
@@ -59,6 +60,187 @@ def test_a_clear_into_another_directory_is_not_a_continuation(tmp_path):
     here.mkdir()
     path = _claude_file(here, B, prior=A)
     assert sessions.session_parents({"tool": "claude", "id": B, "path": str(path)}) == []
+
+
+def _write_claude_jsonl(folder, sid, records):
+    path = folder / f"{sid}.jsonl"
+    path.write_text("".join(json.dumps(d) + "\n" for d in records), encoding="utf-8")
+    return path
+
+
+def test_claude_opening_clear_links_inherited_custom_title_without_uuid(tmp_path):
+    title = "OEMConfig vc9 静态IP配置与重启持久化测试"
+    p_old = _write_claude_jsonl(tmp_path, A, [
+        {"type": "custom-title", "customTitle": title, "sessionId": A},
+        {"type": "user", "timestamp": "2026-11-10T08:06:49.413Z",
+         "message": {"role": "user", "content": "start work"}},
+        {"type": "assistant", "timestamp": "2026-11-10T08:07:00.000Z",
+         "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}},
+    ])
+    p_new = _write_claude_jsonl(tmp_path, B, [
+        {"type": "custom-title", "customTitle": title, "sessionId": B},
+        {"type": "mode", "mode": "normal", "sessionId": B},
+        {"type": "user", "isMeta": True, "timestamp": "2026-11-16T04:04:41.921Z",
+         "message": {"role": "user", "content": "<local-command-caveat>...</local-command-caveat>"}},
+        {"type": "user", "timestamp": "2026-11-16T04:04:41.872Z",
+         "message": {"role": "user", "content": "<command-name>/clear</command-name>\n<command-message>clear</command-message>"}},
+        {"type": "user", "timestamp": "2026-11-16T04:04:47.932Z",
+         "message": {"role": "user", "content": "Hello"}},
+    ])
+    # Simulate resuming A later so A's file mtime is newer than B's.
+    os.utime(p_new, (1_700_000_000, 1_700_000_000))
+    os.utime(p_old, (1_800_000_000, 1_800_000_000))
+
+    assert sessions.claude_continues(str(p_new)) is None
+    assert sessions.session_parents({"tool": "claude", "id": A, "path": str(p_old)}) == []
+    assert sessions.session_parents({"tool": "claude", "id": B, "path": str(p_new)}) == [("claude", A)]
+
+
+def test_claude_opening_clear_does_not_link_after_manual_rename_away(tmp_path):
+    old_title = "OEMConfig vc9 静态IP配置与重启持久化测试"
+    _write_claude_jsonl(tmp_path, A, [
+        {"type": "custom-title", "customTitle": old_title, "sessionId": A},
+        {"type": "user", "timestamp": "2026-11-10T08:06:49.413Z",
+         "message": {"role": "user", "content": "start work"}},
+    ])
+    p_new = _write_claude_jsonl(tmp_path, B, [
+        {"type": "custom-title", "customTitle": old_title, "sessionId": B},
+        {"type": "user", "timestamp": "2026-11-16T04:04:41.872Z",
+         "message": {"role": "user", "content": "<command-name>/clear</command-name>"}},
+        {"type": "user", "timestamp": "2026-11-16T04:05:00.000Z",
+         "message": {"role": "user", "content": "new unrelated task"}},
+        {"type": "custom-title", "customTitle": "Renamed unrelated task", "sessionId": B},
+    ])
+    assert sessions.session_parents({"tool": "claude", "id": B, "path": str(p_new)}) == []
+
+
+@pytest.mark.parametrize("title", ["New session", "Session greeting"])
+def test_claude_opening_clear_skips_generic_titles(tmp_path, title):
+    _write_claude_jsonl(tmp_path, A, [
+        {"type": "custom-title", "customTitle": title, "sessionId": A},
+        {"type": "user", "timestamp": "2026-11-10T08:06:49.413Z",
+         "message": {"role": "user", "content": "hello"}},
+    ])
+    p_new = _write_claude_jsonl(tmp_path, B, [
+        {"type": "custom-title", "customTitle": title, "sessionId": B},
+        {"type": "user", "timestamp": "2026-11-16T04:04:41.872Z",
+         "message": {"role": "user", "content": "<command-name>/clear</command-name>"}},
+        {"type": "user", "timestamp": "2026-11-16T04:04:47.000Z",
+         "message": {"role": "user", "content": "hello"}},
+    ])
+    assert sessions.session_parents({"tool": "claude", "id": B, "path": str(p_new)}) == []
+
+
+def test_claude_mid_session_clear_or_quoted_clear_does_not_link_same_title(tmp_path):
+    title = "Quick kimi-stale-watch timer check"
+    _write_claude_jsonl(tmp_path, A, [
+        {"type": "custom-title", "customTitle": title, "sessionId": A},
+        {"type": "user", "timestamp": "2026-11-10T08:00:00.000Z",
+         "message": {"role": "user", "content": "check timer"}},
+    ])
+    # Mid-session /clear after a real user prompt.
+    c_mid = "11111111-1111-4111-8111-111111111111"
+    p_mid = _write_claude_jsonl(tmp_path, c_mid, [
+        {"type": "custom-title", "customTitle": title, "sessionId": c_mid},
+        {"type": "user", "timestamp": "2026-11-12T08:00:00.000Z",
+         "message": {"role": "user", "content": "check timer again"}},
+        {"type": "user", "timestamp": "2026-11-12T08:05:00.000Z",
+         "message": {"role": "user", "content": "<command-name>/clear</command-name>"}},
+    ])
+    # tool_result list content mentioning <command-name>/clear</command-name>.
+    c_tool = "22222222-2222-4222-8222-222222222222"
+    p_tool = _write_claude_jsonl(tmp_path, c_tool, [
+        {"type": "custom-title", "customTitle": title, "sessionId": c_tool},
+        {"type": "user", "timestamp": "2026-11-13T08:00:00.000Z",
+         "message": {"role": "user", "content": [
+             {"type": "tool_result", "tool_use_id": "t1", "content": "<command-name>/clear</command-name>"}
+         ]}},
+    ])
+    assert sessions.session_parents({"tool": "claude", "id": c_mid, "path": str(p_mid)}) == []
+    assert sessions.session_parents({"tool": "claude", "id": c_tool, "path": str(p_tool)}) == []
+
+
+def test_explicit_cross_dir_clear_does_not_fall_back_to_same_dir_title(tmp_path):
+    title = "DevGetter Google Play 上架流程"
+    other = tmp_path / "other"
+    other.mkdir()
+    _write_claude_jsonl(other, A, [
+        {"type": "custom-title", "customTitle": title, "sessionId": A},
+        {"type": "user", "timestamp": "2026-11-01T08:00:00.000Z",
+         "message": {"role": "user", "content": "other project"}},
+    ])
+    here = tmp_path / "here"
+    here.mkdir()
+    unrelated = "33333333-3333-4333-8333-333333333333"
+    _write_claude_jsonl(here, unrelated, [
+        {"type": "custom-title", "customTitle": title, "sessionId": unrelated},
+        {"type": "user", "timestamp": "2026-11-02T08:00:00.000Z",
+         "message": {"role": "user", "content": "unrelated here"}},
+    ])
+    p_new = _write_claude_jsonl(here, B, [
+        {"type": "custom-title", "customTitle": title, "sessionId": B},
+        {"type": "user", "timestamp": "2026-11-05T08:00:00.000Z",
+         "message": {"role": "user", "content": "<command-name>/clear</command-name>"}},
+        {"type": "user", "timestamp": "2026-11-05T08:00:01.000Z",
+         "message": {"role": "user", "content": (
+             "<system-reminder> The user started this conversation instead of resuming an "
+             f"earlier, inactive one (session {A}), so its history was not re-sent.")}},
+    ])
+    assert sessions.session_parents({"tool": "claude", "id": B, "path": str(p_new)}) == []
+
+
+def test_claude_opening_clear_skips_empty_intermediate_sibling(tmp_path):
+    title = "OEMConfig vc9 静态IP配置与重启持久化测试"
+    empty_id = "44444444-4444-4444-8444-444444444444"
+    _write_claude_jsonl(tmp_path, A, [
+        {"type": "custom-title", "customTitle": title, "sessionId": A},
+        {"type": "user", "timestamp": "2026-11-10T08:00:00.000Z",
+         "message": {"role": "user", "content": "real work"}},
+    ])
+    # Empty intermediate /clear shell (only non-message command records, no assistant/user text).
+    _write_claude_jsonl(tmp_path, empty_id, [
+        {"type": "custom-title", "customTitle": title, "sessionId": empty_id},
+        {"type": "user", "timestamp": "2026-11-12T08:00:00.000Z",
+         "message": {"role": "user", "content": "<command-name>/clear</command-name>"}},
+    ])
+    p_new = _write_claude_jsonl(tmp_path, B, [
+        {"type": "custom-title", "customTitle": title, "sessionId": B},
+        {"type": "user", "timestamp": "2026-11-16T08:00:00.000Z",
+         "message": {"role": "user", "content": "<command-name>/clear</command-name>"}},
+        {"type": "user", "timestamp": "2026-11-16T08:00:05.000Z",
+         "message": {"role": "user", "content": "continue work"}},
+    ])
+    assert sessions.session_parents({"tool": "claude", "id": B, "path": str(p_new)}) == [("claude", A)]
+
+
+def test_claude_handoff_source_skips_leading_file_history_snapshots(tmp_path):
+    src_id = "session_80a9a7ce-2fd4-4925-a723-1decb313393d"
+    records = [{"type": "custom-title", "customTitle": "OEMConfig", "sessionId": A}]
+    records.extend({"type": "file-history-snapshot", "messageId": f"m{i}", "snapshot": {}} for i in range(75))
+    records.append({
+        "type": "user",
+        "timestamp": "2026-11-10T08:06:49.413Z",
+        "message": {"role": "user", "content": f"Continue the work from this kimi session ({src_id})."},
+    })
+    p = _write_claude_jsonl(tmp_path, A, records)
+    assert sessions.handoff_source(str(p), "claude") == ("kimi", src_id)
+
+
+def test_claude_custom_title_reverse_scan_across_chunk_boundary(tmp_path):
+    p = tmp_path / f"{A}.jsonl"
+    padding_line = json.dumps({"type": "assistant", "text": "x" * 2048}) + "\n"
+    # Place the custom-title well before the trailing 128 KB chunk boundary.
+    lines = [
+        json.dumps({"type": "custom-title", "customTitle": "Real Custom Title", "sessionId": A}) + "\n",
+    ]
+    lines.extend([padding_line] * 85)  # ~175 KB
+    # Trailing noise that mentions "custom-title" inside a non-custom-title record, plus malformed/empty records.
+    lines.append(json.dumps({"type": "assistant", "text": 'discussion about "custom-title" field'}) + "\n")
+    lines.append(json.dumps({"type": "custom-title", "customTitle": "   ", "sessionId": A}) + "\n")
+    lines.append('{"type":"custom-title", "broken json\n')
+    p.write_text("".join(lines), encoding="utf-8")
+    assert p.stat().st_size > 150 * 1024
+    assert claude.claude_custom_title(str(p)) == "Real Custom Title"
 
 
 def test_a_codex_subagent_is_not_the_users_fork(monkeypatch):

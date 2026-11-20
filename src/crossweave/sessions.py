@@ -16,8 +16,10 @@ a module of its own: every step of it (exec_or_die, the seed runs, the
 session pickers) is patched through this namespace, and moving it would
 trade one long file for a circular import.
 """
+import calendar
 import codecs
 import contextlib
+import datetime
 import glob
 import json
 import os
@@ -83,6 +85,7 @@ from .agy import (
     agy_snippet,
 )
 from .claude import (
+    _CLAUDE_NON_MESSAGE_PREFIXES,
     claude_custom_title,
     claude_handoff_messages,
     claude_is_empty,
@@ -1250,7 +1253,7 @@ def _handoff_seed_texts(tool, d):
     return []
 
 
-def handoff_source(path, tool, limit=60):
+def handoff_source(path, tool, limit=200):
     """(source_tool, source_id) if the transcript at `path` was started by
     `cw handoff`, else None.
 
@@ -1259,10 +1262,15 @@ def handoff_source(path, tool, limit=60):
     merely discusses a handoff, or one whose history another tool copied, is
     not mistaken for one."""
     try:
+        seen = 0
+        raw_cap = max(limit, 2000)
         with open_text(path) as fh:
             for i, line in enumerate(fh):
-                if i >= limit:
+                if i >= raw_cap or seen >= limit:
                     break
+                if tool == "claude" and '"file-history-snapshot"' in line:
+                    continue
+                seen += 1
                 try:
                     d = json.loads(line)
                 except Exception:
@@ -1305,24 +1313,188 @@ def _handoff_source_of(r):
 CLAUDE_CONTINUES_RE = re.compile(
     r"instead of resuming an earlier, inactive one \(session ([0-9a-f]{8}-[0-9a-f-]{27})\)")
 CLAUDE_CONTINUES_LINES = 12
+CLAUDE_CLEAR_PREFIX = "<command-name>/clear</command-name>"
 
 
-def claude_continues(path):
-    """The id of the Claude session this one was started to follow, or
-    None -- see CLAUDE_CONTINUES_RE."""
+def _parse_iso_ts(value):
+    """Parse an ISO-8601 timestamp string to UTC epoch seconds, or None."""
+    if not isinstance(value, str) or len(value) < 19:
+        return None
+    s = value.strip()
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    try:
+        dt = datetime.datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=datetime.timezone.utc)
+        return dt.timestamp()
+    except ValueError:
+        pass
+    try:
+        return float(calendar.timegm(time.strptime(s[:19], "%Y-%m-%dT%H:%M:%S")))
+    except ValueError:
+        return None
+
+
+def _claude_first_timestamp(path):
+    """First parseable top-level ISO timestamp near the head of a Claude JSONL."""
+    try:
+        seen = 0
+        with open_text(path) as fh:
+            for i, line in enumerate(fh):
+                if i >= 2000 or seen >= TITLE_SCAN_LINES:
+                    break
+                if '"file-history-snapshot"' in line:
+                    continue
+                seen += 1
+                if '"timestamp"' not in line:
+                    continue
+                try:
+                    d = json.loads(line)
+                except Exception:
+                    continue
+                if isinstance(d, dict):
+                    ts = _parse_iso_ts(d.get("timestamp"))
+                    if ts is not None:
+                        return ts
+    except OSError:
+        pass
+    return None
+
+
+def _claude_head_continuation(path):
+    """Scan the head of a Claude transcript once for continuation clues.
+
+    Returns `(explicit_prior, clear_title, clear_ts)`:
+      - `explicit_prior` comes from CLAUDE_CONTINUES_RE when present.
+      - Otherwise, if an opening `/clear` (before any genuine user or assistant
+        turn) appears alongside a head `custom-title` copied from the cleared
+        session, returns `(None, clear_title, clear_ts)`.
+    """
+    explicit = None
+    head_custom_title = None
+    clear_title = None
+    clear_ts = None
+    saw_real_turn = False
     try:
         with open_text(path) as fh:
             for i, line in enumerate(fh):
                 if i >= CLAUDE_CONTINUES_LINES:
                     break
+                if clear_title is None and '"custom-title"' in line:
+                    try:
+                        d = json.loads(line)
+                    except Exception:
+                        d = None
+                    if isinstance(d, dict) and d.get("type") == "custom-title":
+                        head_custom_title = _as_title(d.get("customTitle")) or head_custom_title
+                        continue
+                if clear_title is None and not saw_real_turn and (
+                    '"type":"assistant"' in line or '"type": "assistant"' in line
+                ):
+                    try:
+                        d = json.loads(line)
+                    except Exception:
+                        d = None
+                    if isinstance(d, dict) and d.get("type") == "assistant":
+                        saw_real_turn = True
+                        continue
                 if '"type":"user"' not in line and '"type": "user"' not in line:
                     continue
                 m = CLAUDE_CONTINUES_RE.search(line)
                 if m:
-                    return m.group(1)
+                    explicit = m.group(1)
+                    break
+                if clear_title is None and not saw_real_turn:
+                    try:
+                        d = json.loads(line)
+                    except Exception:
+                        continue
+                    if not isinstance(d, dict) or d.get("type") != "user" or d.get("isMeta"):
+                        continue
+                    content = dict_field(d, "message").get("content")
+                    if isinstance(content, str):
+                        stripped = content.lstrip()
+                        if stripped.startswith(CLAUDE_CLEAR_PREFIX):
+                            if head_custom_title:
+                                clear_title = head_custom_title
+                                clear_ts = _parse_iso_ts(d.get("timestamp"))
+                            continue
+                        if stripped and not stripped.startswith(_CLAUDE_NON_MESSAGE_PREFIXES):
+                            saw_real_turn = True
+                    else:
+                        text = (extract_text_from_content(content) or "").strip()
+                        if text and not text.startswith(_CLAUDE_NON_MESSAGE_PREFIXES):
+                            saw_real_turn = True
     except OSError:
         pass
-    return None
+    if explicit:
+        return explicit, None, None
+    return None, clear_title, clear_ts
+
+
+def claude_continues(path):
+    """The id of the Claude session this one was started to follow, or
+    None -- see CLAUDE_CONTINUES_RE."""
+    return _claude_head_continuation(path)[0]
+
+
+def _claude_clear_inherited_parent(path, clear_title, clear_ts):
+    """Find the same-directory Claude predecessor whose `custom-title` was
+    inherited across an active-session `/clear` without an explicit UUID."""
+    title = _as_title(clear_title)
+    if not title or title == "New session" or is_seed_restatement(title) or title_says_nothing(title):
+        return None
+    if claude_custom_title(path) != title:
+        return None
+    proj_dir = os.path.dirname(path)
+    my_name = os.path.basename(path)
+    my_sid = os.path.splitext(my_name)[0]
+    try:
+        my_mtime = os.stat(path).st_mtime
+    except OSError:
+        return None
+    try:
+        entries = list(os.scandir(proj_dir))
+    except OSError:
+        return None
+
+    best_key = None
+    best_sid = None
+    for entry in entries:
+        name = entry.name
+        if not name.endswith(".jsonl") or name == my_name:
+            continue
+        cand_path = entry.path
+        try:
+            cand_mtime = entry.stat().st_mtime
+        except OSError:
+            continue
+        if claude_custom_title(cand_path) != title:
+            continue
+        if claude_is_empty(cand_path):
+            continue
+        cand_explicit, cand_clear_title, _ = _claude_head_continuation(cand_path)
+        cand_is_clear = bool(cand_explicit or cand_clear_title)
+        cand_start = _claude_first_timestamp(cand_path)
+        cand_sid = os.path.splitext(name)[0]
+        if clear_ts is not None and cand_start is not None:
+            if cand_start > clear_ts:
+                continue
+            if cand_start == clear_ts and cand_is_clear and cand_sid >= my_sid:
+                continue
+        elif cand_is_clear and (cand_mtime, cand_sid) >= (my_mtime, my_sid):
+            continue
+        key = (
+            cand_start if cand_start is not None else -1.0,
+            0 if cand_is_clear else 1,
+            cand_mtime,
+            cand_sid,
+        )
+        if best_key is None or key > best_key:
+            best_key = key
+            best_sid = cand_sid
+    return best_sid
 
 
 def session_parents(r):
@@ -1336,14 +1508,19 @@ def session_parents(r):
     if source:
         parents.append(source)
     if r["tool"] == "claude" and r.get("path"):
-        prior = claude_continues(r["path"])
+        prior, clear_title, clear_ts = _claude_head_continuation(r["path"])
         # Only within one directory: a /clear is also how a session is
         # cleared to start something unrelated, and the one that moved to
         # another project (TesSmartUpdater after DevGetter) is that. Claude
         # files a session under its directory, so the predecessor's file
         # sitting next to this one is the same-directory test.
-        if prior and os.path.exists(os.path.join(os.path.dirname(r["path"]), prior + ".jsonl")):
-            parents.append(("claude", prior))
+        if prior:
+            if os.path.exists(os.path.join(os.path.dirname(r["path"]), prior + ".jsonl")):
+                parents.append(("claude", prior))
+        elif clear_title:
+            inferred = _claude_clear_inherited_parent(r["path"], clear_title, clear_ts)
+            if inferred:
+                parents.append(("claude", inferred))
     if r["tool"] == "codex":
         fork = codex_fork_parent(r["id"])
         if fork:
