@@ -3,7 +3,8 @@ const state = {
   mode: 'sessions',
   rows: [], selected: null, info: null,
   wiki: { configured: false, online: false, path: '', name: '', pages: 0 },
-  wikiPages: [], wikiSelected: null, wikiInfo: null, collapsedCats: new Set(),
+  wikiPages: [], wikiSelected: null, wikiInfo: null,
+  collapsedCats: new Set(), expandedTopics: new Set(),
   busy: false, version: 0, initHomeApplied: false,
 };
 const token = document.querySelector('meta[name="cw-token"]').content;
@@ -72,26 +73,84 @@ function filtered() {
   });
 }
 
+function topicKey(r) {
+  return r.topic || `${r.tool}:${r.id}`;
+}
+
+function makeSessionButton(r, isMember, hasTopic) {
+  const active = state.selected?.id === r.id && state.selected?.tool === r.tool;
+  const cls = 'session'
+    + (active ? ' active' : '')
+    + (isMember ? ' session-member' : '')
+    + (hasTopic ? ' has-topic' : '');
+  const b = el('button', cls);
+  b.type = 'button';
+  b.disabled = state.busy;
+  b.setAttribute('aria-pressed', String(active));
+  b.title = `${r.title}\n${r.cwd}${r.extra_home ? '\n来源: ' + r.extra_home : ''}`;
+  b.append(el('div', 'session-title', r.title || '未命名会话'));
+  const meta = el('div', 'session-meta');
+  meta.append(el('span', 'tool-badge', r.tool));
+  if (r.extra_home) meta.append(el('span', 'home-badge', homeBadgeText(r.extra_home)));
+  meta.append(el('span', 'session-path', shortPath(r.cwd)), el('span', 'session-age', r.age));
+  b.append(meta);
+  b.onclick = () => select(r);
+  return b;
+}
+
 function drawList() {
   const rows = filtered();
-  $('count').textContent = `${rows.length} 个会话`;
   $('sessions').replaceChildren();
-  for (const r of rows) {
-    const active = state.selected?.id === r.id && state.selected?.tool === r.tool;
-    const b = el('button', 'session' + (active ? ' active' : ''));
-    b.disabled = state.busy;
-    b.setAttribute('aria-pressed', String(active));
-    b.title = `${r.title}\n${r.cwd}${r.extra_home ? '\n来源: ' + r.extra_home : ''}`;
-    b.append(el('div', 'session-title', r.title || '未命名会话'));
-    const meta = el('div', 'session-meta');
-    meta.append(el('span', 'tool-badge', r.tool));
-    if (r.extra_home) meta.append(el('span', 'home-badge', homeBadgeText(r.extra_home)));
-    meta.append(el('span', 'session-path', shortPath(r.cwd)), el('span', 'session-age', r.age));
-    b.append(meta);
-    b.onclick = () => select(r);
-    $('sessions').append(b);
+  if (!rows.length) {
+    $('count').textContent = '0 个会话';
+    $('sessions').append(el('p', 'list-empty', '没有匹配的会话。试试其他关键词。'));
+    return;
   }
-  if (!rows.length) $('sessions').append(el('p', 'list-empty', '没有匹配的会话。试试其他关键词。'));
+  const byKey = new Map();
+  const groups = [];
+  for (const r of rows) {
+    const key = topicKey(r);
+    let grp = byKey.get(key);
+    if (!grp) {
+      grp = { key, members: [] };
+      byKey.set(key, grp);
+      groups.push(grp);
+    }
+    grp.members.push(r);
+  }
+  $('count').textContent = groups.length < rows.length
+    ? `${groups.length} 个话题 (${rows.length})`
+    : `${rows.length} 个会话`;
+
+  for (const grp of groups) {
+    if (grp.members.length === 1) {
+      $('sessions').append(makeSessionButton(grp.members[0], false, false));
+      continue;
+    }
+    const head = grp.members[0];
+    const expanded = state.expandedTopics.has(grp.key);
+    const wrap = el('div', 'session-wrap');
+    wrap.append(makeSessionButton(head, false, true));
+    const toggle = el('button', 'topic-toggle' + (expanded ? ' expanded' : ''), `⧉ ${grp.members.length}`);
+    toggle.type = 'button';
+    toggle.disabled = state.busy;
+    toggle.setAttribute('aria-expanded', String(expanded));
+    toggle.title = `展开/收起该话题下的 ${grp.members.length} 个会话`;
+    toggle.onclick = () => {
+      if (state.expandedTopics.has(grp.key)) state.expandedTopics.delete(grp.key);
+      else state.expandedTopics.add(grp.key);
+      drawList();
+    };
+    wrap.append(toggle);
+    $('sessions').append(wrap);
+    if (expanded) {
+      const box = el('div', 'topic-members');
+      for (const m of grp.members.slice(1)) {
+        box.append(makeSessionButton(m, true, false));
+      }
+      $('sessions').append(box);
+    }
+  }
 }
 
 function composer() {
@@ -331,6 +390,11 @@ async function select(row) {
   const version = ++state.version;
   state.selected = row;
   state.info = null;
+  const tKey = topicKey(row);
+  const first = state.rows.find(r => topicKey(r) === tKey);
+  if (first && (first.id !== row.id || first.tool !== row.tool)) {
+    state.expandedTopics.add(tKey);
+  }
   drawList();
   composer();
   $('title').textContent = row.title || '未命名会话';

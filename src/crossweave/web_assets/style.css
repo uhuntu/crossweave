@@ -109,3 +109,14 @@
 .dialog-spacer{flex:1}
 .dialog-btn.propose{color:#1f6956;border-color:#cfe0d4;background:#f3f8f4}
 .dialog-btn.propose:hover:not(:disabled){background:#e7f2ea}
+.session-wrap{position:relative;margin-bottom:5px}
+.session-wrap>.session{margin-bottom:0}
+.session.has-topic .session-meta{padding-right:54px}
+.topic-toggle{position:absolute;right:10px;bottom:11px;border:1px solid #cfe0d4;background:#ebf4ee;color:#1f6956;border-radius:999px;padding:1px 7px;font-size:10px;line-height:1.5;font-weight:600}
+.topic-toggle:hover{background:#dcebe1;border-color:#b5d0be}
+.topic-toggle.expanded{background:#1f6956;border-color:#1f6956;color:#fff}
+.topic-members{margin:2px 0 8px 14px;padding-left:8px;border-left:2px solid #d5e1d6}
+.session.session-member{padding:9px 11px;margin-bottom:3px}
+.session.session-member .session-title{font-size:11px;font-weight:500;-webkit-line-clamp:1}
+.session.session-member .session-meta{margin-top:5px}
+@media(max-width:650px){.session-wrap{flex-shrink:0;margin:0}}

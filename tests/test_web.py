@@ -330,3 +330,26 @@ def test_injected_system_context_marked_for_folding(monkeypatch):
         assert info['messages'][idx].get('system') is True
     assert 'system' not in info['messages'][7]
     assert 'system' not in info['messages'][8]
+
+
+def test_list_sessions_assigns_shared_topic_to_linked_sessions(monkeypatch, tmp_path):
+    items = [
+        (('claude', 'new-s', '1m ago', 'new-s', str(tmp_path), '(handoff) Topic A'),
+         {'tool': 'claude', 'id': 'new-s', 'ts': 300, 'path': None}),
+        (('codex', 'other-s', '2m ago', 'other-s', str(tmp_path), 'Topic B'),
+         {'tool': 'codex', 'id': 'other-s', 'ts': 200, 'path': None}),
+        (('kimi', 'old-s', '5m ago', 'old-s', str(tmp_path), 'Topic A'),
+         {'tool': 'kimi', 'id': 'old-s', 'ts': 100, 'dir': None}),
+    ]
+    monkeypatch.setattr(web.ui, 'gather', lambda: items)
+    monkeypatch.setattr(
+        web.sessions,
+        'link_groups',
+        lambda records: {('claude', 'new-s'): 0, ('codex', 'other-s'): 1, ('kimi', 'old-s'): 0},
+    )
+
+    rows = web.list_sessions()
+    by_id = {r['id']: r for r in rows}
+    assert by_id['new-s']['topic'] == 'old-s'
+    assert by_id['old-s']['topic'] == 'old-s'
+    assert by_id['other-s']['topic'] == 'other-s'

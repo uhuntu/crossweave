@@ -59,9 +59,24 @@ def _session_messages(tool, sid, record):
 
 
 def list_sessions():
-    return [dict(tool=row[0], id=row[1], age=row[2], cwd=row[4], title=row[5],
-                 extra_home=rec.get('extra_home') or '')
-            for row, rec in ui.gather()]
+    items = ui.gather()
+    records = [dict(rec, tool=row[0], id=row[1]) for row, rec in items]
+    group = sessions.link_groups(records)
+    oldest = {}
+    for r in records:  # newest first, so last seen is oldest
+        oldest[group[(r['tool'], r['id'])]] = r['id']
+    return [
+        dict(
+            tool=row[0],
+            id=row[1],
+            age=row[2],
+            cwd=row[4],
+            title=row[5],
+            extra_home=rec.get('extra_home') or '',
+            topic=oldest[group[(row[0], row[1])]],
+        )
+        for row, rec in items
+    ]
 
 
 _SYSTEM_CONTEXT_PREFIXES = (
