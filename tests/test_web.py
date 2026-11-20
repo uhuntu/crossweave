@@ -127,10 +127,16 @@ def test_unsupported_tool_cannot_execute(workspace):
 def test_rename_and_delete_endpoints_enforce_auth_and_work(workspace, monkeypatch):
     # Without auth -> 403
     assert request(workspace, 'POST', '/api/rename', dict(tool='claude', id='s1', title='New'))[0] == 403
+    assert request(workspace, 'POST', '/api/rename/propose', dict(tool='claude', id='s1'))[0] == 403
     assert request(workspace, 'POST', '/api/delete', dict(tool='claude', id='s1'))[0] == 403
 
     monkeypatch.setattr(web, 'rename_session', lambda tool, sid, title: dict(ok=True, title=title.strip()))
+    monkeypatch.setattr(web, 'propose_session_title', lambda tool, sid: dict(ok=True, title='AI Proposed Title'))
     monkeypatch.setattr(web, 'delete_session', lambda tool, sid: dict(ok=True, backup='/tmp/bak'))
+
+    status, _, body = request(workspace, 'POST', '/api/rename/propose',
+                              dict(tool='claude', id='s1'), auth(workspace))
+    assert status == 200 and json.loads(body) == dict(ok=True, title='AI Proposed Title')
 
     status, _, body = request(workspace, 'POST', '/api/rename',
                               dict(tool='claude', id='s1', title='Better title'), auth(workspace))

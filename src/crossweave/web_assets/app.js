@@ -973,27 +973,42 @@ $('copy').onclick = () => copyText($('show-command').textContent, '已复制原�
 $('copy-resume').onclick = () => copyText($('resume-command').textContent, '已复制终端恢复命令');
 
 // In-app dialog replacing window.prompt / window.confirm.
-function askDialog({ title, message = '', value = null, okText = '确定', danger = false }) {
+function askDialog({ title, message = '', value = null, okText = '确定', danger = false, propose = null }) {
   return new Promise(resolve => {
     const backdrop = $('dialog-backdrop');
     const input = $('dialog-input');
     const ok = $('dialog-ok');
+    const cancel = $('dialog-cancel');
+    const proposeBtn = $('dialog-propose');
+    const errEl = $('dialog-error');
+    let busy = false;
+
     $('dialog-title').textContent = title;
     $('dialog-message').textContent = message;
     $('dialog-message').hidden = !message;
     input.hidden = value === null;
     input.value = value || '';
+    input.disabled = false;
+    errEl.hidden = true;
+    errEl.textContent = '';
     ok.textContent = okText;
+    ok.disabled = false;
     ok.classList.toggle('danger', danger);
+    cancel.disabled = false;
+    proposeBtn.hidden = !propose;
+    proposeBtn.disabled = false;
+    proposeBtn.textContent = '✨ AI 拟定';
     backdrop.hidden = false;
     (value === null ? ok : input).focus();
     if (value !== null) input.select();
 
     const finish = result => {
+      if (busy) return;
       backdrop.hidden = true;
       backdrop.onclick = null;
       $('dialog-form').onsubmit = null;
-      $('dialog-cancel').onclick = null;
+      cancel.onclick = null;
+      proposeBtn.onclick = null;
       window.removeEventListener('keydown', onKey, true);
       resolve(result);
     };
@@ -1002,10 +1017,39 @@ function askDialog({ title, message = '', value = null, okText = '确定', dange
     };
     window.addEventListener('keydown', onKey, true);
     backdrop.onclick = e => { if (e.target === backdrop) finish(null); };
-    $('dialog-cancel').onclick = () => finish(null);
+    cancel.onclick = () => finish(null);
+    proposeBtn.onclick = async () => {
+      if (!propose || busy) return;
+      busy = true;
+      errEl.hidden = true;
+      errEl.textContent = '';
+      proposeBtn.disabled = true;
+      proposeBtn.textContent = '拟定中…';
+      input.disabled = true;
+      ok.disabled = true;
+      cancel.disabled = true;
+      try {
+        const proposed = await propose();
+        if (proposed) {
+          input.value = proposed;
+        }
+      } catch (e) {
+        errEl.textContent = e.message || 'AI 拟定失败';
+        errEl.hidden = false;
+      } finally {
+        busy = false;
+        proposeBtn.disabled = false;
+        proposeBtn.textContent = '✨ AI 拟定';
+        input.disabled = false;
+        ok.disabled = false;
+        cancel.disabled = false;
+        input.focus();
+        input.select();
+      }
+    };
     $('dialog-form').onsubmit = e => {
       e.preventDefault();
-      finish(value === null ? true : input.value);
+      if (!busy) finish(value === null ? true : input.value);
     };
   });
 }
@@ -1013,7 +1057,17 @@ function askDialog({ title, message = '', value = null, okText = '确定', dange
 $('rename').onclick = async () => {
   if (state.busy || !state.info?.can_rename || !state.selected) return;
   const current = state.selected.title || '';
-  const next = await askDialog({ title: '重命名会话', message: '输入新的会话标题', value: current, okText: '保存' });
+  const target = state.selected;
+  const next = await askDialog({
+    title: '重命名会话',
+    message: '输入新的会话标题，或让 AI 根据对话内容自动拟定',
+    value: current,
+    okText: '保存',
+    propose: async () => {
+      const res = await postJson('/api/rename/propose', { tool: target.tool, id: target.id });
+      return res.title;
+    },
+  });
   if (next === null) return;
   const trimmed = next.trim();
   if (!trimmed || trimmed === current) return;

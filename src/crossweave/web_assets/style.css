@@ -105,3 +105,7 @@
 .system-msg-preview{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#85958b;font-size:11px}
 .system-msg-toggle{font-size:10px;color:#72887a;flex-shrink:0}
 .system-msg-body{margin-left:0;padding:12px 14px;font-size:12px;color:#4a5d52}
+.dialog-error{margin:-6px 0 12px;font-size:11px;color:#b0463c}
+.dialog-spacer{flex:1}
+.dialog-btn.propose{color:#1f6956;border-color:#cfe0d4;background:#f3f8f4}
+.dialog-btn.propose:hover:not(:disabled){background:#e7f2ea}

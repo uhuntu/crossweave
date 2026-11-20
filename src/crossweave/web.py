@@ -19,7 +19,7 @@ import time
 from urllib.parse import parse_qs, urlsplit
 import webbrowser
 
-from . import chat, common, delete, exporter, llmwiki, rename, sessions, ui
+from . import chat, common, delete, exporter, llmwiki, rename, search, sessions, ui
 
 ASSETS = Path(__file__).with_name('web_assets')
 APP_PROFILE_DIR = os.path.join(common.HOME, '.cache', 'crossweave', 'gui-profile')
@@ -132,6 +132,29 @@ def rename_session(tool, sid, title):
     if not rename._apply(record, title):
         raise ValueError('重命名失败')
     return dict(ok=True, title=title)
+
+
+def propose_session_title(tool, sid):
+    if tool not in sessions.TOOLS:
+        raise ValueError('不支持的工具')
+    record = sessions._find_record(tool, sid)
+    if record is None:
+        raise ValueError('会话不存在')
+    if record.get('extra_home'):
+        raise ValueError('外部目录会话为只读，暂不支持重命名')
+    if tool not in rename._RENAMABLE:
+        raise ValueError(f'{tool} 暂不支持重命名')
+    snippet = rename._digest_for(record)
+    if not snippet:
+        raise ValueError('该会话暂无足够内容供 AI 拟定标题')
+    try:
+        titles, _ = rename._propose_titles([record], [snippet], search.DEFAULT_JUDGE)
+    except search.JudgeError as exc:
+        raise ValueError(f'AI 拟定失败: {exc}')
+    proposed = titles.get(1)
+    if not proposed:
+        raise ValueError('AI 未返回有效标题，请重试或手动输入')
+    return dict(ok=True, title=proposed)
 
 
 def delete_session(tool, sid):
@@ -595,6 +618,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(dict(error='Invalid request origin or token'), 403)
         if self.path == '/api/rename':
             return self._handle_rename()
+        if self.path == '/api/rename/propose':
+            return self._handle_rename_propose()
         if self.path == '/api/delete':
             return self._handle_delete()
         if self.path == '/api/export-wiki':
@@ -688,6 +713,22 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(dict(error=str(exc)), 400)
         except Exception as exc:
             return self.reply(dict(error=f'重命名失败: {exc}'), 500)
+
+    def _handle_rename_propose(self):
+        try:
+            data = self._read_json_body()
+            tool, sid = data.get('tool'), data.get('id')
+            if not isinstance(tool, str) or not isinstance(sid, str):
+                raise ValueError('参数不完整')
+        except (ValueError, TypeError) as exc:
+            return self.reply(dict(error=str(exc)), 400)
+        try:
+            result = self.server.read(propose_session_title, tool, sid)
+            return self.reply(result)
+        except ValueError as exc:
+            return self.reply(dict(error=str(exc)), 400)
+        except Exception as exc:
+            return self.reply(dict(error=f'AI 拟定失败: {exc}'), 500)
 
     def _handle_delete(self):
         try:
