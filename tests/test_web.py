@@ -293,15 +293,16 @@ def test_injected_system_context_marked_for_folding(monkeypatch):
             ('user', 'Environment\n\nYou have been invoked in the following environment:'),
             ('user', 'You are powered by the model named account/model.'),
             ('user', 'Available agent types for the Agent tool:\n- Explore'),
+            ('user', 'The following skills are available for use with the Skill tool:\n- foo'),
+            ('user', '<total_tokens>15000000 tokens left</total_tokens>'),
+            ('user', "Today's date is 2026-11-20."),
             ('user', '<system-reminder>keep quiet</system-reminder>'),
             ('user', 'Real user question'),
             ('assistant', 'Real reply'),
         ],
     )
     info = web.conversation('zcode', 'sess_1')
-    assert info['messages'][0].get('system') is True
-    assert info['messages'][1].get('system') is True
-    assert info['messages'][2].get('system') is True
-    assert info['messages'][3].get('system') is True
-    assert 'system' not in info['messages'][4]
-    assert 'system' not in info['messages'][5]
+    for idx in range(7):
+        assert info['messages'][idx].get('system') is True
+    assert 'system' not in info['messages'][7]
+    assert 'system' not in info['messages'][8]
