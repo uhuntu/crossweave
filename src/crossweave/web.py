@@ -321,6 +321,8 @@ def open_app_window(url):
             browser,
             f'--app={url}',
             f'--user-data-dir={APP_PROFILE_DIR}',
+            '--window-size=1280,840',
+            '--disable-features=Translate',
             '--no-first-run',
             '--no-default-browser-check',
         ]
@@ -351,13 +353,23 @@ def _cw_exec_prefix():
     return [sys.executable, '-m', 'crossweave.cli']
 
 
+_DESKTOP_ENV_VARS = (
+    'CW_LLM_WIKI',
+    'CW_LLM_WIKI_API',
+    'LLM_WIKI_API_TOKEN',
+    'CW_VAULT',
+    'CROSSWEAVE_EXTRA_HOMES',
+)
+
+
 def install_desktop(home=None):
     if os.name != 'posix' or sys.platform == 'darwin':
         raise ValueError('.desktop 仅适用于 Linux 桌面环境')
     os.makedirs(os.path.dirname(ICON_FILE), exist_ok=True)
     with open(ICON_FILE, 'w', encoding='utf-8') as fh:
         fh.write(_ICON_SVG)
-    cmd = [*_cw_exec_prefix(), 'gui']
+    env_pairs = [f'{k}={os.environ[k]}' for k in _DESKTOP_ENV_VARS if os.environ.get(k)]
+    cmd = (['env', *env_pairs] if env_pairs else []) + [*_cw_exec_prefix(), 'gui']
     if home:
         cmd.extend(['--home', home])
     exec_line = ' '.join(shlex.quote(p) for p in cmd)
@@ -455,7 +467,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('Content-Security-Policy',
                          "default-src 'self'; script-src 'self'; style-src 'self'; "
-                         "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'")
+                         "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'")
 
     def send_bytes(self, body, kind, status=200):
         self.headers_for(status, kind)
@@ -472,6 +484,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(dict(error='Invalid host'), 403)
         url = urlsplit(self.path)
         try:
+            if url.path == '/favicon.svg':
+                return self.send_bytes(_ICON_SVG.encode('utf-8'), 'image/svg+xml; charset=utf-8')
             if url.path in ('/', '/app.js', '/style.css'):
                 name, kind = {'/': ('index.html', 'text/html'),
                               '/app.js': ('app.js', 'text/javascript'),

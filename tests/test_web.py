@@ -51,6 +51,7 @@ def test_workspace_serves_assets_and_history(workspace):
     assert "frame-ancestors 'none'" in headers['Content-Security-Policy']
     assert request(workspace, 'GET', '/app.js')[0] == 200
     assert request(workspace, 'GET', '/style.css')[0] == 200
+    assert request(workspace, 'GET', '/favicon.svg')[0] == 200
     assert json.loads(request(workspace, 'GET', '/api/sessions')[2])[0]['id'] == 'sess_test'
     result = request(workspace, 'GET', '/api/conversation?tool=zcode&id=sess_test')
     assert json.loads(result[2])['messages'][0]['text'] == 'hello'
@@ -204,13 +205,15 @@ def test_install_and_uninstall_desktop(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(web, 'DESKTOP_FILE', str(desktop))
     monkeypatch.setattr(web, 'ICON_FILE', str(icon))
     monkeypatch.setattr(web.shutil, 'which', lambda name: '/home/hunt/.local/bin/cw' if name == 'cw' else None)
+    monkeypatch.setenv('CW_LLM_WIKI', '/home/hunt/Documents/work-wiki')
 
     assert web.cmd_web(['--app', '--install-desktop', '--home', '/mnt/win']) == 0
     assert desktop.is_file()
     assert icon.is_file()
     content = desktop.read_text(encoding='utf-8')
     assert 'Name=Crossweave' in content
-    assert 'Exec=/home/hunt/.local/bin/cw gui --home /mnt/win' in content
+    assert 'CW_LLM_WIKI=/home/hunt/Documents/work-wiki' in content
+    assert '/home/hunt/.local/bin/cw gui --home /mnt/win' in content
     assert f'Icon={icon}' in content
     assert 'StartupWMClass=crossweave' in content
     assert 'Terminal=false' in content
