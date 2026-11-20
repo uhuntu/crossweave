@@ -65,3 +65,22 @@
 .graph-node circle{stroke:#fff;stroke-width:2}
 .graph-node text{font:11px/1 Inter,"Noto Sans CJK SC",system-ui,sans-serif;fill:#2b4035;pointer-events:none}
 .graph-hint{position:absolute;left:14px;bottom:12px;font-size:10px;color:#7e8e84;background:#ffffffd9;padding:4px 9px;border-radius:6px;border:1px solid #e4ece5}
+.rail{width:48px;flex-shrink:0;background:#e8eee9;border-right:1px solid var(--line);display:flex;flex-direction:column;align-items:center;padding:14px 0;gap:6px}
+.rail-mark{font-size:24px;color:var(--green);line-height:1;margin-bottom:10px;user-select:none}
+.rail-btn{width:34px;height:34px;border:0;border-radius:8px;background:transparent;color:#5a6e62;display:grid;place-items:center;padding:0}
+.rail-btn svg{width:18px;height:18px}
+.rail-btn:hover{background:#dce6de;color:#23362d}
+.rail-btn.active{background:#fff;color:var(--green);box-shadow:0 1px 4px #1b342218}
+.rail-spacer{flex:1}
+.wiki-group{margin:4px 4px 8px}
+.wiki-group-head{list-style:none;display:flex;align-items:center;justify-content:space-between;padding:7px 10px;border-radius:6px;cursor:pointer;font-size:11px;font-weight:600;color:#4a6154;user-select:none}
+.wiki-group-head::-webkit-details-marker{display:none}
+.wiki-group-head::before{content:"▸";display:inline-block;margin-right:6px;font-size:10px;color:#829589;transition:transform .12s}
+.wiki-group[open]>.wiki-group-head::before{transform:rotate(90deg)}
+.wiki-group-head:hover{background:#e5ece6}
+.wiki-group-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wiki-group-count{font-size:10px;font-weight:500;color:#829489;background:#e4ece6;padding:1px 6px;border-radius:999px}
+.wiki-leaf{display:block;width:100%;text-align:left;border:0;background:transparent;border-radius:6px;padding:6px 10px 6px 24px;font-size:12px;color:#384d41;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:1px 0}
+.wiki-leaf:hover{background:#e6ede6}
+.wiki-leaf.active{background:#fff;color:#1f6956;font-weight:600;box-shadow:0 1px 3px #213c2310}
+@media(max-width:650px){.rail{display:none}}

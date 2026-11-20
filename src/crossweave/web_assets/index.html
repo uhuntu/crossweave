@@ -12,9 +12,28 @@
   <script src="/app.js" defer></script>
 </head>
 <body>
+<nav class="rail" aria-label="主导航">
+  <div class="rail-mark" title="CrossWeave">✳</div>
+  <button id="rail-sessions" class="rail-btn active" type="button" title="会话" aria-label="会话">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+  </button>
+  <button id="rail-wiki" class="rail-btn" type="button" title="LLM Wiki" aria-label="LLM Wiki" hidden>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+  </button>
+  <button id="rail-graph" class="rail-btn" type="button" title="知识图谱" aria-label="知识图谱" hidden>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="12" cy="18" r="3"/><line x1="8.6" y1="7.5" x2="10.5" y2="15.4"/><line x1="15.4" y1="7.5" x2="13.5" y2="15.4"/><line x1="9" y1="6" x2="15" y2="6"/></svg>
+  </button>
+  <div class="rail-spacer"></div>
+  <button id="rail-search" class="rail-btn" type="button" title="全局搜索 (Ctrl+K)" aria-label="全局搜索">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+  </button>
+  <button id="rail-refresh" class="rail-btn" type="button" title="刷新" aria-label="刷新">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+  </button>
+</nav>
 <aside class="sidebar">
   <header class="brand"><span class="mark">✳</span><div>CrossWeave<small>你的本地会话工作台</small></div><span class="local">LOCAL</span></header>
-  <div class="library-head"><span>会话库</span><button id="refresh" title="刷新会话" aria-label="刷新会话">↻</button></div>
+  <div class="library-head"><span id="library-title">会话库</span><button id="refresh" title="刷新会话" aria-label="刷新会话">↻</button></div>
   <label class="search"><span>⌕</span><input id="search" type="search" placeholder="搜索标题、目录、会话 ID" aria-label="搜索会话"></label>
   <div class="filters">
     <div class="filter-selects">

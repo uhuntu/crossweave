@@ -3,7 +3,7 @@ const state = {
   mode: 'sessions',
   rows: [], selected: null, info: null,
   wiki: { configured: false, online: false, path: '', name: '', pages: 0 },
-  wikiPages: [], wikiSelected: null, wikiInfo: null,
+  wikiPages: [], wikiSelected: null, wikiInfo: null, collapsedCats: new Set(),
   busy: false, version: 0, initHomeApplied: false,
 };
 const token = document.querySelector('meta[name="cw-token"]').content;
@@ -404,6 +404,8 @@ function paintWikiStatus() {
   const w = state.wiki;
   $('tab-wiki').hidden = !w.configured;
   $('tab-graph').hidden = !w.configured;
+  $('rail-wiki').hidden = !w.configured;
+  $('rail-graph').hidden = !w.configured;
   $('wiki-pill').hidden = !w.configured;
   if (w.configured) {
     $('tab-wiki').textContent = w.pages ? `Wiki (${w.pages})` : 'Wiki';
@@ -435,24 +437,58 @@ function filteredWikiPages() {
   });
 }
 
+function catLabel(cat) {
+  if (!cat) return 'Overview';
+  return cat.charAt(0).toUpperCase() + cat.slice(1);
+}
+
 function drawWikiList() {
   const pages = filteredWikiPages();
+  const searching = !!$('search').value.trim();
   $('count').textContent = `${pages.length} 个页面`;
   $('sessions').replaceChildren();
-  for (const p of pages) {
-    const active = state.wikiSelected?.rel === p.rel;
-    const b = el('button', 'session' + (active ? ' active' : ''));
-    b.disabled = state.busy;
-    b.title = `${p.title}\n${p.rel}`;
-    b.append(el('div', 'session-title', p.title));
-    const meta = el('div', 'session-meta');
-    if (p.category) meta.append(el('span', 'tool-badge', p.category));
-    meta.append(el('span', 'session-path', p.rel));
-    b.append(meta);
-    b.onclick = () => selectWikiPage(p);
-    $('sessions').append(b);
+  if (!pages.length) {
+    $('sessions').append(el('p', 'list-empty', '没有匹配的 Wiki 页面。'));
+    return;
   }
-  if (!pages.length) $('sessions').append(el('p', 'list-empty', '没有匹配的 Wiki 页面。'));
+  const groups = new Map();
+  for (const p of pages) {
+    const key = p.category || '';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(p);
+  }
+  const order = ['', 'entities', 'concepts', 'projects', 'queries', 'sources'];
+  const keys = [...groups.keys()].sort((a, b) => {
+    const ia = order.indexOf(a.toLowerCase());
+    const ib = order.indexOf(b.toLowerCase());
+    if (ia !== -1 || ib !== -1) return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+    return a.localeCompare(b);
+  });
+  for (const key of keys) {
+    const list = groups.get(key);
+    const details = document.createElement('details');
+    details.className = 'wiki-group';
+    details.open = searching || !state.collapsedCats.has(key);
+    const summary = el('summary', 'wiki-group-head');
+    summary.append(el('span', 'wiki-group-name', catLabel(key)), el('span', 'wiki-group-count', String(list.length)));
+    details.append(summary);
+    details.addEventListener('toggle', () => {
+      if (searching) return;
+      if (details.open) state.collapsedCats.delete(key);
+      else state.collapsedCats.add(key);
+    });
+    for (const p of list) {
+      const active = state.wikiSelected?.rel === p.rel;
+      const b = el('button', 'wiki-leaf' + (active ? ' active' : ''));
+      b.type = 'button';
+      b.disabled = state.busy;
+      b.title = `${p.title}\n${p.rel}`;
+      b.textContent = p.title;
+      b.onclick = () => selectWikiPage(p);
+      details.append(b);
+    }
+    $('sessions').append(details);
+  }
 }
 
 async function selectWikiPage(page) {
@@ -702,10 +738,16 @@ async function loadWikiGraph() {
 async function setMode(mode) {
   if (state.busy || state.mode === mode) return;
   state.mode = mode;
-  for (const [m, id] of [['sessions', 'tab-sessions'], ['wiki', 'tab-wiki'], ['graph', 'tab-graph']]) {
+  for (const [m, id, railId] of [
+    ['sessions', 'tab-sessions', 'rail-sessions'],
+    ['wiki', 'tab-wiki', 'rail-wiki'],
+    ['graph', 'tab-graph', 'rail-graph'],
+  ]) {
     $(id).classList.toggle('active', mode === m);
     $(id).setAttribute('aria-selected', String(mode === m));
+    $(railId).classList.toggle('active', mode === m);
   }
+  $('library-title').textContent = mode === 'sessions' ? '会话库' : (state.wiki.name || '知识库');
   $('search').value = '';
   $('search').placeholder = mode === 'sessions' ? '搜索标题、目录、会话 ID' : '搜索 Wiki 标题、路径、分类';
   if (mode === 'wiki') {
@@ -741,6 +783,11 @@ $('refresh').onclick = () => {
 $('tab-sessions').onclick = () => setMode('sessions');
 $('tab-wiki').onclick = () => setMode('wiki');
 $('tab-graph').onclick = () => setMode('graph');
+$('rail-sessions').onclick = () => setMode('sessions');
+$('rail-wiki').onclick = () => setMode('wiki');
+$('rail-graph').onclick = () => setMode('graph');
+$('rail-search').onclick = () => openPalette();
+$('rail-refresh').onclick = () => $('refresh').click();
 
 // ---------- Ctrl+K Global Command Palette ----------
 const palette = { open: false, items: [], cursor: 0 };
