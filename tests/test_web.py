@@ -280,3 +280,24 @@ def test_wiki_view_and_export_endpoints(workspace, monkeypatch, tmp_path):
     g = json.loads(body)
     assert {n['id'] for n in g['nodes']} == {'index.md', 'projects/crossweave.md'}
     assert g['edges'] == [{'source': 'index.md', 'target': 'projects/crossweave.md'}]
+
+
+def test_injected_system_context_marked_for_folding(monkeypatch):
+    monkeypatch.setattr(web.sessions, 'ID_RESOLVERS', {'zcode': lambda sid: [sid]})
+    monkeypatch.setattr(web.sessions, '_find_record', lambda t, s: {'tool': t, 'id': s, 'cwd': '/tmp'})
+    monkeypatch.setattr(web.sessions, 'session_handoff_details', lambda t, s: ('/tmp', '# md'))
+    monkeypatch.setattr(
+        web,
+        '_session_messages',
+        lambda t, s, r: [
+            ('user', 'Environment\n\nYou have been invoked in the following environment:'),
+            ('user', '<system-reminder>keep quiet</system-reminder>'),
+            ('user', 'Real user question'),
+            ('assistant', 'Real reply'),
+        ],
+    )
+    info = web.conversation('zcode', 'sess_1')
+    assert info['messages'][0].get('system') is True
+    assert info['messages'][1].get('system') is True
+    assert 'system' not in info['messages'][2]
+    assert 'system' not in info['messages'][3]

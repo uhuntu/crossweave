@@ -64,6 +64,26 @@ def list_sessions():
             for row, rec in ui.gather()]
 
 
+_SYSTEM_CONTEXT_PREFIXES = (
+    'Environment\n',
+    '# Environment\n',
+    'ZCode Desktop Context\n',
+    '<environment_context>',
+    '<INSTRUCTIONS>',
+    '# AGENTS.md instructions',
+)
+
+
+def _is_system_context(role, text):
+    if role != 'user' or not isinstance(text, str):
+        return False
+    stripped = text.lstrip()
+    return (
+        stripped.startswith(common.INJECTED_PREFIXES)
+        or stripped.startswith(_SYSTEM_CONTEXT_PREFIXES)
+    )
+
+
 def conversation(tool, sid):
     if tool not in sessions.ID_RESOLVERS or sid not in sessions.ID_RESOLVERS[tool](sid):
         raise ValueError('会话不存在')
@@ -74,8 +94,12 @@ def conversation(tool, sid):
     cwd, markdown = details
     markdown = markdown.replace(f"# Crossweave handoff from {tool}",
                                 f"# {tool} conversation", 1)
-    messages = [dict(role=role, text=text)
-                for role, text in _session_messages(tool, sid, record)]
+    messages = []
+    for role, text in _session_messages(tool, sid, record):
+        item = dict(role=role, text=text)
+        if _is_system_context(role, text):
+            item['system'] = True
+        messages.append(item)
     extra_home = (record or {}).get('extra_home') or ''
     return dict(
         tool=tool, id=sid, cwd=cwd, markdown=markdown,

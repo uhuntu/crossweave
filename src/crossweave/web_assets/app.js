@@ -274,10 +274,34 @@ function bubble(role, text, markdown = true) {
   return body;
 }
 
+function systemBubble(text) {
+  const details = document.createElement('details');
+  details.className = 'system-msg';
+  const summary = el('summary', 'system-msg-head');
+  const firstLine = (text || '').split('\n').map(s => s.replace(/^#+\s*/, '').trim()).find(Boolean) || '';
+  const preview = firstLine.length > 56 ? firstLine.slice(0, 55) + '…' : firstLine;
+  summary.append(
+    el('span', 'system-msg-tag', '⚙ 系统上下文'),
+    el('span', 'system-msg-preview', preview),
+    el('span', 'system-msg-toggle', '展开')
+  );
+  const body = el('div', 'system-msg-body message-body md');
+  renderMarkdown(body, text);
+  details.addEventListener('toggle', () => {
+    summary.lastChild.textContent = details.open ? '收起' : '展开';
+  });
+  details.append(summary, body);
+  $('thread').append(details);
+  return details;
+}
+
 function paintConversation(info) {
   $('thread').replaceChildren();
   if (info.messages) {
-    for (const m of info.messages) bubble(m.role, m.text, true);
+    for (const m of info.messages) {
+      if (m.system) systemBubble(m.text);
+      else bubble(m.role, m.text, true);
+    }
     if (!info.messages.length) $('thread').append(el('p', 'list-empty', '这个会话暂无文本消息。'));
   } else {
     $('thread').append(el('pre', 'transcript', info.markdown));

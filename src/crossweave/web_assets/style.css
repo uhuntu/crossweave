@@ -96,3 +96,12 @@
 .dialog-btn.primary:hover{background:#185a49}
 .dialog-btn.primary.danger{background:#b0463c;border-color:#b0463c}
 .dialog-btn.primary.danger:hover{background:#97392f}
+.system-msg{margin:0 0 18px;border:1px solid #e4ebe5;border-radius:8px;background:#f7faf7}
+.system-msg-head{list-style:none;display:flex;align-items:center;gap:10px;padding:8px 12px;cursor:pointer;font-size:11px;color:#66786d;user-select:none}
+.system-msg-head::-webkit-details-marker{display:none}
+.system-msg-head:hover{background:#eff5f0;border-radius:8px}
+.system-msg[open] .system-msg-head{border-bottom:1px solid #e4ebe5;border-radius:8px 8px 0 0}
+.system-msg-tag{font-weight:600;color:#4e6c5b;flex-shrink:0}
+.system-msg-preview{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#85958b;font-size:11px}
+.system-msg-toggle{font-size:10px;color:#72887a;flex-shrink:0}
+.system-msg-body{margin-left:0;padding:12px 14px;font-size:12px;color:#4a5d52}
