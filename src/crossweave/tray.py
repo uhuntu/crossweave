@@ -1,5 +1,7 @@
 """Cross-platform system tray host for the local CrossWeave workspace."""
 import argparse
+import ctypes
+import json
 import os
 from pathlib import Path
 import shutil
@@ -10,6 +12,62 @@ import time
 import webbrowser
 
 from . import common, sessions, web
+
+TRAY_STATE_FILE = os.path.join(common.HOME, '.cache', 'crossweave', 'tray.json')
+
+
+def _pid_alive(pid):
+    if not isinstance(pid, int) or pid <= 0 or pid == os.getpid():
+        return False
+    if os.name == 'nt':
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(0x1000, False, pid)
+        if not handle:
+            return False
+        try:
+            code = ctypes.c_ulong()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return False
+            return code.value == 259
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def _read_running_instance():
+    data = common.read_json(TRAY_STATE_FILE)
+    if not isinstance(data, dict):
+        return None
+    pid = data.get('pid')
+    url = data.get('url')
+    if _pid_alive(pid) and isinstance(url, str) and url.startswith('http://'):
+        return url
+    return None
+
+
+def _write_running_instance(url):
+    try:
+        os.makedirs(os.path.dirname(TRAY_STATE_FILE), exist_ok=True)
+        tmp = f'{TRAY_STATE_FILE}.{os.getpid()}.tmp'
+        with open(tmp, 'w', encoding='utf-8') as fh:
+            json.dump({'pid': os.getpid(), 'url': url}, fh)
+        os.replace(tmp, TRAY_STATE_FILE)
+    except OSError:
+        pass
+
+
+def _clear_running_instance():
+    data = common.read_json(TRAY_STATE_FILE)
+    if isinstance(data, dict) and data.get('pid') not in (None, os.getpid()):
+        return
+    try:
+        os.remove(TRAY_STATE_FILE)
+    except OSError:
+        pass
 
 
 def _import_tray_deps():
@@ -110,7 +168,7 @@ class TrayController:
         self._sync_icon_title()
         return self.url
 
-    def stop_server(self):
+    def stop_server(self, timeout=5.0):
         """Shut down the running Workspace server if active.
 
         The blocking close runs on a daemon thread with a bounded join so a
@@ -125,9 +183,9 @@ class TrayController:
         if server is not None:
             closer = threading.Thread(target=self._close_server, args=(server,), daemon=True)
             closer.start()
-            closer.join(timeout=5.0)
+            closer.join(timeout=timeout)
         if thread is not None and thread.is_alive():
-            thread.join(timeout=2.0)
+            thread.join(timeout=min(timeout, 2.0))
         self._sync_icon_title()
 
     @staticmethod
@@ -156,14 +214,18 @@ class TrayController:
             webbrowser.open(url)
 
     def quit(self):
-        """Stop the tray event loop first, then shut the server down (bounded)."""
+        """Stop the tray event loop immediately, then shut the server down (bounded)."""
         icon = self._icon
         if icon is not None:
+            try:
+                icon.visible = False
+            except Exception:
+                pass
             try:
                 icon.stop()
             except Exception:
                 pass
-        self.stop_server()
+        self.stop_server(timeout=0.5)
 
     def recent_dirs(self, limit=6, ttl=30.0):
         """Return recently used existing directories, cached briefly for responsive menus."""
@@ -358,6 +420,15 @@ def cmd_tray(args=None):
         print(f'cw tray: {exc}', file=sys.stderr)
         return 1
 
+    if opts.port is None:
+        existing_url = _read_running_instance()
+        if existing_url:
+            if opts.browser:
+                webbrowser.open(existing_url)
+            else:
+                web.open_app_window(existing_url)
+            return 0
+
     controller = TrayController(port=opts.port, home=opts.home, app_mode=not opts.browser)
     with sessions._with_extra_home(opts.home):
         try:
@@ -366,6 +437,7 @@ def cmd_tray(args=None):
             print(f'cw tray: {exc}', file=sys.stderr)
             return 1
 
+        _write_running_instance(url)
         icon = pystray.Icon(
             'crossweave',
             _make_icon_image(image_cls, draw_cls),
@@ -384,7 +456,8 @@ def cmd_tray(args=None):
         except KeyboardInterrupt:
             pass
         finally:
-            controller.stop_server()
+            _clear_running_instance()
+            controller.stop_server(timeout=0.5)
     return 0
 
 

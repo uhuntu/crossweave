@@ -91,6 +91,7 @@ def test_tray_controller_open_workspace_and_quit(monkeypatch):
 
     ctrl.quit()
     assert fake_icon.stopped is True
+    ctrl.stop_server(timeout=0.5)
     assert ctrl.url == ''
     assert fake_icon.title == 'CrossWeave (已停止)'
 
@@ -283,3 +284,18 @@ def test_tray_launch_menu_items_lists_installed_tools_and_recent_dirs(monkeypatc
     sub = list(items[0].submenu.items)
     assert 'proj1' in sub[0].text
     assert sub[-1].text == '主目录 (~)'
+
+
+def test_cmd_tray_single_instance_opens_existing_workspace(monkeypatch, tmp_path):
+    state_file = tmp_path / 'tray.json'
+    state_file.write_text('{"pid": 99999, "url": "http://127.0.0.1:8765"}', encoding='utf-8')
+    monkeypatch.setattr(tray, 'TRAY_STATE_FILE', str(state_file))
+    monkeypatch.setattr(tray, '_pid_alive', lambda pid: pid == 99999)
+    monkeypatch.setattr(tray, '_import_tray_deps', lambda: (object(), object(), object()))
+
+    opened = []
+    monkeypatch.setattr(web, 'open_app_window', lambda url: opened.append(url))
+    monkeypatch.setattr(web, 'Workspace', lambda *a, **kw: pytest.fail('should not start second server'))
+
+    assert tray.cmd_tray([]) == 0
+    assert opened == ['http://127.0.0.1:8765']
