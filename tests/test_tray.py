@@ -299,3 +299,52 @@ def test_cmd_tray_single_instance_opens_existing_workspace(monkeypatch, tmp_path
 
     assert tray.cmd_tray([]) == 0
     assert opened == ['http://127.0.0.1:8765']
+
+
+def test_tray_daily_update_runner_and_due_check(monkeypatch, tmp_path):
+    state_file = tmp_path / 'daily-update.json'
+    log_file = tmp_path / 'daily-update.log'
+    monkeypatch.setattr(tray, 'UPDATE_STATE_FILE', str(state_file))
+    monkeypatch.setattr(tray, 'UPDATE_LOG_FILE', str(log_file))
+    monkeypatch.setattr(web, '_cw_exec_prefix', lambda: ['cw.exe'])
+
+    calls = []
+
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+        kw['stdout'].write('updated ok\n')
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(tray.subprocess, 'run', fake_run)
+
+    ctrl = tray.TrayController()
+    assert ctrl.update_status_label() == '每日更新: 尚未运行'
+    assert ctrl._update_due(now=100_000.0) is True
+
+    assert ctrl.run_update_now() == 0
+    assert calls == [['cw.exe', 'update', 'all']]
+    assert '成功' in ctrl.update_status_label()
+    assert 'updated ok' in log_file.read_text(encoding='utf-8')
+    assert ctrl._update_due(now=tray.time.time() + 60) is False
+    assert ctrl._update_due(now=tray.time.time() + tray.UPDATE_INTERVAL_SECONDS + 1) is True
+
+
+def test_tray_daily_update_scheduler_runs_when_due(monkeypatch, tmp_path):
+    state_file = tmp_path / 'daily-update.json'
+    log_file = tmp_path / 'daily-update.log'
+    monkeypatch.setattr(tray, 'UPDATE_STATE_FILE', str(state_file))
+    monkeypatch.setattr(tray, 'UPDATE_LOG_FILE', str(log_file))
+    monkeypatch.setattr(web, '_cw_exec_prefix', lambda: ['cw.exe'])
+
+    ran = tray.threading.Event()
+
+    def fake_run(cmd, **kw):
+        ran.set()
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(tray.subprocess, 'run', fake_run)
+
+    ctrl = tray.TrayController()
+    ctrl.start_update_scheduler(initial_delay=0.01, check_interval=60.0)
+    assert ran.wait(timeout=2.0), 'scheduler did not run due update'
+    ctrl.stop_server(timeout=0.5)

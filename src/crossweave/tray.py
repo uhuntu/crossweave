@@ -14,6 +14,10 @@ import webbrowser
 from . import common, sessions, web
 
 TRAY_STATE_FILE = os.path.join(common.HOME, '.cache', 'crossweave', 'tray.json')
+UPDATE_STATE_FILE = os.path.join(common.HOME, '.cache', 'crossweave', 'daily-update.json')
+UPDATE_LOG_FILE = os.path.join(common.HOME, '.cache', 'crossweave', 'daily-update.log')
+UPDATE_INTERVAL_SECONDS = 86400
+UPDATE_LOG_MAX_BYTES = 1_000_000
 
 
 def _pid_alive(pid):
@@ -129,6 +133,10 @@ class TrayController:
         self._icon = None
         self._dirs_cache = []
         self._dirs_cache_at = 0.0
+        self._stop_event = threading.Event()
+        self._update_lock = threading.Lock()
+        self._update_running = False
+        self._update_thread = None
 
     @property
     def url(self):
@@ -175,6 +183,7 @@ class TrayController:
         stuck ``shutdown()``/``server_close()`` can never wedge the caller
         (e.g. the tray quit handler).
         """
+        self._stop_event.set()
         with self._lock:
             server = self._server
             thread = self._thread
@@ -243,6 +252,120 @@ class TrayController:
         """Launch `cw <tool>` in an interactive terminal."""
         web.launch_agent_terminal(tool, cwd=cwd)
 
+    @property
+    def is_updating(self):
+        return self._update_running
+
+    @staticmethod
+    def _read_update_state():
+        data = common.read_json(UPDATE_STATE_FILE)
+        return data if isinstance(data, dict) else {}
+
+    @staticmethod
+    def _write_update_state(state):
+        try:
+            os.makedirs(os.path.dirname(UPDATE_STATE_FILE), exist_ok=True)
+            tmp = f'{UPDATE_STATE_FILE}.{os.getpid()}.tmp'
+            with open(tmp, 'w', encoding='utf-8') as fh:
+                json.dump(state, fh, ensure_ascii=False, indent=2)
+            os.replace(tmp, UPDATE_STATE_FILE)
+        except OSError:
+            pass
+
+    def update_status_label(self):
+        if self._update_running:
+            return '每日更新: 正在运行…'
+        summary = self._read_update_state().get('last_summary')
+        return f'每日更新: {summary}' if summary else '每日更新: 尚未运行'
+
+    def _update_due(self, now=None):
+        now = time.time() if now is None else now
+        last_run = self._read_update_state().get('last_run') or 0
+        return (now - float(last_run)) >= UPDATE_INTERVAL_SECONDS
+
+    def run_update_now(self):
+        """Run `cw update all` once, appending output to UPDATE_LOG_FILE."""
+        with self._update_lock:
+            if self._update_running:
+                return None
+            self._update_running = True
+        code = 1
+        try:
+            os.makedirs(os.path.dirname(UPDATE_LOG_FILE), exist_ok=True)
+            if os.path.isfile(UPDATE_LOG_FILE) and os.path.getsize(UPDATE_LOG_FILE) > UPDATE_LOG_MAX_BYTES:
+                with open(UPDATE_LOG_FILE, 'w', encoding='utf-8') as fh:
+                    fh.write('')
+            stamp = time.strftime('%Y-%m-%d %H:%M:%S')
+            cmd = [*web._cw_exec_prefix(), 'update', 'all']
+            with open(UPDATE_LOG_FILE, 'a', encoding='utf-8', errors='replace') as log_fh:
+                log_fh.write(f'\n=== [{stamp}] cw update all ===\n')
+                log_fh.flush()
+                proc = subprocess.run(
+                    cmd,
+                    stdin=subprocess.DEVNULL,
+                    stdout=log_fh,
+                    stderr=subprocess.STDOUT,
+                    **common.no_window_kwargs(),
+                )
+                code = proc.returncode
+        except OSError as exc:
+            try:
+                with open(UPDATE_LOG_FILE, 'a', encoding='utf-8', errors='replace') as log_fh:
+                    log_fh.write(f'cw tray: failed to run update: {exc}\n')
+            except OSError:
+                pass
+            code = 1
+        finally:
+            finished = time.time()
+            label = time.strftime('%m-%d %H:%M', time.localtime(finished))
+            status_text = '成功' if code == 0 else f'失败 (退出码 {code})'
+            self._write_update_state({
+                'last_run': finished,
+                'last_status': 'ok' if code == 0 else 'failed',
+                'last_code': code,
+                'last_summary': f'{label} {status_text}',
+            })
+            with self._update_lock:
+                self._update_running = False
+        return code
+
+    def trigger_update_async(self):
+        """Trigger `cw update all` in a background daemon thread."""
+        if self._update_running:
+            return
+        threading.Thread(target=self.run_update_now, daemon=True).start()
+
+    def start_update_scheduler(self, initial_delay=15.0, check_interval=3600.0):
+        """Start the daily background `cw update all` scheduler."""
+        if self._update_thread is not None and self._update_thread.is_alive():
+            return
+        self._stop_event.clear()
+
+        def _loop():
+            if self._stop_event.wait(timeout=initial_delay):
+                return
+            while not self._stop_event.is_set():
+                if self._update_due():
+                    self.run_update_now()
+                if self._stop_event.wait(timeout=check_interval):
+                    break
+
+        self._update_thread = threading.Thread(target=_loop, daemon=True)
+        self._update_thread.start()
+
+    def open_update_log(self):
+        """Open the daily update log file with the OS default viewer."""
+        os.makedirs(os.path.dirname(UPDATE_LOG_FILE), exist_ok=True)
+        if not os.path.isfile(UPDATE_LOG_FILE):
+            with open(UPDATE_LOG_FILE, 'w', encoding='utf-8') as fh:
+                fh.write('CrossWeave 每日自动更新日志（尚未运行）\n')
+        if os.name == 'nt':
+            os.startfile(UPDATE_LOG_FILE)
+        elif sys.platform == 'darwin':
+            subprocess.Popen(['open', UPDATE_LOG_FILE])
+        else:
+            subprocess.Popen(['xdg-open', UPDATE_LOG_FILE])
+
 
 def _dir_label(path):
     name = os.path.basename(path.rstrip('\\/'))
@@ -276,6 +399,14 @@ def _build_menu(pystray, controller):
         item('打开工作台', lambda _icon, _item: controller.open_workspace(True), default=True),
         item('在浏览器中打开', lambda _icon, _item: controller.open_workspace(False)),
         item('快速启动 Agent', pystray.Menu(lambda: _launch_menu_items(pystray, controller))),
+        pystray.Menu.SEPARATOR,
+        item(lambda _item: controller.update_status_label(), None, enabled=False),
+        item(
+            '立即更新 (cw update all)',
+            lambda _icon, _item: controller.trigger_update_async(),
+            enabled=lambda _item: not controller.is_updating,
+        ),
+        item('查看更新日志', lambda _icon, _item: controller.open_update_log()),
         pystray.Menu.SEPARATOR,
         item(lambda _item: f'服务地址: {controller.url or "已停止"}', None, enabled=False),
         item('重启服务', lambda _icon, _item: controller.restart_server()),
@@ -448,6 +579,7 @@ def cmd_tray(args=None):
 
         def _on_ready(tray_icon):
             tray_icon.visible = True
+            controller.start_update_scheduler()
             if opts.open:
                 controller.open_workspace()
 
