@@ -1,5 +1,6 @@
 """Google Antigravity (agy) integration tests."""
 
+from datetime import datetime, timezone
 import json
 import os
 import re
@@ -7,7 +8,7 @@ import sqlite3
 
 import pytest
 
-from crossweave import agy, cli, delete, doctor, rename, search, sessions, update
+from crossweave import agy, cli, common, delete, doctor, rename, search, sessions, update
 
 SID = "37197b54-255d-4390-a0c1-7d015ba5a452"
 SUB_SID = "aaaaaaaa-1111-2222-3333-444444444444"
@@ -274,3 +275,23 @@ def test_agy_judge_cwd_uses_judge_session_title(store):
     records = agy.agy_light_records()
     assert len(records) == 1
     assert records[0]["title"] == common.JUDGE_SESSION_TITLE
+
+
+def test_ts_parses_nanosecond_and_variable_fractional_timestamps(store):
+    ts_0047 = int(datetime(2026, 11, 22, 0, 47, 2, tzinfo=timezone.utc).timestamp())
+    ts_0013 = int(datetime(2026, 11, 22, 0, 13, 3, tzinfo=timezone.utc).timestamp())
+
+    assert agy._ts("2026-11-22 00:47:02.34122175+00:00") == ts_0047
+    assert agy._ts("2026-11-22 00:13:03.701967885+00:00") == ts_0013
+    assert agy._ts("2026-11-22T00:13:03.7Z") == ts_0013
+    assert agy._ts("2026-11-22T00:13:03.1234+08:00") == ts_0013 - 8 * 3600
+    assert agy._ts("2026-11-22 00:13:03.701967885 +0000 UTC") == ts_0013
+
+    store.session(
+        SID,
+        title="Newest session",
+        modified="2026-11-22 00:47:02.34122175+00:00",
+    )
+    records = agy.agy_light_records()
+    assert len(records) == 1
+    assert records[0]["ts"] == ts_0047

@@ -38,6 +38,11 @@ _TRAILING_TAGS_RE = re.compile(
     r"\s*<(?:ADDITIONAL_METADATA|USER_SETTINGS_CHANGE)>.*?</(?:ADDITIONAL_METADATA|USER_SETTINGS_CHANGE)>\s*",
     re.S,
 )
+_ISO_TS_RE = re.compile(
+    r"^(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})"
+    r"(?:\.(\d+))?"
+    r"(?:\s*(Z|z|[+-]\d{2}:?\d{2})(?:\s+[A-Za-z][A-Za-z0-9_/+:-]*)?)?$"
+)
 
 _local = threading.local()
 
@@ -106,6 +111,23 @@ def _query(query, params=()):
     return rows
 
 
+def _normalize_iso_ts(text):
+    """Normalize Go/SQLite ISO-8601 timestamps for Python 3.9/3.10 fromisoformat."""
+    m = _ISO_TS_RE.match(text)
+    if not m:
+        return text[:-1] + "+00:00" if text.endswith(("Z", "z")) else text
+    base, frac, tz = m.groups()
+    if frac:
+        base = f"{base}.{frac[:6].ljust(6, '0')}"
+    if tz:
+        if tz in ("Z", "z"):
+            tz = "+00:00"
+        elif ":" not in tz:
+            tz = f"{tz[:3]}:{tz[3:]}"
+        base = f"{base}{tz}"
+    return base
+
+
 def _ts(value):
     """Parse an ISO-8601 timestamp or numeric epoch into integer seconds."""
     if value is None or value == "":
@@ -117,7 +139,7 @@ def _ts(value):
         if not text:
             return 0
         try:
-            dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            dt = datetime.fromisoformat(_normalize_iso_ts(text))
             return int(dt.timestamp())
         except ValueError:
             pass
