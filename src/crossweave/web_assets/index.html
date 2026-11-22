@@ -57,6 +57,7 @@
       <span id="breadcrumb">会话</span>
     </div>
     <div class="topbar-right">
+      <button id="launch-agent" class="launch-btn" type="button" title="在终端中启动新的 Agent 会话">+ 启动 Agent</button>
       <button id="open-palette" class="kbd-btn" type="button" title="全局搜索会话与 Wiki (Ctrl+K)">⌕ 搜索 <kbd>Ctrl K</kbd></button>
       <button id="wiki-pill" class="wiki-pill" type="button" hidden title="点击触发 LLM Wiki 扫描"><i></i><span id="wiki-pill-text">LLM Wiki</span></button>
       <span class="top-note">从对话，回到上下文。</span>
@@ -137,6 +138,31 @@
       <span class="dialog-spacer"></span>
       <button id="dialog-cancel" class="dialog-btn" type="button">取消</button>
       <button id="dialog-ok" class="dialog-btn primary" type="submit">确定</button>
+    </div>
+  </form>
+</div>
+<div id="launch-backdrop" class="palette-backdrop" hidden>
+  <form id="launch-form" class="dialog" role="dialog" aria-modal="true" aria-labelledby="launch-title">
+    <h3 id="launch-title">启动新 Agent</h3>
+    <p class="dialog-message">选择工具与工作目录，将在新终端中启动交互式会话。</p>
+    <label class="launch-field">
+      <span>工具</span>
+      <select id="launch-tool" class="dialog-input"></select>
+    </label>
+    <label class="launch-field">
+      <span>工作目录</span>
+      <input id="launch-cwd" class="dialog-input" type="text" list="launch-dirs" placeholder="留空则使用主目录" autocomplete="off">
+      <datalist id="launch-dirs"></datalist>
+    </label>
+    <label class="launch-check">
+      <input id="launch-yolo" type="checkbox">
+      <span>自动审批工具调用（<code>--yolo</code>）</span>
+    </label>
+    <p id="launch-error" class="dialog-error" hidden></p>
+    <div class="dialog-actions">
+      <span class="dialog-spacer"></span>
+      <button id="launch-cancel" class="dialog-btn" type="button">取消</button>
+      <button id="launch-ok" class="dialog-btn primary" type="submit">在终端启动</button>
     </div>
   </form>
 </div>

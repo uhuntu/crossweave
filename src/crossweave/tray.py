@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import webbrowser
 
 from . import common, sessions, web
@@ -68,6 +69,8 @@ class TrayController:
         self._server = None
         self._thread = None
         self._icon = None
+        self._dirs_cache = []
+        self._dirs_cache_at = 0.0
 
     @property
     def url(self):
@@ -141,12 +144,55 @@ class TrayController:
         if self._icon is not None:
             self._icon.stop()
 
+    def recent_dirs(self, limit=6, ttl=30.0):
+        """Return recently used existing directories, cached briefly for responsive menus."""
+        now = time.monotonic()
+        if self._dirs_cache and (now - self._dirs_cache_at) < ttl:
+            return list(self._dirs_cache)
+        with self._lock:
+            server = self._server
+        dirs = server.read(web.recent_directories, limit) if server is not None else web.recent_directories(limit)
+        self._dirs_cache = list(dirs)
+        self._dirs_cache_at = now
+        return list(dirs)
+
+    def launch_agent(self, tool, cwd=None):
+        """Launch `cw <tool>` in an interactive terminal."""
+        web.launch_agent_terminal(tool, cwd=cwd)
+
+
+def _dir_label(path):
+    name = os.path.basename(path.rstrip('\\/'))
+    return f'{name} ({path})' if name and name != path else path
+
+
+def _make_launch_cb(controller, tool, cwd):
+    return lambda _icon, _item: controller.launch_agent(tool, cwd)
+
+
+def _launch_menu_items(pystray, controller):
+    item = pystray.MenuItem
+    installed = [t['tool'] for t in web.available_tools() if t['installed']]
+    tools = installed or list(web.LAUNCH_TOOLS)
+    dirs = controller.recent_dirs()
+    entries = []
+    for tool in tools:
+        if dirs:
+            sub_items = [item(_dir_label(d), _make_launch_cb(controller, tool, d)) for d in dirs]
+            sub_items.append(pystray.Menu.SEPARATOR)
+            sub_items.append(item('主目录 (~)', _make_launch_cb(controller, tool, None)))
+            entries.append(item(tool, pystray.Menu(*sub_items)))
+        else:
+            entries.append(item(tool, _make_launch_cb(controller, tool, None)))
+    return entries
+
 
 def _build_menu(pystray, controller):
     item = pystray.MenuItem
     return pystray.Menu(
         item('打开工作台', lambda _icon, _item: controller.open_workspace(True), default=True),
         item('在浏览器中打开', lambda _icon, _item: controller.open_workspace(False)),
+        item('快速启动 Agent', pystray.Menu(lambda: _launch_menu_items(pystray, controller))),
         pystray.Menu.SEPARATOR,
         item(lambda _item: f'服务地址: {controller.url or "已停止"}', None, enabled=False),
         item('重启服务', lambda _icon, _item: controller.restart_server()),

@@ -412,6 +412,11 @@ def open_app_window(url):
 
 
 def _cw_exec_prefix():
+    exe_dir = os.path.dirname(sys.executable)
+    for name in ('cw.exe', 'cw'):
+        sibling = os.path.join(exe_dir, name)
+        if os.path.isfile(sibling):
+            return [sibling]
     local_bin = os.path.join(common.HOME, '.local', 'bin', 'cw')
     if os.path.isfile(local_bin):
         return [local_bin]
@@ -419,6 +424,102 @@ def _cw_exec_prefix():
     if found:
         return [found]
     return [sys.executable, '-m', 'crossweave.cli']
+
+
+LAUNCH_TOOLS = ('claude', 'codex', 'kimi', 'step', 'pi', 'opencode', 'agy', 'zcode')
+
+
+def available_tools():
+    """Return supported agent tools and whether each CLI is installed on this host."""
+    result = []
+    for tool in LAUNCH_TOOLS:
+        if tool == 'zcode':
+            installed = sessions.zcode_cli_on_path()
+        else:
+            installed = shutil.which(tool) is not None
+        result.append(dict(tool=tool, installed=installed))
+    return result
+
+
+def recent_directories(limit=8):
+    """Return up to `limit` unique existing working directories from recent sessions."""
+    dirs = []
+    seen = set()
+    for row in list_sessions():
+        cwd = row.get('cwd') or ''
+        if not cwd or cwd in seen or not os.path.isdir(cwd):
+            continue
+        seen.add(cwd)
+        dirs.append(cwd)
+        if len(dirs) >= limit:
+            break
+    return dirs
+
+
+def _terminal_argv(target_cwd, cmd):
+    """Build platform-specific argv (and kwargs) to open an interactive terminal."""
+    if os.name == 'nt':
+        wt = shutil.which('wt.exe') or shutil.which('wt')
+        if wt:
+            return [wt, '-d', target_cwd, *cmd], {'cwd': target_cwd}
+        return ['cmd.exe', '/k', *cmd], {
+            'cwd': target_cwd,
+            'creationflags': getattr(subprocess, 'CREATE_NEW_CONSOLE', 0),
+        }
+    if sys.platform == 'darwin':
+        shell_cmd = f'cd {shlex.quote(target_cwd)} && {shlex.join(cmd)}'
+        escaped = shell_cmd.replace('\\', '\\\\').replace('"', '\\"')
+        return [
+            'osascript',
+            '-e', f'tell application "Terminal" to do script "{escaped}"',
+            '-e', 'tell application "Terminal" to activate',
+        ], {}
+    for term in ('x-terminal-emulator', 'gnome-terminal', 'konsole',
+                 'xfce4-terminal', 'alacritty', 'kitty', 'wezterm', 'xterm'):
+        found = shutil.which(term)
+        if not found:
+            continue
+        if term == 'gnome-terminal':
+            return [found, '--working-directory', target_cwd, '--', *cmd], {'start_new_session': True}
+        if term == 'konsole':
+            return [found, '--workdir', target_cwd, '-e', *cmd], {'start_new_session': True}
+        if term == 'wezterm':
+            return [found, 'start', '--cwd', target_cwd, '--', *cmd], {'start_new_session': True}
+        if term == 'alacritty':
+            return [found, '--working-directory', target_cwd, '-e', *cmd], {'start_new_session': True}
+        return [found, '-e', *cmd], {'cwd': target_cwd, 'start_new_session': True}
+    raise RuntimeError('未找到可用的终端模拟器')
+
+
+def launch_agent_terminal(tool, cwd=None, yolo=False):
+    """Open an interactive terminal running `cw <tool>` in `cwd`."""
+    if tool not in LAUNCH_TOOLS:
+        raise ValueError(f'不支持的工具: {tool}')
+    target_cwd = (cwd or '').strip() or common.HOME
+    if not os.path.isdir(target_cwd):
+        raise ValueError(f'目录不存在: {target_cwd}')
+    cmd = [*_cw_exec_prefix(), tool]
+    if yolo and tool != 'zcode':
+        cmd.append('-y')
+    if tool == 'zcode':
+        subprocess.Popen(
+            cmd,
+            cwd=target_cwd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=os.name == 'posix',
+        )
+    else:
+        argv, popen_kw = _terminal_argv(target_cwd, cmd)
+        subprocess.Popen(
+            argv,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            **popen_kw,
+        )
+    return dict(ok=True, tool=tool, cwd=target_cwd)
 
 
 _DESKTOP_ENV_VARS = (
@@ -628,6 +729,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(self.server.read(read_wiki_page, query.get('rel', [''])[0]))
             if url.path == '/api/wiki/graph':
                 return self.reply(self.server.read(wiki_graph))
+            if url.path == '/api/launch-options':
+                return self.reply(dict(
+                    tools=available_tools(),
+                    dirs=self.server.read(recent_directories),
+                ))
             self.reply(dict(error='Not found'), 404)
         except ValueError as exc:
             self.reply(dict(error=str(exc)), 404)
@@ -651,6 +757,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._handle_export_wiki()
         if self.path == '/api/wiki/rescan':
             return self._handle_wiki_rescan()
+        if self.path == '/api/launch':
+            return self._handle_launch()
         if self.path != '/api/chat':
             return self.reply(dict(error='Not found'), 404)
         try:
@@ -801,6 +909,23 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(dict(error=str(exc)), 400)
         except Exception as exc:
             return self.reply(dict(error=f'刷新失败: {exc}'), 500)
+
+    def _handle_launch(self):
+        try:
+            data = self._read_json_body()
+            tool = data.get('tool')
+            cwd = data.get('cwd') or ''
+            yolo = bool(data.get('yolo', False))
+            if not isinstance(tool, str) or not isinstance(cwd, str):
+                raise ValueError('参数不完整')
+        except (ValueError, TypeError) as exc:
+            return self.reply(dict(error=str(exc)), 400)
+        try:
+            return self.reply(launch_agent_terminal(tool, cwd=cwd, yolo=yolo))
+        except ValueError as exc:
+            return self.reply(dict(error=str(exc)), 400)
+        except (OSError, RuntimeError) as exc:
+            return self.reply(dict(error=f'启动失败: {exc}'), 500)
 
     def event(self, data):
         self.wfile.write((json.dumps(data, ensure_ascii=False) + '\n').encode())

@@ -1276,5 +1276,73 @@ window.addEventListener('beforeunload', e => {
   }
 });
 
+async function openLaunchDialog() {
+  $('launch-error').hidden = true;
+  $('launch-ok').disabled = false;
+  $('launch-ok').textContent = '在终端启动';
+  const currentCwd = state.selected && state.selected.cwd ? state.selected.cwd : '';
+  $('launch-cwd').value = currentCwd;
+  $('launch-yolo').checked = false;
+  $('launch-backdrop').hidden = false;
+  try {
+    const opts = await api('/api/launch-options');
+    const select = $('launch-tool');
+    select.replaceChildren();
+    let firstInstalled = '';
+    for (const item of opts.tools || []) {
+      const label = item.installed ? item.tool : `${item.tool} (未检测到)`;
+      const opt = el('option', null, label);
+      opt.value = item.tool;
+      select.append(opt);
+      if (item.installed && !firstInstalled) firstInstalled = item.tool;
+    }
+    if (firstInstalled) select.value = firstInstalled;
+    const dl = $('launch-dirs');
+    dl.replaceChildren();
+    for (const dir of opts.dirs || []) {
+      const opt = document.createElement('option');
+      opt.value = dir;
+      dl.append(opt);
+    }
+    if (!currentCwd && opts.dirs && opts.dirs.length) {
+      $('launch-cwd').value = opts.dirs[0];
+    }
+  } catch (e) {
+    $('launch-error').textContent = e.message;
+    $('launch-error').hidden = false;
+  }
+  $('launch-tool').focus();
+}
+
+function closeLaunchDialog() {
+  $('launch-backdrop').hidden = true;
+}
+
+$('launch-agent').onclick = openLaunchDialog;
+$('launch-cancel').onclick = closeLaunchDialog;
+$('launch-backdrop').onclick = e => {
+  if (e.target === $('launch-backdrop')) closeLaunchDialog();
+};
+$('launch-form').onsubmit = async e => {
+  e.preventDefault();
+  $('launch-error').hidden = true;
+  $('launch-ok').disabled = true;
+  $('launch-ok').textContent = '启动中…';
+  try {
+    const tool = $('launch-tool').value;
+    const cwd = $('launch-cwd').value.trim();
+    const yolo = $('launch-yolo').checked;
+    const res = await post('/api/launch', { tool, cwd, yolo });
+    closeLaunchDialog();
+    status(`已在终端启动 ${res.tool}（${res.cwd}）`);
+  } catch (err) {
+    $('launch-error').textContent = err.message;
+    $('launch-error').hidden = false;
+  } finally {
+    $('launch-ok').disabled = false;
+    $('launch-ok').textContent = '在终端启动';
+  }
+};
+
 loadWikiStatus();
 load();

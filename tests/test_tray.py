@@ -207,3 +207,54 @@ def test_install_and_uninstall_windows_shortcut(monkeypatch, tmp_path, capsys):
     assert not written[0][0].exists()
     assert not written[1][0].exists()
     assert not written[0][3].exists()
+
+
+def test_launch_agent_terminal_and_recent_directories(monkeypatch, tmp_path):
+    d1 = tmp_path / 'proj1'
+    d2 = tmp_path / 'proj2'
+    d1.mkdir()
+    d2.mkdir()
+    missing = tmp_path / 'missing'
+
+    monkeypatch.setattr(web, 'list_sessions', lambda: [
+        {'cwd': str(missing)},
+        {'cwd': str(d1)},
+        {'cwd': str(d1)},
+        {'cwd': str(d2)},
+    ])
+    assert web.recent_directories(limit=5) == [str(d1), str(d2)]
+
+    spawned = []
+    monkeypatch.setattr(web, '_cw_exec_prefix', lambda: ['cw.exe'])
+    monkeypatch.setattr(web.os, 'name', 'nt')
+    monkeypatch.setattr(web.shutil, 'which', lambda name: 'C:\\bin\\wt.exe' if name == 'wt.exe' else None)
+    monkeypatch.setattr(web.subprocess, 'Popen', lambda argv, **kw: spawned.append((argv, kw)))
+
+    res = web.launch_agent_terminal('claude', cwd=str(d1), yolo=True)
+    assert res == {'ok': True, 'tool': 'claude', 'cwd': str(d1)}
+    assert spawned[0][0] == ['C:\\bin\\wt.exe', '-d', str(d1), 'cw.exe', 'claude', '-y']
+
+    with pytest.raises(ValueError):
+        web.launch_agent_terminal('unknown-tool', cwd=str(d1))
+    with pytest.raises(ValueError):
+        web.launch_agent_terminal('claude', cwd=str(missing))
+
+
+def test_tray_launch_menu_items_lists_installed_tools_and_recent_dirs(monkeypatch, tmp_path):
+    pystray = pytest.importorskip('pystray')
+    d1 = tmp_path / 'proj1'
+    d1.mkdir()
+
+    monkeypatch.setattr(web, 'available_tools', lambda: [
+        {'tool': 'claude', 'installed': True},
+        {'tool': 'codex', 'installed': False},
+    ])
+    monkeypatch.setattr(web, 'recent_directories', lambda limit=6: [str(d1)])
+
+    ctrl = tray.TrayController()
+    items = tray._launch_menu_items(pystray, ctrl)
+    assert len(items) == 1
+    assert items[0].text == 'claude'
+    sub = list(items[0].submenu.items)
+    assert 'proj1' in sub[0].text
+    assert sub[-1].text == '主目录 (~)'
