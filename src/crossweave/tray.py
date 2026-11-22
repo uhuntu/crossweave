@@ -111,18 +111,35 @@ class TrayController:
         return self.url
 
     def stop_server(self):
-        """Shut down the running Workspace server if active."""
+        """Shut down the running Workspace server if active.
+
+        The blocking close runs on a daemon thread with a bounded join so a
+        stuck ``shutdown()``/``server_close()`` can never wedge the caller
+        (e.g. the tray quit handler).
+        """
         with self._lock:
             server = self._server
             thread = self._thread
             self._server = None
             self._thread = None
         if server is not None:
-            server.shutdown()
-            server.server_close()
+            closer = threading.Thread(target=self._close_server, args=(server,), daemon=True)
+            closer.start()
+            closer.join(timeout=5.0)
         if thread is not None and thread.is_alive():
             thread.join(timeout=2.0)
         self._sync_icon_title()
+
+    @staticmethod
+    def _close_server(server):
+        try:
+            server.shutdown()
+        except Exception:
+            pass
+        try:
+            server.server_close()
+        except Exception:
+            pass
 
     def restart_server(self):
         """Restart the Workspace server and update the tray tooltip."""
@@ -139,10 +156,14 @@ class TrayController:
             webbrowser.open(url)
 
     def quit(self):
-        """Stop the Workspace server and exit the tray event loop."""
+        """Stop the tray event loop first, then shut the server down (bounded)."""
+        icon = self._icon
+        if icon is not None:
+            try:
+                icon.stop()
+            except Exception:
+                pass
         self.stop_server()
-        if self._icon is not None:
-            self._icon.stop()
 
     def recent_dirs(self, limit=6, ttl=30.0):
         """Return recently used existing directories, cached briefly for responsive menus."""

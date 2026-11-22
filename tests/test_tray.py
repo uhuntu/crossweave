@@ -95,6 +95,31 @@ def test_tray_controller_open_workspace_and_quit(monkeypatch):
     assert fake_icon.title == 'CrossWeave (已停止)'
 
 
+def test_tray_controller_quit_survives_stuck_server_shutdown(monkeypatch):
+    """quit() must stop the tray icon even when server cleanup deadlocks."""
+    import threading
+
+    class HangingWorkspace(_FakeWorkspace):
+        def shutdown(self):
+            threading.Event().wait()  # never returns
+
+    monkeypatch.setattr(web, '_load_gui_env', lambda: None)
+    monkeypatch.setattr(web, 'Workspace', HangingWorkspace)
+
+    fake_icon = SimpleNamespace(title='', stopped=False)
+    fake_icon.stop = lambda: setattr(fake_icon, 'stopped', True)
+
+    ctrl = tray.TrayController(port=9124)
+    ctrl.attach_icon(fake_icon)
+    ctrl.start_server()
+
+    done = threading.Event()
+    threading.Thread(target=lambda: (ctrl.quit(), done.set()), daemon=True).start()
+    assert done.wait(timeout=15), 'quit() blocked on a stuck server.shutdown()'
+    assert fake_icon.stopped is True
+    assert ctrl.url == ''
+
+
 def test_cmd_tray_reports_missing_dependencies(monkeypatch, capsys):
     def missing():
         raise RuntimeError('cw tray requires optional dependencies (pystray, Pillow).')
