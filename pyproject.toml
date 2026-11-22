@@ -20,6 +20,7 @@ classifiers = [
 
 [project.optional-dependencies]
 test = ["pytest"]
+tray = ["pystray>=0.19", "Pillow>=9.0"]
 
 [project.urls]
 Homepage = "https://github.com/uhuntu/crossweave"
@@ -41,6 +42,9 @@ aim = "crossweave.cli:main"
 aimux = "crossweave.cli:main"
 clisweave = "crossweave.cli:main"
 ai-sessions = "crossweave.sessions:main"
+
+[project.gui-scripts]
+cw-tray = "crossweave.tray:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

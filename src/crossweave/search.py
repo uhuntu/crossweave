@@ -44,7 +44,7 @@ import tempfile
 import time
 from typing import NamedTuple
 
-from . import note, retrieval, sessions
+from . import common, note, retrieval, sessions
 
 # On Linux, ask the kernel to signal a judge subprocess if *this* process
 # dies for any reason -- including a hard SIGKILL or OOM-kill, which no
@@ -320,6 +320,7 @@ def _call_judge(judge, prompt):
                 encoding="utf-8", errors="replace", cwd=cwd,
                 timeout=JUDGE_TIMEOUT_SECONDS,
                 preexec_fn=_die_with_parent,
+                **common.no_window_kwargs(),
             )
     except FileNotFoundError:
         print(f"cw search: '{judge_cmd[0]}' not found on PATH", file=sys.stderr)

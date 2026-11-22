@@ -304,7 +304,7 @@ def _codex_without_daemon(argv):
         result = subprocess.run(
             spawnable(["codex", "--help"]), stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL, text=True, encoding="utf-8",
-            errors="replace", timeout=5)
+            errors="replace", timeout=5, **common.no_window_kwargs())
     except (OSError, subprocess.TimeoutExpired):
         return argv
     if result.returncode == 0 and "--no-daemon" in result.stdout:

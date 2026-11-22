@@ -4,7 +4,7 @@ import os
 import re
 import sys
 
-from . import __version__, alias, autoexport, chat, common, delete, doctor, exporter, machines, note, rename, search, sessions, show, ui, update, web, wiki
+from . import __version__, alias, autoexport, chat, common, delete, doctor, exporter, machines, note, rename, search, sessions, show, tray, ui, update, web, wiki
 
 TOOLS = ("claude", "codex", "kimi", "step", "pi", "opencode", "zcode", "agy")
 
@@ -26,6 +26,7 @@ USAGE = f"""Usage: cw <{'|'.join(TOOLS)}> [common-options] [prompt] [-- extra na
                   [--content notes|transcript] [--judge TOOL]
        cw chat <tool> <session-id-or-prefix>
        cw web [--port 8765] [--no-open]   # local browser workspace
+       cw tray [--port 8765] [--open]     # system tray host for the local workspace
        cw <N> <{'|'.join(TOOLS)}> [native-options]
        cw <N> delete [-y]      # remove session files, keeping a backup
        cw delete <N> [-y]
@@ -149,7 +150,7 @@ Examples:
 # this list, and the test asserts it matches what main() actually dispatches,
 # so adding a subcommand cannot leave the message stale the way it was when
 # `stats` and `step` were both missing from it.
-SUBCOMMANDS = ("sessions", "full", "search", "resume", "show", "export", "chat", "web", "gui", "update", "stats", "doctor", "alias", "machines", "rename", "delete", "note", "context", "wiki", "ask", "ui")
+SUBCOMMANDS = ("sessions", "full", "search", "resume", "show", "export", "chat", "web", "gui", "tray", "update", "stats", "doctor", "alias", "machines", "rename", "delete", "note", "context", "wiki", "ask", "ui")
 
 
 def usage(name="cw"):
@@ -560,6 +561,8 @@ def main():
         sys.exit(web.cmd_web(rest))
     if tool == "gui":
         sys.exit(web.cmd_web(["--app", *rest]))
+    if tool == "tray":
+        sys.exit(tray.cmd_tray(rest))
     if sessions.ROW_NUMBER_RE.match(tool):
         # `cw <N>` is shorthand for `cw resume <N>`.
         if rest and rest[0] == "delete":

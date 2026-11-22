@@ -585,10 +585,13 @@ class Handler(BaseHTTPRequestHandler):
                          "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'")
 
     def send_bytes(self, body, kind, status=200):
-        self.headers_for(status, kind)
-        self.send_header('Content-Length', str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.headers_for(status, kind)
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except ConnectionError:
+            pass
 
     def reply(self, data, status=200):
         self.send_bytes(json.dumps(data, ensure_ascii=False).encode(),
@@ -681,7 +684,8 @@ class Handler(BaseHTTPRequestHandler):
                 proc = subprocess.Popen(sessions.spawnable(chat.turn_command(tool, sid, text)),
                                         cwd=cwd, stdin=subprocess.DEVNULL,
                                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                        start_new_session=os.name == 'posix')
+                                        start_new_session=os.name == 'posix',
+                                        **common.no_window_kwargs())
                 self.server.processes.add(proc)
             self.headers_for(200, 'application/x-ndjson; charset=utf-8')
             self.end_headers()
@@ -697,7 +701,7 @@ class Handler(BaseHTTPRequestHandler):
             if tail:
                 self.event(dict(output=tail))
             self.event(dict(done=True, code=proc.wait()))
-        except (BrokenPipeError, ConnectionResetError):
+        except ConnectionError:
             pass
         except OSError as exc:
             if proc is None:

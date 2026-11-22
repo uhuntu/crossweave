@@ -17,12 +17,22 @@ import json
 import ntpath
 import os
 import re
+import subprocess
 import sys
 import time
 
 
 
 HOME = os.path.expanduser("~")
+
+
+def no_window_kwargs():
+    """Return subprocess kwargs that suppress console windows on Windows."""
+    if os.name == 'nt':
+        flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+        if flags:
+            return {'creationflags': flags}
+    return {}
 CLAUDE_PROJECTS = os.path.join(HOME, ".claude", "projects")
 CODEX_HOME = os.path.join(HOME, ".codex")
 KIMI_HOME = os.path.join(HOME, ".kimi-code")
