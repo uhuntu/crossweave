@@ -33,6 +33,7 @@ import time
 # titles through it), so a top-level import back is safe -- and the merged
 # listing and the resume paths below reach it as a module attribute, which
 # is also the patch surface its tests aim at.
+from . import common
 from . import machines
 
 # Re-exported with the per-tool names below: everything that reached these
