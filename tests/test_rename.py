@@ -1390,3 +1390,24 @@ def test_suggested_rename_shows_the_judge_the_digest(monkeypatch, tmp_path):
     assert "should not" not in prompt
     with open(r["path"], encoding="utf-8") as fh:
         assert '"customTitle": "CYW55560 HCD 加载失败"' in fh.read()
+
+
+def test_empty_codex_handoff_uses_source_conversation(monkeypatch, tmp_path):
+    rollout = tmp_path / "rollout.jsonl"
+    rollout.write_text("\n".join(json.dumps({
+        "type": "response_item",
+        "payload": {"type": "message", "role": "user",
+                    "content": [{"type": "input_text", "text": text}]},
+    }) for text in (
+        "<environment_context>setup</environment_context>",
+        "Continue the work from this agy session (source-id).",
+    )))
+    monkeypatch.setattr(search, "snippet_for", lambda row: "")
+    source = {"tool": "agy", "id": "source-id"}
+    monkeypatch.setattr(sessions, "_find_record",
+                        lambda tool, sid: source if (tool, sid) == ("agy", "source-id") else None)
+    monkeypatch.setattr(sessions, "agy_handoff_messages",
+                        lambda sid: [("user", "Investigate Crossweave update failures")])
+
+    row = {"tool": "codex", "id": "target-id", "path": str(rollout)}
+    assert rename._digest_for(row) == "User asked: Investigate Crossweave update failures"

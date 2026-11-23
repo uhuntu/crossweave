@@ -592,10 +592,10 @@ def _request_text(text):
     return flat
 
 
-def _digest_for(r):
+def _digest_for(r, handoff_depth=0):
     """What the judge reads to title one session -- see DIGEST_REQUESTS.
-    Falls back on the search snippet when the transcript yields nothing,
-    so a session the digest cannot read is still offered as before."""
+    Falls back on the search snippet and then the handoff source when the
+    session has no conversation of its own."""
     from . import search, sessions
 
     requests, replies, seen = [], [], set()
@@ -611,7 +611,12 @@ def _digest_for(r):
             if flat:
                 replies.append(flat)
     if not requests and not replies:
-        return (search.snippet_for(r) or "").strip()
+        snippet = (search.snippet_for(r) or "").strip()
+        if snippet or handoff_depth >= sessions.HANDOFF_MAX_DEPTH:
+            return snippet
+        source = sessions._handoff_source_of(r)
+        record = sessions._find_record(*source) if source else None
+        return _digest_for(record, handoff_depth + 1) if record else ""
     parts = []
     if requests:
         parts.append("User asked: " + sessions.join_with_fair_budget(

@@ -1280,12 +1280,17 @@ def handoff_source(path, tool, limit=200):
                     continue  # not the opening message: session_meta, a context dump, a review
                 # The first message decides; a seed appearing later is a
                 # quote, not the thing that opened the session.
-                for s in texts:
-                    stripped = s.lstrip()
-                    if stripped.startswith(HANDOFF_PROMPT_PREFIX):
-                        m = HANDOFF_SEED_RE.match(stripped)
-                        if m:
-                            return m.group(1), m.group(2)
+                texts = [text.lstrip() for text in texts if text.strip()]
+                if tool == "codex":
+                    texts = [text for text in texts
+                             if text.startswith(HANDOFF_PROMPT_PREFIX)
+                             or not text.startswith(CODEX_BOILERPLATE_PREFIXES)]
+                if not texts:
+                    continue
+                for text in texts:
+                    m = HANDOFF_SEED_RE.match(text)
+                    if m:
+                        return m.group(1), m.group(2)
                 break
     except OSError:
         pass
@@ -1660,7 +1665,13 @@ def _resolve_title_and_cwd(r, depth=0):
     # -- unless the user has since named the session themselves: that name
     # is the one they chose for it, and `cw rename` reporting success while
     # the row kept its `(handoff) ...` label read as a rename that failed.
-    if depth < HANDOFF_MAX_DEPTH and not _has_user_title(r):
+    # Codex stores manual and generated titles in the same field. Preserve a
+    # stored topic title so it remains visible after a rename.
+    codex_topic_title = (tool == "codex" and r.get("title")
+                         and title != "(no title)" and not is_trivial_title(title)
+                         and not title.startswith(HANDOFF_PROMPT_PREFIX)
+                         and not is_seed_restatement(title))
+    if depth < HANDOFF_MAX_DEPTH and not codex_topic_title and not _has_user_title(r):
         source = _handoff_source_of(r)
         record = _find_record(*source) if source else None
         if record:
