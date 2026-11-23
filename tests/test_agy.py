@@ -200,6 +200,33 @@ def test_rename_agy(store, tmp_path):
     assert agy.agy_light_records()[0]["title"] == "新标题 agy"
 
 
+def test_rename_agy_cli_store(store, monkeypatch, tmp_path):
+    cli_root = tmp_path / "antigravity-cli"
+    cli_root.mkdir(parents=True, exist_ok=True)
+    cli_store = Store(cli_root)
+    try:
+        monkeypatch.setattr(agy, "AGY_CLI_DIR", str(cli_root))
+        monkeypatch.setattr(agy, "AGY_CLI_DB", str(cli_store.db_path))
+        monkeypatch.setattr(agy, "AGY_CLI_BRAIN", str(cli_store.brain))
+        monkeypatch.setattr(agy, "AGY_TITLES_FILE", str(tmp_path / "agy_titles.json"))
+
+        cli_store.session(SID, title="Old CLI title")
+        ann_dir = cli_root / "annotations"
+        ann_dir.mkdir(parents=True, exist_ok=True)
+        pbtxt = ann_dir / f"{SID}.pbtxt"
+        pbtxt.write_text('title:"Old CLI title"\n', encoding="utf-8")
+
+        assert rename._apply({"tool": "agy", "id": SID}, "New CLI title") is True
+        row_title = cli_store.con.execute(
+            "SELECT title FROM conversation_summaries WHERE conversation_id=?", (SID,)
+        ).fetchone()[0]
+        assert row_title == "New CLI title"
+        assert pbtxt.read_text(encoding="utf-8") == 'title:"New CLI title"\n'
+        assert agy.agy_light_records()[0]["title"] == "New CLI title"
+    finally:
+        cli_store.con.close()
+
+
 def test_renamed_agy_handoff_keeps_custom_title(store):
     src_sid = "bbbbbbbb-1111-2222-3333-444444444444"
     store.session(src_sid, title="Original source topic")

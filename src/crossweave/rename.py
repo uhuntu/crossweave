@@ -190,23 +190,32 @@ def _rewrite_agy_pbtxt(path, title):
         pass
 
 
-def _rename_agy(sid, title):
+def _rename_agy_db(agy_dir, db_path, sid, title):
     import sqlite3
 
-    from . import agy
-
-    if not os.path.isfile(agy.AGY_DB):
+    if not os.path.isfile(db_path):
         return False
-    con = sqlite3.connect(agy.AGY_DB, timeout=10)
+    con = sqlite3.connect(db_path, timeout=10)
     try:
         with con:
-            row = con.execute(
-                "SELECT raw_summary FROM conversation_summaries WHERE conversation_id=?",
-                (sid,),
-            ).fetchone()
+            cols = {
+                r[1]
+                for r in con.execute("PRAGMA table_info(conversation_summaries)").fetchall()
+            }
+            has_raw = "raw_summary" in cols
+            if has_raw:
+                row = con.execute(
+                    "SELECT raw_summary FROM conversation_summaries WHERE conversation_id=?",
+                    (sid,),
+                ).fetchone()
+            else:
+                row = con.execute(
+                    "SELECT 1 FROM conversation_summaries WHERE conversation_id=?",
+                    (sid,),
+                ).fetchone()
             if row is None:
                 return False
-            new_raw = _rewrite_agy_raw_summary(row[0], title)
+            new_raw = _rewrite_agy_raw_summary(row[0], title) if has_raw else None
             if new_raw is not None:
                 cur = con.execute(
                     "UPDATE conversation_summaries SET title=?, raw_summary=? WHERE conversation_id=?",
@@ -218,12 +227,26 @@ def _rename_agy(sid, title):
                     (title, sid),
                 )
             if cur.rowcount > 0:
-                _rewrite_agy_pbtxt(os.path.join(agy.AGY_DIR, "annotations", f"{sid}.pbtxt"), title)
-                agy.agy_set_custom_title(sid, title)
+                _rewrite_agy_pbtxt(os.path.join(agy_dir, "annotations", f"{sid}.pbtxt"), title)
                 return True
             return False
     finally:
         con.close()
+
+
+def _rename_agy(sid, title):
+    from . import agy
+
+    updated = False
+    for agy_dir, db_path in (
+        (agy.AGY_DIR, agy.AGY_DB),
+        (agy.AGY_CLI_DIR, agy.AGY_CLI_DB),
+    ):
+        if _rename_agy_db(agy_dir, db_path, sid, title):
+            updated = True
+    if updated:
+        agy.agy_set_custom_title(sid, title)
+    return updated
 
 
 def _rename_codex(sid, title):
