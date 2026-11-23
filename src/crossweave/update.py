@@ -6,10 +6,12 @@ zcode and workbuddy are desktop apps that update themselves, and codebuddy is
 an npm package the user updates through their package manager -- and
 `cw update tools` only iterates this dict."""
 import importlib
+import json
 import os
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 TOOL_UPDATE_CMD = {
     "claude": ["claude", "update"],
@@ -412,8 +414,47 @@ def update_self():
     return code
 
 
+def mise_upgrade_command(tool, executable):
+    """Resolve a PATH executable to its active mise package."""
+    data_home = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share")
+    data_dir = Path(os.environ.get("MISE_DATA_DIR") or data_home / "mise").resolve()
+    path = Path(executable).absolute()
+    real_path = path.resolve()
+    managed_dirs = [data_dir / name for name in ("installs", "shims", "command-wrappers")]
+    if not any(path.is_relative_to(root) or real_path.is_relative_to(root)
+               for root in managed_dirs):
+        return None
+    mise = shutil.which("mise")
+    if mise is None:
+        return None
+
+    try:
+        resolved = subprocess.check_output(
+            [mise, "which", tool], text=True, stderr=subprocess.DEVNULL,
+        ).strip()
+        packages = json.loads(subprocess.check_output(
+            [mise, "ls", "--current", "--json"], text=True, stderr=subprocess.DEVNULL,
+        ))
+    except (OSError, subprocess.CalledProcessError, ValueError):
+        return None
+
+    resolved_path = Path(resolved).resolve()
+    installs = data_dir / "installs"
+    if (path.is_relative_to(installs) or real_path.is_relative_to(installs)) and (
+        real_path != resolved_path
+    ):
+        return None
+    for package, versions in packages.items():
+        for version in versions:
+            if version.get("active") and resolved_path.is_relative_to(
+                Path(version["install_path"]).resolve()
+            ):
+                return [mise, "upgrade", package]
+    return None
+
+
 def update_tools():
-    """Run each of claude/codex/kimi/step's own update command, skipping any
+    """Update the underlying CLIs through mise or their own updater, skipping any
     that aren't installed. Returns 0 unless one that IS installed fails.
 
     A failed update is retried (per-tool counts in TOOL_UPDATE_RETRIES), and
@@ -428,12 +469,21 @@ def update_tools():
     (TOOL_UPDATE_PY_FALLBACK -- OpenAI's install script itself 404s)."""
     worst = 0
     for tool, argv in TOOL_UPDATE_CMD.items():
-        if shutil.which(tool) is None:
+        executable = shutil.which(tool)
+        if executable is None:
             print(f"{tool}: not installed, skipping")
             continue
 
-        retries = TOOL_UPDATE_RETRIES.get(tool, 0)
         proxy = os.environ.get(UPDATE_PROXY_ENV)
+        mise_argv = mise_upgrade_command(tool, executable)
+        if mise_argv:
+            print(f"Updating {tool} via mise ...", flush=True)
+            retries = TOOL_UPDATE_RETRIES.get(tool, int(bool(proxy)))
+            code, _, _ = run_with_retries(mise_argv, retries, proxy)
+            worst = max(worst, code)
+            continue
+
+        retries = TOOL_UPDATE_RETRIES.get(tool, 0)
         if retries == 0 and proxy and tool not in TOOL_UPDATE_FALLBACK_CMD:
             # No per-tool retry policy, but the proxy fallback still earns one
             # attempt -- without this, codex (0 retries) could never reach it.
@@ -484,7 +534,7 @@ def update_tools():
             last_code = getattr(module, py_fallback[1])(proxy=proxy)
 
         if last_code != 0:
-            worst = last_code
+            worst = max(worst, last_code)
             hint = TOOL_UPDATE_HINTS.get(tool)
             if hint:
                 print(f"  hint: {hint}", file=sys.stderr)
