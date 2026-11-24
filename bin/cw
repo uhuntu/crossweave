@@ -5,7 +5,25 @@ Delegates to the crossweave package under ../src.
 import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "src"))
+SHIM_PATH = os.path.realpath(__file__)
+REPO_DIR = os.path.dirname(os.path.dirname(SHIM_PATH))
+
+
+def _use_project_venv_for_tray():
+    if sys.argv[1:2] != ["tray"]:
+        return
+
+    if os.name == "nt":
+        python = os.path.join(REPO_DIR, ".venv", "Scripts", "python.exe")
+    else:
+        python = os.path.join(REPO_DIR, ".venv", "bin", "python")
+
+    if os.path.isfile(python) and os.path.realpath(sys.executable) != os.path.realpath(python):
+        os.execv(python, [python, SHIM_PATH, *sys.argv[1:]])
+
+
+_use_project_venv_for_tray()
+sys.path.insert(0, os.path.join(REPO_DIR, "src"))
 
 from crossweave.cli import main  # noqa: E402
 

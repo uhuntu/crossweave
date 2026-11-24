@@ -10,6 +10,7 @@ cache write, and a superscript "digit" reaching int().
 
 import json
 import os
+import runpy
 import subprocess
 import sys
 import time
@@ -244,6 +245,33 @@ def test_every_shipped_shim_reaches_the_cli():
                               timeout=120)
         assert proc.returncode == 0, f"{shim} did not run: {proc.stderr.strip()}"
         assert "Usage:" in proc.stdout, f"{shim} printed no usage"
+
+
+def test_cw_shim_uses_project_venv_for_tray(monkeypatch, tmp_path):
+    repo = tmp_path / "repo"
+    shim = repo / "bin" / "cw"
+    shim.parent.mkdir(parents=True)
+    venv_python = repo / ".venv" / "bin" / "python"
+    venv_python.parent.mkdir(parents=True)
+    venv_python.touch()
+    system_python = tmp_path / "system-python"
+    system_python.touch()
+
+    namespace = runpy.run_path(os.path.join(BIN_DIR, "cw"))
+    globals_ = namespace["_use_project_venv_for_tray"].__globals__
+    globals_["REPO_DIR"] = str(repo)
+    globals_["SHIM_PATH"] = str(shim)
+    monkeypatch.setattr(sys, "argv", [str(shim), "tray", "--open"])
+    monkeypatch.setattr(sys, "executable", str(system_python))
+    exec_calls = []
+    monkeypatch.setattr(os, "execv", lambda path, argv: exec_calls.append((path, argv)))
+
+    namespace["_use_project_venv_for_tray"]()
+
+    assert exec_calls == [(
+        str(venv_python),
+        [str(venv_python), str(shim), "tray", "--open"],
+    )]
 
 
 def test_the_usage_names_the_command_it_was_invoked_as():

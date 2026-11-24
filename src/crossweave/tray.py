@@ -154,7 +154,7 @@ class TrayController:
         if self._icon is None:
             return
         url = self.url
-        self._icon.title = f'CrossWeave ({url})' if url else 'CrossWeave (已停止)'
+        self._icon.title = f'CrossWeave ({url})' if url else 'CrossWeave (stopped)'
 
     def start_server(self):
         """Start the local Workspace server in a daemon thread and return its URL."""

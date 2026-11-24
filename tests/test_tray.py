@@ -78,7 +78,7 @@ def test_tray_controller_open_workspace_and_quit(monkeypatch):
 
     ctrl = tray.TrayController(port=9123)
     ctrl.attach_icon(fake_icon)
-    assert fake_icon.title == 'CrossWeave (已停止)'
+    assert fake_icon.title == 'CrossWeave (stopped)'
 
     url = ctrl.start_server()
     assert url == 'http://127.0.0.1:9123'
@@ -93,7 +93,7 @@ def test_tray_controller_open_workspace_and_quit(monkeypatch):
     assert fake_icon.stopped is True
     ctrl.stop_server(timeout=0.5)
     assert ctrl.url == ''
-    assert fake_icon.title == 'CrossWeave (已停止)'
+    assert fake_icon.title == 'CrossWeave (stopped)'
 
 
 def test_tray_controller_quit_survives_stuck_server_shutdown(monkeypatch):
