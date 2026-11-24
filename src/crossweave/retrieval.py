@@ -4,7 +4,9 @@ import json
 import os
 import re
 
-from . import common, opencode, scan, sessions, zcode
+from . import agy, common, opencode, scan, sessions, zcode
+
+SESSION_READERS = {'agy': agy, 'opencode': opencode, 'zcode': zcode}
 
 # Generic question words add little evidence and otherwise crowd out the
 # identifiers or Chinese word fragments the user actually wants to find.
@@ -39,8 +41,8 @@ def record_texts(record):
     window selector retains only its best hits and one adjacent text block.
     """
     tool = record.get('tool')
-    if tool in ('zcode', 'opencode'):
-        module = zcode if tool == 'zcode' else opencode
+    module = SESSION_READERS.get(tool)
+    if module is not None:
         for i, text in enumerate(module._all_texts(record['id'], with_tool_output=True), 1):
             yield tool, f'{tool} part {i}', text
         return

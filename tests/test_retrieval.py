@@ -89,8 +89,8 @@ def test_file_reader_uses_each_tools_content_format(tmp_path, tool):
     assert 'conversation.jsonl:3' in result
 
 
-@pytest.mark.parametrize('tool', ['zcode', 'opencode'])
-def test_database_reader_includes_tool_output(monkeypatch, tool):
+@pytest.mark.parametrize('tool', ['zcode', 'opencode', 'agy'])
+def test_session_reader_uses_literal_search_text(monkeypatch, tool):
     module = getattr(retrieval, tool)
     calls = []
     def all_texts(sid, with_tool_output=False):
