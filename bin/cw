@@ -18,7 +18,8 @@ def _use_project_venv_for_tray():
     else:
         python = os.path.join(REPO_DIR, ".venv", "bin", "python")
 
-    if os.path.isfile(python) and os.path.realpath(sys.executable) != os.path.realpath(python):
+    venv_dir = os.path.join(REPO_DIR, ".venv")
+    if os.path.isfile(python) and os.path.abspath(sys.prefix) != os.path.abspath(venv_dir):
         os.execv(python, [python, SHIM_PATH, *sys.argv[1:]])
 
 

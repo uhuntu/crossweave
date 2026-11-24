@@ -263,6 +263,7 @@ def test_cw_shim_uses_project_venv_for_tray(monkeypatch, tmp_path):
     globals_["SHIM_PATH"] = str(shim)
     monkeypatch.setattr(sys, "argv", [str(shim), "tray", "--open"])
     monkeypatch.setattr(sys, "executable", str(system_python))
+    monkeypatch.setattr(sys, "prefix", str(tmp_path / "system-prefix"))
     exec_calls = []
     monkeypatch.setattr(os, "execv", lambda path, argv: exec_calls.append((path, argv)))
 
