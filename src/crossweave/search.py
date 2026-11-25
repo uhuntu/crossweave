@@ -360,20 +360,36 @@ def _is_session_limit(result):
 # chain aborted at codex instead of advancing to the remaining judge. Every
 # marker is specific enough that an ordinary batch failure (a crash, an
 # empty reply, a transient network error) will not trip it.
+#
+# step spells "no credential" differently again -- and its login is fine
+# when it does. step resolves its model from a catalog fetched over the
+# network at startup, cached in models-store.json; when that fetch fails
+# (a network blip, or several step processes starting at once -- cw's own
+# parallel judge batches) and the cache is empty, step falls back to an
+# unresolved model and dies with "No API key found for the selected
+# model." or "No models available. Check your installation or add models
+# to models.json." Neither matched, so an unpinned `cw rename` or
+# `cw search` aborted on step -- the one judge whose failure was
+# transient -- while claude, pi and agy sat unused in the chain.
 _AUTH_FAILURE_MARKERS = (
     "failed to authenticate",
     "re-authenticate",
     "failed to refresh token",
     "token_expired",
     "authentication token is expired",
+    "no api key found",
+    "no models available",
+    "no model selected",
 )
 
 
 def _is_auth_failure(result):
     """A judge's login expired or was revoked ("Failed to authenticate. API
-    Error: 401 OAuth access token has expired"). Like a session limit, it
-    makes that judge unusable for the whole run -- every batch fails the
-    same way -- so it warrants the same fall-through to another judge.
+    Error: 401 OAuth access token has expired"), or it cannot resolve any
+    credential at all (step's "No API key found for the selected model."
+    when its model catalog fetch failed). Like a session limit, it makes
+    that judge unusable for the whole run -- every batch fails the same
+    way -- so it warrants the same fall-through to another judge.
     Historically this was claude-only, but codex and kimi report expired
     credentials too -- each in its own wording, so the whole chain is
     matched rather than the one phrase claude happens to use."""
