@@ -353,3 +353,14 @@ def test_list_sessions_assigns_shared_topic_to_linked_sessions(monkeypatch, tmp_
     assert by_id['new-s']['topic'] == 'old-s'
     assert by_id['old-s']['topic'] == 'old-s'
     assert by_id['other-s']['topic'] == 'other-s'
+
+
+def test_workspace_address_in_use_raises_oserror():
+    import pytest
+
+    first = web.Workspace(('127.0.0.1', 0))
+    try:
+        with pytest.raises(OSError):
+            web.Workspace(('127.0.0.1', first.server_port))
+    finally:
+        first.server_close()

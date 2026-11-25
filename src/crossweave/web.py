@@ -645,7 +645,6 @@ class Workspace(ThreadingHTTPServer):
     daemon_threads = True
 
     def __init__(self, address, initial_home=''):
-        super().__init__(address, Handler)
         self.token = secrets.token_urlsafe(32)
         self.initial_home = initial_home or ''
         # SQLite readers cache connections: every read stays on one thread.
@@ -654,6 +653,7 @@ class Workspace(ThreadingHTTPServer):
         self.active = set()
         self.processes = set()
         self.closing = False
+        super().__init__(address, Handler)
 
     def read(self, fn, *args):
         return self.reader.submit(fn, *args).result()
