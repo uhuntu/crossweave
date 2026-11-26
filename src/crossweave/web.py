@@ -543,7 +543,19 @@ def _save_gui_env():
     os.replace(tmp, GUI_ENV_FILE)
 
 
+def _ensure_default_judge_on_path():
+    """The web search judge (search.DEFAULT_JUDGE, `step`) lives in
+    ~/.stepcode/bin, which a desktop launch's PATH does not include. The
+    saved gui-env PATH normally covers it, but that file can be missing or
+    stale; without `step` the default judge exits 127 on every search."""
+    step_bin = os.path.join(common.HOME, '.stepcode', 'bin')
+    parts = [p for p in os.environ.get('PATH', '').split(os.pathsep) if p]
+    if step_bin not in parts and os.path.isdir(step_bin):
+        os.environ['PATH'] = os.pathsep.join([*parts, step_bin])
+
+
 def _load_gui_env():
+    _ensure_default_judge_on_path()
     data = common.read_json(GUI_ENV_FILE)
     if not isinstance(data, dict):
         return

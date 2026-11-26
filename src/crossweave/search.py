@@ -155,9 +155,13 @@ class JudgeError(Exception):
     (chunks run in parallel; sys.exit there would only kill that thread,
     not the process, and the failure would go unnoticed)."""
 
-    def __init__(self, code):
-        super().__init__(f"judge failed with exit code {code}")
+    def __init__(self, code, detail=""):
+        msg = f"judge failed with exit code {code}"
+        if detail:
+            msg += f" ({detail})"
+        super().__init__(msg)
         self.code = code
+        self.detail = detail
 
 
 def gather_candidates(tool_filter, show_all=False):
@@ -349,6 +353,14 @@ def _is_session_limit(result):
     return "session limit" in output.lower()
 
 
+def _failure_detail(result):
+    """A one-line digest of what a failed judge said, for JudgeError. The web
+    UI shows str(JudgeError) and nothing else -- a bare "exit code 1" there
+    left a failed AI-title proposal undiagnosable without a terminal."""
+    text = " ".join(((result.stdout or "") + " " + (result.stderr or "")).split())
+    return text if len(text) <= 200 else text[:199] + "…"
+
+
 # A judge's own wording for "your login is dead". Each CLI says it
 # differently, so these are matched, not assumed to be one shared phrase:
 # claude emits "Failed to authenticate ... Re-authenticate", while codex's
@@ -432,12 +444,14 @@ def fallback_order():
 
 
 def call_judge_with_fallback(prompt, judge, judge_explicit, label):
-    """Run the judge (falling back off one that is unusable for the whole
-    run -- its own session limit, or an expired login -- unless the user
-    pinned one explicitly) against one prompt. A transient rate limit is
-    retried on the same judge first. Returns (proc, used_judge) for a call
-    that exited 0; any nonzero exit either moves down the chain or raises
-    JudgeError, so a returned proc always carries a usable run's raw output."""
+    """Run the judge (falling back off one that failed -- whether a
+    whole-run condition like its own session limit or an expired login, or
+    an unrecognized nonzero exit that the next judge's different backend may
+    not share -- unless the user pinned one explicitly) against one prompt.
+    A transient rate limit is retried on the same judge first. Returns
+    (proc, used_judge) for a call that exited 0; any nonzero exit either
+    moves down the chain or raises JudgeError, so a returned proc always
+    carries a usable run's raw output."""
     order = fallback_order()
     if judge_explicit:
         judges = [judge]
@@ -510,8 +524,18 @@ def call_judge_with_fallback(prompt, judge, judge_explicit, label):
                 print(f"  hint: {j} is being rate limited (concurrency/request cap), and the other judges use different backends. Retry, or use one of: {others}.", file=sys.stderr)
             else:
                 print(f"  hint: {j} is at its session limit. Retry after the reset time, or use one of: {others}.", file=sys.stderr)
-        raise JudgeError(result.returncode)
-    raise JudgeError(result.returncode if result else 1)
+        elif not judge_explicit and judge_idx + 1 < len(judges):
+            # An unrecognized failure used to abort the whole chain here, so
+            # one transient blip on the default judge (a network error, a
+            # backend 5xx) surfaced as a bare "exit code 1" while three
+            # healthy judges sat untried. The next judge talks to a
+            # different backend; a failure that is not one of the known
+            # whole-run conditions deserves the same fall-through.
+            print("  -> unrecognized failure; falling back to next judge", file=sys.stderr)
+            continue
+        raise JudgeError(result.returncode, _failure_detail(result))
+    raise JudgeError(result.returncode if result else 1,
+                     _failure_detail(result) if result else "")
 
 
 def run_judge_with_fallback(prompt, n, judge, judge_explicit, label):

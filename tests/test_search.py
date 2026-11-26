@@ -927,7 +927,9 @@ def test_cmd_search_partial_failure_still_shows_other_chunks(monkeypatch, capsys
     def fake_run(argv, input=None, **kw):
         # chunk 1 (contains "session 0") always fails every fallback judge;
         # chunk 2 succeeds immediately.
-        return Fail() if "— session 0 ::" in input else OK()
+        # --print judges (agy, ...) carry the prompt in argv, not stdin.
+        prompt = input if input is not None else " ".join(argv)
+        return Fail() if "— session 0 ::" in prompt else OK()
 
     monkeypatch.setattr(search.subprocess, "run", fake_run)
 
