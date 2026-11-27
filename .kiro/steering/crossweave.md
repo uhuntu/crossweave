@@ -18,6 +18,8 @@
 - 部分读取器（如 JSONL 读取、会话目录扫描）有意吞掉解析异常，以容忍脏数据。修改它们时保留这一行为。
 - 旧名称（`clisweave`、`aimux`、`ai`、`aim`、`ai-sessions`）为兼容保留，不要删除对应的入口。
 - `CodeBuddy` 和 `WorkBuddy` 支持目前已禁用。
+- `cw` 会把未识别的参数原样传给底层工具（透传）。`cw claude --mcp-config <文件>` 可以直接用。
+- `cw` 把 `-c` 当作 `--continue`。要给 codex 传 `-c key=value` 这类配置覆盖（例如 MCP 服务器配置），必须用 `--`：`cw codex -- -c mcp_servers.x.command="npx"`。
 
 ## 工作区注意事项
 - `.venv` 和 `.venv-1` 是本地虚拟环境，不要提交或修改。
