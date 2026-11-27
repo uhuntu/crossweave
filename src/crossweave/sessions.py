@@ -116,6 +116,15 @@ from .codex import (
     codex_rollout_title,
     codex_thread_names,
 )
+from .kiro import (
+    kiro_handoff_messages,
+    kiro_last_message,
+    kiro_light_records,
+    kiro_resolve,
+    kiro_session_cwd,
+    kiro_title,
+    kiro_turn_count,
+)
 from .kimi import (
     KIMI_PLACEHOLDER_TITLES,
     kimi_has_custom_title,
@@ -450,6 +459,12 @@ def session_handoff_details(tool, sid):
             return None
         cwd = record.get("cwd")
         messages = codebuddy_handoff_messages(record["path"])
+    elif tool == "kiro":
+        record = next((r for r in kiro_light_records(show_all=True) if r["id"] == sid), None)
+        if not record:
+            return None
+        cwd = record.get("cwd")
+        messages = kiro_handoff_messages(record["path"])
     else:
         record = next((r for r in kimi_light_records(show_all=True) if r["id"] == sid), None)
         if not record:
@@ -719,6 +734,11 @@ def perform_handoff(source_tool, source_id, target_tool, extra, forced_cwd=None,
         # -p/--print, -i/--prompt-interactive, or stdin"); -i runs the seed
         # and lands in the interactive session it belongs to.
         exec_or_die(["agy", *extra, "-i", prompt])
+    elif target_tool == "kiro":
+        # kiro-cli takes the first question as a positional argument and
+        # stays interactive afterwards, so the seed needs no separate run.
+        # fs_read is trusted so the export can be read without a prompt.
+        exec_or_die(["kiro-cli", "chat", "--trust-tools=fs_read", *extra, prompt])
     else:
         exec_or_die([target_tool, *extra, prompt])
 
@@ -789,6 +809,7 @@ def _all_light_records():
     light = list(claude_light_records())
     light += codex_light_records()
     light += kimi_light_records(False)
+    light += kiro_light_records(False)
     light += step_light_records(False)
     light += pi_light_records(False)
     light += opencode_light_records(False)
@@ -886,6 +907,7 @@ def _run_list(limit, tool_filter, home_filter, cwd_filter, show_all,
         ("claude", claude_light_records),
         ("codex", codex_light_records),
         ("kimi", lambda: kimi_light_records(show_all)),
+        ("kiro", lambda: kiro_light_records(show_all)),
         ("step", lambda: step_light_records(show_all)),
         ("pi", lambda: pi_light_records(show_all)),
         ("opencode", lambda: opencode_light_records(show_all)),
@@ -1053,6 +1075,8 @@ def cmd_stats(args):
         light += codex_light_records()
     if tool_filter in (None, "kimi"):
         light += kimi_light_records(True)
+    if tool_filter in (None, "kiro"):
+        light += kiro_light_records(True)
     if tool_filter in (None, "step"):
         light += step_light_records(True)
     if tool_filter in (None, "pi"):
@@ -1597,6 +1621,8 @@ def _find_record(tool, sid):
         return rec
     if tool == "kimi":
         return next((r for r in kimi_light_records(show_all=True) if r["id"] == sid), None)
+    if tool == "kiro":
+        return next((r for r in kiro_light_records(show_all=True) if r["id"] == sid), None)
     if tool == "step":
         return next((r for r in step_light_records(show_all=True) if r["id"] == sid), None)
     if tool == "pi":
@@ -1654,6 +1680,9 @@ def _resolve_title_and_cwd(r, depth=0):
         # Same: the titler wrote it (into the file, or opencode's store), and
         # the light record read it
         title = r.get("title") or "(no title)"
+        cwd_show = r.get("cwd") or "?"
+    elif tool == "kiro":
+        title = kiro_title(r["path"]) or "(no title)"
         cwd_show = r.get("cwd") or "?"
     else:
         title = kimi_title(r["dir"])
@@ -1740,6 +1769,8 @@ def session_turns(record):
     reads as None rather than 0: a store that writes its JSON with spaces
     after the colons would otherwise show every session as turn-free."""
     tool = record.get("tool")
+    if tool == "kiro":
+        return kiro_turn_count(record.get("path"))
     if tool in ("codebuddy", "workbuddy"):
         # The single-pass reader already counted the genuine prompts -- the
         # slash-command echoes it skips are the reason this tool has no
@@ -1872,6 +1903,9 @@ def session_last_message(record):
         return (preview_text(last) or None) if last else None
     if record.get("tool") == "opencode":
         last = opencode_last_message(record.get("id"))
+        return (preview_text(last) or None) if last else None
+    if record.get("tool") == "kiro":
+        last = kiro_last_message(record.get("path"))
         return (preview_text(last) or None) if last else None
     if record.get("tool") == "agy":
         last = agy_last_message(record.get("id"))
@@ -2125,7 +2159,7 @@ def _zcode_next_instruction(extra):
 ID_RESOLVERS = {
     "claude": claude_resolve, "codex": codex_resolve, "kimi": kimi_resolve,
     "step": step_resolve, "pi": pi_resolve, "opencode": opencode_resolve,
-    "zcode": zcode_resolve, "agy": agy_resolve,
+    "zcode": zcode_resolve, "agy": agy_resolve, "kiro": kiro_resolve,
 }
 
 
@@ -2254,6 +2288,8 @@ def cmd_resume(args):
                   "`cw sessions --tool workbuddy` and resume a row, or use the app's "
                   "own session list", file=sys.stderr)
             return
+        elif tool == "kiro":
+            exec_or_die(["kiro-cli", "chat", "--resume-picker"])
         else:
             # no id -> step opens its own session selector
             exec_or_die(["step", "--resume"])
@@ -2290,7 +2326,8 @@ def cmd_resume(args):
     cwd_getter = {"claude": claude_session_cwd, "codex": codex_cwd, "kimi": kimi_session_cwd,
                   "step": step_session_cwd, "pi": pi_session_cwd,
                   "opencode": opencode_session_cwd, "zcode": zcode_session_cwd,
-                  "agy": agy_session_cwd, "codebuddy": codebuddy_session_cwd}[tool]
+                  "agy": agy_session_cwd, "codebuddy": codebuddy_session_cwd,
+                  "kiro": kiro_session_cwd}[tool]
 
     if forced_cwd:
         if not os.path.isdir(forced_cwd):
@@ -2399,6 +2436,8 @@ def cmd_resume(args):
               "pick the session in its task list", file=sys.stderr)
         _zcode_open_desktop(full_id)
         return
+    elif tool == "kiro":
+        exec_or_die(["kiro-cli", "chat", "--resume-id", full_id, *extra])
     else:
         exec_or_die(["kimi", "-S", full_id, *extra])
 

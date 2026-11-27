@@ -36,7 +36,7 @@ ACTION_KEYS = {"n": "note", "d": "delete", "r": "rename", "v": "show"}
 TOOL_COLORS = {
     "claude": "YELLOW", "codex": "GREEN", "kimi": "CYAN", "step": "MAGENTA",
     "zcode": "BLUE",
-    "pi": "YELLOW", "opencode": "WHITE", "agy": "CYAN",
+    "pi": "YELLOW", "opencode": "WHITE", "agy": "CYAN", "kiro": "RED",
 }
 
 

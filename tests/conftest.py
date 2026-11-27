@@ -22,6 +22,7 @@ def _isolate_stores(monkeypatch, tmp_path):
     monkeypatch.setattr(common, "CLAUDE_PROJECTS", str(nowhere / "claude"))
     monkeypatch.setattr(common, "CODEX_HOME", str(nowhere / "codex"))
     monkeypatch.setattr(common, "KIMI_HOME", str(nowhere / "kimi"))
+    monkeypatch.setattr(common, "KIRO_HOME", str(nowhere / "kiro"))
     monkeypatch.setattr(common, "EXTRA_HOMES_FILE", str(nowhere / "homes"))
     monkeypatch.delenv("CROSSWEAVE_EXTRA_HOMES", raising=False)
     monkeypatch.setattr(step, "STEP_SESSIONS", str(nowhere / "step"))

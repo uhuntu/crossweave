@@ -12,7 +12,6 @@ import time
 
 from . import common
 
-SESSIONS_DIR = os.path.join(common.HOME, ".kiro", "sessions")
 
 # Titles Kiro writes before it has named a session. A session that still
 # carries one of these falls back to its first user message.
@@ -22,11 +21,12 @@ KIRO_TITLE_CHARS = 70
 
 def _session_dirs():
     """Every sess_* directory under every workspace-hash directory."""
-    if not os.path.isdir(SESSIONS_DIR):
+    sessions_dir = os.path.join(common.KIRO_HOME, "sessions")
+    if not os.path.isdir(sessions_dir):
         return []
     dirs = []
-    for ws in sorted(os.listdir(SESSIONS_DIR)):
-        wsdir = os.path.join(SESSIONS_DIR, ws)
+    for ws in sorted(os.listdir(sessions_dir)):
+        wsdir = os.path.join(sessions_dir, ws)
         if not os.path.isdir(wsdir):
             continue
         for name in sorted(os.listdir(wsdir)):
@@ -164,6 +164,20 @@ def kiro_snippet(sdir, max_messages=12, max_chars=800):
     sampled across the whole conversation, joined within max_chars."""
     texts = [text for _role, text in _turns(sdir)]
     return common.join_with_fair_budget(common.sample_stride(texts, max_messages), max_chars)
+
+
+def kiro_turn_count(sdir):
+    """Number of user turns, or None when the session has none to count."""
+    count = sum(1 for role, _text in _turns(sdir) if role == "user")
+    return count or None
+
+
+def kiro_last_message(sdir):
+    """The text of the last turn, user or assistant, or None."""
+    last = None
+    for _role, text in _turns(sdir):
+        last = text
+    return last
 
 
 def kiro_handoff_messages(sdir):

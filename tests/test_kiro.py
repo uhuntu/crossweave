@@ -30,9 +30,10 @@ def _session(root, ws, sid, *, title=None, cwd="/home/hunt/work/demo",
 
 @pytest.fixture
 def store(tmp_path, monkeypatch):
-    root = tmp_path / "sessions"
-    root.mkdir()
-    monkeypatch.setattr(kiro, "SESSIONS_DIR", str(root))
+    kiro_home = tmp_path / "kiro"
+    root = kiro_home / "sessions"
+    root.mkdir(parents=True)
+    monkeypatch.setattr(kiro.common, "KIRO_HOME", str(kiro_home))
     return root
 
 
@@ -129,3 +130,78 @@ def test_reader_does_not_write_to_store(store):
     kiro.kiro_light_records(show_all=False)
     kiro.kiro_title(str(sdir))
     assert sorted(p.name for p in sdir.iterdir()) == before
+
+
+# --- wiring into sessions.py -------------------------------------------------
+
+from crossweave import sessions  # noqa: E402
+
+
+def test_turn_count_and_last_message(store):
+    sdir = _session(store, "aaaa", "sess_k",
+                    turns=(("user", "one"), ("assistant", "two"), ("user", "three")))
+    assert kiro.kiro_turn_count(str(sdir)) == 2
+    assert kiro.kiro_last_message(str(sdir)) == "three"
+
+
+def test_kiro_is_a_registered_session_tool():
+    assert "kiro" in sessions.TOOLS
+    assert "kiro" in sessions.ID_RESOLVERS
+
+
+def test_listing_row_and_turns_come_from_the_store(store, tmp_path, monkeypatch):
+    _session(store, "aaaa", "sess_row", cwd=str(tmp_path),
+             turns=(("user", "fix the parser"), ("assistant", "done")))
+    rec = next(r for r in sessions._all_light_records() if r["id"] == "sess_row")
+    assert rec["tool"] == "kiro"
+    assert sessions.session_turns(rec) == 1
+    assert sessions._resolve_title_and_cwd(rec)[0] == "fix the parser"
+
+
+def test_resolve_and_find_record(store):
+    _session(store, "aaaa", "sess_find1")
+    assert sessions.ID_RESOLVERS["kiro"]("sess_find") == ["sess_find1"]
+    assert sessions._find_record("kiro", "sess_find1")["id"] == "sess_find1"
+    assert sessions._find_record("kiro", "sess_nope") is None
+
+
+def test_handoff_export_has_full_transcript_for_kiro(store, tmp_path, monkeypatch):
+    big = "z" * 3000
+    _session(store, "aaaa", "sess_exp", cwd=str(tmp_path),
+             turns=(("user", "start"), ("assistant", big)))
+    cwd, transcript = sessions.session_handoff_details("kiro", "sess_exp")
+    assert cwd == str(tmp_path)
+    assert "# Crossweave handoff from kiro" in transcript
+    assert "start" in transcript and big in transcript
+
+
+def test_handoff_into_kiro_is_one_interactive_step(store, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sessions, "HANDOFF_DIR", str(tmp_path / "handoffs"))
+    _session(store, "aaaa", "sess_src", cwd=str(tmp_path),
+             turns=(("user", "hi"), ("assistant", "hello")))
+    launched = []
+    monkeypatch.setattr(sessions, "exec_or_die", lambda argv: launched.append(argv))
+    sessions.perform_handoff("kiro", "sess_src", "kiro", [])
+    assert launched, "kiro was not launched"
+    argv = launched[-1]
+    assert argv[:4] == ["kiro-cli", "chat", "--trust-tools=fs_read", argv[3]]
+    assert "Read the complete conversation export at" in argv[3]
+    assert "--no-interactive" not in argv
+
+
+def test_resume_by_id_uses_resume_id(store, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _session(store, "aaaa", "sess_res1", cwd=str(tmp_path))
+    launched = []
+    monkeypatch.setattr(sessions, "exec_or_die", lambda argv: launched.append(argv))
+    sessions.cmd_resume(["kiro", "sess_res1"])
+    assert launched == [["kiro-cli", "chat", "--resume-id", "sess_res1"]]
+
+
+def test_resume_without_id_opens_kiro_picker(store, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    launched = []
+    monkeypatch.setattr(sessions, "exec_or_die", lambda argv: launched.append(argv))
+    sessions.cmd_resume(["kiro"])
+    assert launched == [["kiro-cli", "chat", "--resume-picker"]]

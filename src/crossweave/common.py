@@ -36,10 +36,11 @@ def no_window_kwargs():
 CLAUDE_PROJECTS = os.path.join(HOME, ".claude", "projects")
 CODEX_HOME = os.path.join(HOME, ".codex")
 KIMI_HOME = os.path.join(HOME, ".kimi-code")
+KIRO_HOME = os.path.join(HOME, ".kiro")
 EXTRA_HOMES_FILE = os.path.join(HOME, ".config", "crossweave", "homes")
 UUID_RE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 
-TOOLS = ("claude", "codex", "kimi", "step", "pi", "opencode", "zcode", "agy")
+TOOLS = ("claude", "codex", "kimi", "step", "pi", "opencode", "zcode", "agy", "kiro")
 
 # Built-in Windows Users\ folders that never hold a user's own sessions.
 _WINDOWS_SKIP_USERS = frozenset({

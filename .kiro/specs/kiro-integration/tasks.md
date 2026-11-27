@@ -22,10 +22,10 @@
 
 ## 3. 会话列表、恢复、查看（R3、R4、R5）
 
-- [ ] 3.1 `sessions.py`：导入 kiro 函数，把 `kiro_light_records` 加入 `_all_light_records`、列表源和 `_find_record`。
-- [ ] 3.2 恢复：`cw resume kiro <id>` 生成 `kiro-cli chat --resume-id <id>`，工作目录设为 `workspacePaths[0]`（R4.1、R4.2）。
-- [ ] 3.3 `cw show` 按 `user` 和 `assistant` 渲染；`tool_call` 和 `tool_result` 不显示为正文（R5.1、R5.2）。
-- [ ] 3.4 测试：覆盖列表、恢复命令和查看输出。
+- [x] 3.1 `sessions.py`：导入 kiro 函数，把 `kiro_light_records` 加入 `_all_light_records`、列表源和 `_find_record`。
+- [x] 3.2 恢复：`cw resume kiro <id>` 生成 `kiro-cli chat --resume-id <id>`，工作目录设为 `workspacePaths[0]`（R4.1、R4.2）。
+- [x] 3.3 `cw show` 按 `user` 和 `assistant` 渲染；`tool_call` 和 `tool_result` 不显示为正文（R5.1、R5.2）。
+- [x] 3.4 测试：覆盖列表、恢复命令和查看输出。
 
 ## 4. 搜索（R5）
 
@@ -35,11 +35,11 @@
 
 ## 5. 交接（R6）
 
-- [ ] 5.1 `session_handoff_details` 增加 `kiro` 分支，使用 `kiro_handoff_messages`。
-- [ ] 5.2 交接到 Kiro：启动 `kiro-cli chat --trust-tools=fs_read "<短提示>"`，一步进入交互会话（设计第 4 节，已验证）。提示指向导出文件路径。
-- [ ] 5.3 从 Kiro 交接出去：导出文件包含完整的 `user` 和 `assistant` 文本，不截断（R6.2）。
+- [x] 5.1 `session_handoff_details` 增加 `kiro` 分支，使用 `kiro_handoff_messages`。
+- [x] 5.2 交接到 Kiro：启动 `kiro-cli chat --trust-tools=fs_read "<短提示>"`，一步进入交互会话（设计第 4 节，已验证）。提示指向导出文件路径。
+- [x] 5.3 从 Kiro 交接出去：导出文件包含完整的 `user` 和 `assistant` 文本，不截断（R6.2）。
 - [ ] 5.4 `--ide` 会话不参与交接，报错说明原因（R6.3）。
-- [ ] 5.5 测试：交接提示内容、导出文件内容、`--trust-tools=fs_read` 出现在命令中。
+- [x] 5.5 测试：交接提示内容、导出文件内容、`--trust-tools=fs_read` 出现在命令中。
 
 ## 6. 不破坏现有行为（R7）
 
