@@ -2,6 +2,7 @@
 ~/.kiro/sessions tree in a temp directory; nothing touches the real store."""
 import calendar
 import json
+import os
 
 import pytest
 
@@ -250,3 +251,22 @@ def test_web_conversation_view_shows_kiro_turns(store, tmp_path):
     record = {"tool": "kiro", "id": "sess_web", "path": str(sdir)}
     assert web._session_messages("kiro", "sess_web", record) == [
         ("user", "where is the export"), ("assistant", "in the handoffs folder")]
+
+
+def test_delete_moves_the_kiro_session_to_a_backup_and_restores(store, tmp_path, monkeypatch):
+    from crossweave import delete
+    monkeypatch.setattr(sessions, "LIST_CACHE_FILE", str(tmp_path / "cache" / "list.json"))
+    sdir = _session(store, "aaaa", "sess_del", cwd=str(tmp_path),
+                    turns=(("user", "delete me"), ("assistant", "ok")))
+    record = next(r for r in kiro.kiro_light_records(show_all=True) if r["id"] == "sess_del")
+    assert delete._paths(record) == [str(sdir)]
+    backup = delete.delete_record(record)
+    assert not sdir.exists(), "session directory should have moved out of the store"
+    with open(os.path.join(backup, "manifest.json"), encoding="utf-8") as fh:
+        manifest = json.load(fh)
+    assert manifest["tool"] == "kiro" and manifest["id"] == "sess_del"
+    # restoring by moving the backup copy back returns the session to the store
+    import shutil
+    shutil.move(manifest["files"][0]["backup"], manifest["files"][0]["original"])
+    assert sdir.exists()
+    assert kiro.kiro_light_records(show_all=True)

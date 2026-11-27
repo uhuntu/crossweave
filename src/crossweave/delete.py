@@ -49,6 +49,9 @@ def _paths(record):
                 and m.group() == record['id']]
     if tool == 'kimi':
         return [record['dir']] if record.get('dir') else []
+    if tool == 'kiro':
+        # the whole session directory: session.json and messages.jsonl
+        return [record['path']] if record.get('path') else []
     if tool in ('claude', 'step', 'pi'):
         return [record['path']] if record.get('path') else []
     if tool == 'agy':
