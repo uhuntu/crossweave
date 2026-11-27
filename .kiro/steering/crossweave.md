@@ -19,7 +19,7 @@
 - 旧名称（`clisweave`、`aimux`、`ai`、`aim`、`ai-sessions`）为兼容保留，不要删除对应的入口。
 - `CodeBuddy` 和 `WorkBuddy` 支持目前已禁用。
 - `cw` 会把未识别的参数原样传给底层工具（透传）。`cw claude --mcp-config <文件>` 可以直接用。
-- `cw` 把 `-c` 当作 `--continue`。要给 codex 传 `-c key=value` 这类配置覆盖（例如 MCP 服务器配置），必须用 `--`：`cw codex -- -c mcp_servers.x.command="npx"`。
+- `cw` 把 `-c` 当作 `--continue`，但 codex 下 `-c <dotted.key>=<value>` 会原样交给 codex（见 `cli._is_codex_override`）。例如 `cw codex -c mcp_servers.x.command="npx"`。其他形式的 `-c` 仍然是 `--continue`。
 
 ## 工作区注意事项
 - `.venv` 和 `.venv-1` 是本地虚拟环境，不要提交或修改。

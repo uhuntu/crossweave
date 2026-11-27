@@ -176,6 +176,17 @@ class UsageError(Exception):
     testable function."""
 
 
+_CODEX_OVERRIDE_RE = re.compile(r"^[A-Za-z_][\w.-]*=")
+
+
+def _is_codex_override(tool, args, i):
+    """Whether args[i:i+2] is codex's own `-c key=value` config override.
+    For codex, -c otherwise belongs to cw's --continue; a dotted key followed
+    by `=` can only be a config setting, so it goes to codex unchanged."""
+    return (tool == "codex" and args[i] == "-c" and i + 1 < len(args)
+            and bool(_CODEX_OVERRIDE_RE.match(args[i + 1])))
+
+
 def build_command(tool, rest):
     """Normalize `rest` (the args after the tool name) into the native
     command to run. Pure function, no I/O — raises UsageError on bad
@@ -194,7 +205,10 @@ def build_command(tool, rest):
     i = 0
     while i < len(rest):
         a = rest[i]
-        if a in ("-p", "--print"):
+        if _is_codex_override(tool, rest, i):
+            trailing.extend(rest[i:i + 2])
+            i += 2
+        elif a in ("-p", "--print"):
             print_ = True
             i += 1
         elif a in ("-c", "--continue"):
@@ -396,7 +410,8 @@ def wants_context(tool, rest):
     if os.environ.get("CW_CONTEXT", "").strip().lower() in ("0", "off", "no", "false"):
         return False
     own = rest[:rest.index("--")] if "--" in rest else rest
-    if any(a in _NO_CONTEXT_FLAGS for a in own):
+    if any(a in _NO_CONTEXT_FLAGS for i, a in enumerate(own)
+           if not _is_codex_override(tool, own, i)):
         return False
     if any(flag in a for a in rest for flag in _OWN_PROMPT_FLAGS):
         return False

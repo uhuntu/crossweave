@@ -251,3 +251,37 @@ def test_bare_cw_row_count_follows_cw_limit(monkeypatch, env, expected):
     monkeypatch.setattr(sys, "argv", ["cw"])
     cli.main()
     assert seen == [["--limit", expected]]
+
+def test_codex_config_override_passes_through_unchanged():
+    # -c key=value is codex's config override, not cw's --continue
+    cmd = build_command("codex", ["-c", 'mcp_servers.x.command="npx"', "hello"])
+    assert cmd == ["codex", "-c", 'mcp_servers.x.command="npx"', "hello"]
+
+
+def test_codex_config_override_with_print_stays_with_exec():
+    cmd = build_command("codex", ["-p", "-c", "model_reasoning_effort=high", "fix it"])
+    assert cmd == ["codex", "exec", "-c", "model_reasoning_effort=high", "fix it"]
+
+
+def test_codex_continue_still_works_next_to_override():
+    cmd = build_command("codex", ["-p", "-c", "-c", "model=o3", "fix it"])
+    assert cmd == ["codex", "exec", "resume", "--last", "-c", "model=o3", "fix it"]
+
+
+def test_codex_bare_continue_before_a_word_is_still_continue():
+    # a plain word after -c is not a config key, so -c stays cw's --continue
+    cmd = build_command("codex", ["-p", "-c", "fix the flaky test"])
+    assert cmd == ["codex", "exec", "resume", "--last", "fix the flaky test"]
+
+
+def test_codex_override_is_not_a_no_context_flag(monkeypatch, tmp_path):
+    from crossweave import cli as cli_mod
+    monkeypatch.delenv("CW_CONTEXT", raising=False)
+    assert cli_mod.wants_context("codex", ["-c", "model=o3"]) is True
+    assert cli_mod.wants_context("codex", ["-c", "fix it"]) is False
+
+
+def test_codex_override_does_not_disable_other_tools_continue():
+    # the override rule is codex-only: claude keeps -c as --continue
+    cmd = build_command("claude", ["-c", "model=o3"])
+    assert cmd == ["claude", "--continue", "model=o3"]
