@@ -142,7 +142,7 @@ def context_for(record, topic, max_chars=800):
     # Older metadata-only rows may have no local transcript location. Check
     # that case explicitly instead of hiding failures in the format readers.
     tool = record.get('tool')
-    key = ('id' if tool in ('codex', 'zcode', 'opencode') else
+    key = ('id' if tool in ('codex', 'zcode', 'opencode', 'agy') else
            'dir' if tool == 'kimi' else 'path')
     location = record.get(key)
     if not isinstance(location, (str, os.PathLike)) or not location:
