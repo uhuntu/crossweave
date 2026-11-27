@@ -29,9 +29,9 @@
 
 ## 4. 搜索（R5）
 
-- [ ] 4.1 `retrieval.py`：`context_for` 对 `kiro` 使用 `id` 作为存在性依据（与 agy 的修复一致）。
-- [ ] 4.2 `search.py`：加入 kiro 的摘要分支（如需要）。
-- [ ] 4.3 测试：`cw search` 能找到 Kiro 会话正文中的关键词（R5.3）。
+- [x] 4.1 `retrieval.py`：`context_for` 对 `kiro` 使用默认的 `path`（会话目录）作为存在性依据。kiro 的记录里 `path` 就是会话目录，不需要 `id`。
+- [x] 4.2 `search.py`：加入 kiro 的摘要分支（如需要）。
+- [x] 4.3 测试：`cw search` 能找到 Kiro 会话正文中的关键词（R5.3）。
 
 ## 5. 交接（R6）
 

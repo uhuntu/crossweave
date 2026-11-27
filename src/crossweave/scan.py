@@ -40,6 +40,12 @@ def _literal_pattern(topic):
 def _literal_texts(tool, entry):
     """Search conversation content, excluding metadata and injected context."""
     kind = entry.get("type") if isinstance(entry, dict) else None
+    if tool == "kiro":
+        # one {id, timestamp, payload} record per turn; the text is payload.content
+        payload = common.dict_field(entry, "payload")
+        if payload.get("type") in ("user", "assistant") and isinstance(payload.get("content"), str):
+            return [payload["content"]]
+        return []
     if tool == "claude" and kind in ("user", "assistant"):
         content = common.dict_field(entry, "message").get("content")
         if isinstance(content, str):

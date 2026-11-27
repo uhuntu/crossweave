@@ -119,6 +119,7 @@ from .codex import (
 from .kiro import (
     kiro_handoff_messages,
     kiro_last_message,
+    kiro_snippet,
     kiro_light_records,
     kiro_resolve,
     kiro_session_cwd,
@@ -369,6 +370,8 @@ def session_literal_scan_files(record):
     if tool == "codex":
         path = codex_rollout_path(record["id"])
         return [path] if path else []
+    if tool == "kiro":
+        return [os.path.join(record["path"], "messages.jsonl")]
     sdir = record["dir"]
     files = [os.path.join(sdir, "agents", "main", "wire.jsonl")]
     files += sorted(glob.glob(os.path.join(sdir, "agents", "main", "tasks", "*", "output.log")))

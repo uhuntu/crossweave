@@ -189,6 +189,8 @@ def gather_candidates(tool_filter, show_all=False):
         light += sessions.zcode_light_records(show_all=show_all)
     if tool_filter in (None, "agy"):
         light += sessions.agy_light_records(show_all=show_all)
+    if tool_filter in (None, "kiro"):
+        light += sessions.kiro_light_records(show_all=show_all)
     light.sort(key=lambda r: r["ts"], reverse=True)
     return light
 
@@ -211,6 +213,8 @@ def snippet_for(r):
         return sessions.agy_snippet(r["id"])
     if tool in ("codebuddy", "workbuddy"):
         return sessions.codebuddy_snippet(r["path"])
+    if tool == "kiro":
+        return sessions.kiro_snippet(r["path"])
     return sessions.kimi_snippet(r["dir"])
 
 

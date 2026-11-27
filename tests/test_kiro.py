@@ -205,3 +205,39 @@ def test_resume_without_id_opens_kiro_picker(store, tmp_path, monkeypatch):
     monkeypatch.setattr(sessions, "exec_or_die", lambda argv: launched.append(argv))
     sessions.cmd_resume(["kiro"])
     assert launched == [["kiro-cli", "chat", "--resume-picker"]]
+
+
+# --- search ------------------------------------------------------------------
+
+from crossweave import retrieval, search  # noqa: E402
+
+
+def test_search_gathers_kiro_candidates(store, tmp_path):
+    _session(store, "aaaa", "sess_cand", cwd=str(tmp_path), turns=(("user", "topic one"),))
+    everything = search.gather_candidates(None)
+    assert "sess_cand" in {r["id"] for r in everything if r["tool"] == "kiro"}
+    only_kiro = search.gather_candidates("kiro")
+    assert only_kiro and all(r["tool"] == "kiro" for r in only_kiro)
+
+
+def test_search_snippet_reads_user_and_assistant_text(store, tmp_path):
+    _session(store, "aaaa", "sess_snip", cwd=str(tmp_path),
+             turns=(("user", "why is the build slow"), ("assistant", "the linker is single threaded")))
+    rec = next(r for r in search.gather_candidates("kiro") if r["id"] == "sess_snip")
+    snippet = search.snippet_for(rec)
+    assert "build" in snippet and "linker" in snippet
+
+
+def test_literal_scan_finds_a_term_in_kiro_turns(store, tmp_path):
+    _session(store, "aaaa", "sess_lit", cwd=str(tmp_path),
+             turns=(("user", "hello"), ("assistant", "the zebra_marker_77 is in the config")))
+    rec = next(r for r in search.gather_candidates("kiro") if r["id"] == "sess_lit")
+    hits = sessions.literal_matches([rec], "zebra_marker_77")
+    assert [h["id"] for h in hits] == ["sess_lit"]
+
+
+def test_retrieval_context_names_the_matching_turn(store, tmp_path):
+    _session(store, "aaaa", "sess_ctx", cwd=str(tmp_path),
+             turns=(("user", "hello"), ("assistant", "the zebra_marker_77 is in the config")))
+    rec = next(r for r in search.gather_candidates("kiro") if r["id"] == "sess_ctx")
+    assert "zebra_marker_77" in retrieval.context_for(rec, "zebra_marker_77")
