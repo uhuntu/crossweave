@@ -84,7 +84,7 @@ crossweave 目前统一封装 claude、codex、kimi、step、pi、opencode 等�
     - 已验证：VS Code 扩展的会话列表显示 crossweave 工作区的会话，其中活动会话的时间戳与存储中 `sess_59bc2bd1-...` 的 `lastModifiedAt` 一致，说明扩展读取同一存储。
     - 已验证：在 `/home/hunt/work/crossweave` 运行 `kiro-cli chat` 产生的会话 `sess_349e3fbb-...` 写入同一存储。
     - 已验证：CLI 会话 `sess_9e416659-...`（消息 "Hello from cli"，工作区 crossweave）在 VS Code 的 Kiro 面板中打开，显示 CLI 的消息和回复。CLI 与扩展双向共用同一存储。
-    - 注：此前在列表中看不到 "Getting Started With Kiro" 的问题未查明。会话能被打开，说明数据可读。
+    - 注：早先（约 13:00 之后）列表里看不到 "Getting Started With Kiro"，原因未查明。之后的截图（14:53）显示该会话已出现在 Session History 中，列表正常。
     - 已验证：独立的 Kiro IDE 窗口（`/usr/bin/kiro`）中，标签页同时打开了 CLI 会话（`sess_9e416659-...`）、VS Code 扩展产生的会话（`sess_59bc2bd1-...`）。三端（CLI、VS Code 扩展、Kiro IDE）读写同一存储。
     - 已验证：VS Code 扩展写入同一存储。会话 `sess_59bc2bd1-...`（VS Code 面板中的 "New Kiro Session"）的消息中包含在 VS Code 里发送的 "test from vscode"。
     - 结论：CLI 与扩展双向共用同一存储，此前"根据时间推断"的部分已由消息内容证实。
