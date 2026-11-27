@@ -78,6 +78,7 @@ from .agy import (
     agy_first_user_text,
     agy_handoff_messages,
     agy_has_custom_title,
+    agy_is_cli_session,
     agy_last_message,
     agy_light_records,
     agy_resolve,
@@ -2385,6 +2386,12 @@ def cmd_resume(args):
     elif tool == "opencode":
         exec_or_die(["opencode", "--session", full_id, *extra])
     elif tool == "agy":
+        if not agy_is_cli_session(full_id):
+            print("cw resume: this agy session lives in the Antigravity desktop/IDE "
+                  "store, which the CLI can't resume directly -- starting a fresh CLI "
+                  "session with its context instead", file=sys.stderr)
+            perform_handoff("agy", full_id, "agy", extra, forced_cwd=forced_cwd)
+            return
         exec_or_die(["agy", "--conversation", full_id, *extra])
     elif tool == "codebuddy":
         exec_or_die(["codebuddy", "-r", full_id, *extra])

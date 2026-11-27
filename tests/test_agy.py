@@ -142,11 +142,27 @@ def test_cli_flags_and_resume_and_update(store, monkeypatch, capsys):
 
     store.session(SID, title="Resume test", workspace_uris="[]")
     monkeypatch.setattr(sessions, "exec_or_die", lambda argv: launched.append(argv))
+    monkeypatch.setattr(sessions, "agy_is_cli_session", lambda sid: sid == SID)
     sessions.cmd_resume(["agy", "3719"])
     assert launched[-1] == ["agy", "--conversation", SID]
 
     sessions.cmd_resume(["agy"])
     assert launched[-1] == ["agy"]
+
+
+def test_resume_desktop_only_agy_session_falls_back_to_handoff(store, monkeypatch, capsys):
+    store.session(SID, title="Desktop IDE session", workspace_uris="[]")
+    handoffs = []
+    monkeypatch.setattr(
+        sessions,
+        "perform_handoff",
+        lambda src_tool, src_id, dst_tool, extra, forced_cwd=None: handoffs.append(
+            (src_tool, src_id, dst_tool, extra, forced_cwd)
+        ),
+    )
+    sessions.cmd_resume(["agy", "3719"])
+    assert handoffs == [("agy", SID, "agy", [], None)]
+    assert "desktop/IDE store" in capsys.readouterr().err
 
 
 def test_a_handoff_into_agy_goes_through_prompt_interactive(monkeypatch):

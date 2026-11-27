@@ -374,6 +374,17 @@ def agy_session_cwd(sid):
     return None
 
 
+def agy_is_cli_session(sid):
+    """True when `sid` exists in the Antigravity CLI store (`AGY_CLI_DB`)."""
+    if not sid:
+        return False
+    return bool(_query_db(
+        AGY_CLI_DB,
+        "SELECT 1 FROM conversation_summaries WHERE conversation_id = ? LIMIT 1",
+        (sid,),
+    ))
+
+
 def agy_session_turns(sid):
     """User turn count from transcript.jsonl, falling back to DB step_count."""
     path = agy_transcript_path(sid)
