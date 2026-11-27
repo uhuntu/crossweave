@@ -49,12 +49,12 @@
 
 ## 7. 手动集成验证（需要 kiro-cli 登录，在普通终端中执行）
 
-- [ ] 7.1 `cw kiro -p "..."` 运行一次性会话。
-- [ ] 7.2 `cw kiro -c` 继续本目录最近的会话。
-- [ ] 7.3 `cw sessions` 列出 CLI 和 VS Code 产生的 Kiro 会话。
-- [ ] 7.4 `cw resume kiro <id>` 恢复 VS Code 产生的会话。
-- [ ] 7.5 `cw <N> claude` 把 Kiro 会话交接给 claude，并检查导出内容。
-- [ ] 7.6 `cw kiro --ide` 用 Kiro IDE 打开当前目录。
+- [x] 7.1 `cw kiro -p "..."` 运行一次性会话。
+- [x] 7.2 `cw kiro -c` 继续本目录最近的会话。
+- [x] 7.3 `cw sessions` 列出 CLI 和 VS Code 产生的 Kiro 会话。
+- [x] 7.4 `cw resume kiro <id>` 恢复 VS Code 产生的会话。
+- [x] 7.5 `cw <N> claude` 把 Kiro 会话交接给 claude，并检查导出内容。
+- [x] 7.6 `cw kiro --ide` 用 Kiro IDE 打开当前目录。
 
 ## 注意事项
 
