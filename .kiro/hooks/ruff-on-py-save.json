@@ -1,0 +1,16 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Ruff check on Python save",
+      "trigger": "PostFileSave",
+      "description": "After saving a .py file, run ruff check on src/ and tests/ (the project's CI lint)",
+      "matcher": "\\.py$",
+      "action": {
+        "type": "command",
+        "command": "cd /home/hunt/work/crossweave && if command -v ruff >/dev/null 2>&1; then ruff check src/ tests/; else echo \"ruff not on PATH; skipping lint hook\"; fi",
+        "timeout": 60
+      }
+    }
+  ]
+}
