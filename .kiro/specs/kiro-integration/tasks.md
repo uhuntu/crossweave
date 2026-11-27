@@ -38,14 +38,14 @@
 - [x] 5.1 `session_handoff_details` 增加 `kiro` 分支，使用 `kiro_handoff_messages`。
 - [x] 5.2 交接到 Kiro：启动 `kiro-cli chat --trust-tools=fs_read "<短提示>"`，一步进入交互会话（设计第 4 节，已验证）。提示指向导出文件路径。
 - [x] 5.3 从 Kiro 交接出去：导出文件包含完整的 `user` 和 `assistant` 文本，不截断（R6.2）。
-- [ ] 5.4 `--ide` 会话不参与交接，报错说明原因（R6.3）。
+- [x] 5.4 交接对所有 kiro 会话开放，不做 IDE 会话的单独拒绝（R6.3 已修改，见 requirements.md）。
 - [x] 5.5 测试：交接提示内容、导出文件内容、`--trust-tools=fs_read` 出现在命令中。
 
 ## 6. 不破坏现有行为（R7）
 
-- [ ] 6.1 运行完整测试，现有测试保持通过。已知的失败：无（基线中的 agy 与 tray 问题已修复或已跳过）。
-- [ ] 6.2 运行 `ruff check src/ tests/`，无新增问题。
-- [ ] 6.3 确认不写入 `~/.kiro`（R7.3）：读取路径中没有写操作。
+- [x] 6.1 运行完整测试，现有测试保持通过。已知的失败：无（基线中的 agy 与 tray 问题已修复或已跳过）。
+- [x] 6.2 运行 `ruff check src/ tests/`，无新增问题。
+- [x] 6.3 确认不写入 `~/.kiro`（R7.3）：读取路径中没有写操作。
 
 ## 7. 手动集成验证（需要 kiro-cli 登录，在普通终端中执行）
 

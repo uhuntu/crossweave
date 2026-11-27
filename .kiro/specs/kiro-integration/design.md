@@ -50,7 +50,7 @@
   - 短提示指向导出文件路径，与其他工具的提示一致。
   - `--trust-tools=fs_read` 已经验证：无交互运行时可以读取导出文件。
 - 从 Kiro 交接出去：`session_handoff_details` 增加 `kiro` 分支，用 `kiro_handoff_messages` 生成导出。
-- IDE 会话的交接不支持：IDE 不产生单独的恢复入口，所以 `--ide` 不参与恢复和交接。
+- IDE 会话的交接：IDE 和 CLI 共用同一存储，交接对所有 kiro 会话开放（不做单独拒绝）。`--ide` 只负责打开目录，不参与恢复和交接。
 
 ## 5. 需要改动的文件
 

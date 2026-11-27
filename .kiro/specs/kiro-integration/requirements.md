@@ -69,7 +69,7 @@ crossweave 目前统一封装 claude、codex、kimi、step、pi、opencode 等�
 - 6.1a 启动交接会话时，要允许 Kiro 读取导出文件（`--trust-tools=fs_read` 或等价设置）。否则无交互运行时读取可能被拒绝。
   - 状态：已验证。在用户自己的终端里运行 `kiro-cli chat --no-interactive --trust-tools=fs_read "..."`，工具调用 `Reading export.md` 完成，输出了文件内容。在 Kiro agent 的 shell 里运行时会超时，原因可能是嵌套环境（继承了 `KIRO_SESSION_ID`），没有进一步排查。交接命令应在普通终端环境中执行，或者先清除该变量再测试。
 - 6.2 从 Kiro 交接出去：读取 `messages.jsonl` 的 `user` 与 `assistant` 消息，生成交接文本。
-- 6.3 IDE 会话不支持交接，报错说明原因。
+- 6.3 交接对所有 kiro 会话开放，包括 VS Code 扩展和 Kiro IDE 产生的会话。它们与 CLI 会话共用同一存储，已验证可以被打开和读取，因此不做单独的拒绝。`cw kiro --ide` 只负责打开目录，不涉及会话。
 
 ### R7 不破坏现有行为
 - 7.1 不改变 claude、codex、kimi、step、pi、opencode 等现有工具的行为。
