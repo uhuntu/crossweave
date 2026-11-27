@@ -387,6 +387,39 @@ def _rename_kimi(sdir, title):
     return True
 
 
+def _rename_kiro(sdir, title):
+    """Set session.json's title -- kiro's only name field for a session.
+
+    Only `title` changes. lastModifiedAt is left alone for the same reason
+    _rename_kimi leaves updatedAt alone: cw reads it for a session's recency,
+    so bumping it would make a renamed old session look live. The document is
+    rewritten through a temp file and os.replace, so a reader sees the old or
+    the new file, never a partial one. kiro has no custom-title marker, so a
+    later titler run may overwrite the name; and a session kiro currently has
+    open is last-writer-wins, because kiro writes its whole document back.
+    A manual rename is deliberate and takes that risk."""
+    if not sdir or not os.path.isdir(sdir):
+        return False
+    from . import common
+    path = os.path.join(sdir, "session.json")
+    meta = common.read_json(path)
+    if not isinstance(meta, dict):
+        return False
+    meta["title"] = title
+    tmp = f"{path}.{os.getpid()}.tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(meta, fh, ensure_ascii=False)
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        return False
+    return True
+
+
 def _rename_step(title, path):
     """Append a session_info record -- step's own rename surface.
 
@@ -453,6 +486,8 @@ def _apply(r, title):
         return _rename_step(title, r.get("path"))
     if tool == "kimi":
         return _rename_kimi(r.get("dir"), title)
+    if tool == "kiro":
+        return _rename_kiro(r.get("path"), title)
     return False
 
 
@@ -475,7 +510,7 @@ def _is_trivial(title):
 # only title field either offers sits in a live app's own database, not in
 # the transcript cw reads -- and both are refused before anything else
 # happens to their rows.
-_RENAMABLE = ("zcode", "agy", "codex", "claude", "step", "pi", "kimi")
+_RENAMABLE = ("zcode", "agy", "codex", "claude", "step", "pi", "kimi", "kiro")
 
 
 def _is_live(r):

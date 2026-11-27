@@ -74,7 +74,7 @@ crossweave 目前统一封装 claude、codex、kimi、step、pi、opencode 等�
 ### R7 不破坏现有行为
 - 7.1 不改变 claude、codex、kimi、step、pi、opencode 等现有工具的行为。
 - 7.2 现有测试保持通过，新增测试覆盖上面的每条验收标准。
-- 7.3 只读取 Kiro 的数据，不写入或修改 `~/.kiro`。
+- 7.3 读取 Kiro 的数据时不写入或修改 `~/.kiro`。唯一的写入是 `cw rename`：只改 `session.json` 的 `title`，原子替换，不改 `lastModifiedAt`。`cw delete` 把会话目录移到 cw 的备份目录。
 
 ## 待确认的问题
 

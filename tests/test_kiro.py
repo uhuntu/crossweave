@@ -270,3 +270,22 @@ def test_delete_moves_the_kiro_session_to_a_backup_and_restores(store, tmp_path,
     shutil.move(manifest["files"][0]["backup"], manifest["files"][0]["original"])
     assert sdir.exists()
     assert kiro.kiro_light_records(show_all=True)
+
+
+def test_rename_sets_the_title_and_keeps_recency_and_other_fields(store, tmp_path):
+    from crossweave import rename
+    sdir = _session(store, "aaaa", "sess_ren", cwd=str(tmp_path), title="New Session",
+                    modified="2026-11-27T03:32:18.235Z")
+    before = json.loads((sdir / "session.json").read_text(encoding="utf-8"))
+    assert rename._rename_kiro(str(sdir), "Parser work") is True
+    after = json.loads((sdir / "session.json").read_text(encoding="utf-8"))
+    assert after["title"] == "Parser work"
+    assert after["lastModifiedAt"] == before["lastModifiedAt"]
+    assert after["workspacePaths"] == before["workspacePaths"]
+    assert kiro.kiro_title(str(sdir)) == "Parser work"
+    assert not list(sdir.glob("*.tmp"))
+
+
+def test_rename_refuses_a_missing_session(store, tmp_path):
+    from crossweave import rename
+    assert rename._rename_kiro(str(tmp_path / "nope"), "x") is False
