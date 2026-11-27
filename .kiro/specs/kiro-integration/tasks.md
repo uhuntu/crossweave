@@ -4,13 +4,13 @@
 
 ## 1. 读取模块 `kiro.py`（R3、R5）
 
-- [ ] 1.1 新建 `src/crossweave/kiro.py`，实现 `kiro_light_records(show_all)`：扫描 `~/.kiro/sessions/*/sess_*/session.json`，返回 `tool="kiro"`、`id`、`title`、`cwd`（`workspacePaths[0]`）、`ts`、`path`。
-- [ ] 1.2 过滤空会话：没有 `messages.jsonl` 或没有 `user` 消息的会话不列出（设计第 7 节第 4 条）。
-- [ ] 1.3 标题回退：标题为空、"New Session" 或 "New Kiro Session" 时，用第一条用户消息的前 70 个字符。
-- [ ] 1.4 损坏的 JSON 行和损坏的 `session.json` 直接跳过，不抛异常。
-- [ ] 1.5 实现 `kiro_resolve(prefix)`（前缀匹配）和 `kiro_session_cwd(sid)`。
-- [ ] 1.6 实现 `kiro_snippet(sdir, max_messages, max_chars)` 和 `kiro_handoff_messages(sdir)`，只取 `payload.type` 为 `user` 或 `assistant` 的 `payload.content`。
-- [ ] 1.7 测试 `tests/test_kiro.py`：使用临时目录伪造会话结构，覆盖 1.1–1.6。
+- [x] 1.1 新建 `src/crossweave/kiro.py`，实现 `kiro_light_records(show_all)`：扫描 `~/.kiro/sessions/*/sess_*/session.json`，返回 `tool="kiro"`、`id`、`title`、`cwd`（`workspacePaths[0]`）、`ts`、`path`。
+- [x] 1.2 过滤空会话：没有 `messages.jsonl` 或没有 `user` 消息的会话不列出（设计第 7 节第 4 条）。
+- [x] 1.3 标题回退：标题为空、"New Session" 或 "New Kiro Session" 时，用第一条用户消息的前 70 个字符。
+- [x] 1.4 损坏的 JSON 行和损坏的 `session.json` 直接跳过，不抛异常。
+- [x] 1.5 实现 `kiro_resolve(prefix)`（前缀匹配）和 `kiro_session_cwd(sid)`。
+- [x] 1.6 实现 `kiro_snippet(sdir, max_messages, max_chars)` 和 `kiro_handoff_messages(sdir)`，只取 `payload.type` 为 `user` 或 `assistant` 的 `payload.content`。
+- [x] 1.7 测试 `tests/test_kiro.py`：使用临时目录伪造会话结构，覆盖 1.1–1.6。
 
 ## 2. 启动参数 `cli.build_command`（R1）
 
