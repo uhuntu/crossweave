@@ -10,7 +10,7 @@
 
 [![test](https://github.com/uhuntu/crossweave/actions/workflows/test.yml/badge.svg)](https://github.com/uhuntu/crossweave/actions/workflows/test.yml)
 
-A tiny, dependency-free wrapper that weaves six AI coding-agent CLIs — [Claude Code](https://claude.com/product/claude-code), [OpenAI Codex CLI](https://github.com/openai/codex), [Kimi CLI](https://www.kimi-cli.com/), [step](https://github.com/stepfun-ai/Step-Code), [pi](https://github.com/earendil-works/pi), [opencode](https://github.com/anomalyco/opencode) — behind one set of flags, plus cross-tool session discovery, resume, and handoff — and reads ZCode's local session store alongside them.
+A tiny, dependency-free wrapper that weaves the AI coding-agent CLIs — [Claude Code](https://claude.com/product/claude-code), [OpenAI Codex CLI](https://github.com/openai/codex), [Kimi CLI](https://www.kimi-cli.com/), [step](https://github.com/stepfun-ai/Step-Code), [pi](https://github.com/earendil-works/pi), [opencode](https://github.com/anomalyco/opencode), [Kiro CLI](https://kiro.dev/docs/cli/) — behind one set of flags, plus cross-tool session discovery, resume, and handoff — and reads ZCode's local session store alongside them.
 
 No daemon, no config file, no build step — just a small Python package (`src/crossweave/`) that reads each tool's own on-disk session store directly. Formerly named `clisweave` (and `aimux` before that); the `cw` command was never renamed — `cx` (the mark's own name: X is cross) now ships alongside it.
 
@@ -129,7 +129,7 @@ Where the resume connects: a row pulled over ssh goes back through the destinati
 ## Usage
 
 ```bash
-cw                          # recent sessions across all seven tools (same as `cw sessions`)
+cw                          # recent sessions across all supported tools (same as `cw sessions`)
 cw sessions --machines      # + other machines' sessions (a synced index dir)
 cw sessions --machines 241 149   # ...or pulled fresh over ssh, no setup
 cw claude -p "prompt"       # -> claude -p "prompt"
