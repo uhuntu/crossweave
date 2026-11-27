@@ -136,6 +136,8 @@ cw claude -p "prompt"       # -> claude -p "prompt"
 cw codex -p -m o3 "prompt"  # -> codex exec -m o3 "prompt"
 cw kimi -c                  # -> kimi -c
 cw step -p "summarize"      # -> step -p "summarize"
+cw kiro -p "prompt"        # -> kiro-cli chat --no-interactive "prompt"
+cw kiro -c                 # -> kiro-cli chat --resume
 cw zcode                    # open the ZCode app on this directory
 
 cw sessions --limit 10      # list recent sessions, all tools
@@ -448,6 +450,14 @@ It has to say *why* each match counts: the judge answers one line per match (`7:
 | `-y`, `--yolo` | auto-approve tool calls | `--dangerously-skip-permissions` | `--approve-for-me` (stays sandboxed) | `-y` | `--approval-mode auto` + `--non-interactive-approval allow` | *(nothing to add — pi never asks before a tool call)* | `--auto` | *(not supported)* |
 
 Anything after a literal `--`, or any flag this wrapper doesn't recognize, passes straight through to the underlying CLI unchanged. opencode's bare argument is a directory rather than a prompt, so words after `cw opencode` become its `--prompt`.
+
+### Kiro (`cw kiro`)
+`cw kiro` starts the Kiro CLI (`kiro-cli chat`) on the current directory. Its sessions live in `~/.kiro/sessions`, which the Kiro CLI and the Kiro VS Code extension share, so both show up in `cw sessions --tool kiro`.
+
+- `cw kiro -p "question"` runs one question (`--no-interactive`) and exits. Tool calls need `-y`. Without it they are refused, and only the text answer comes back.
+- `cw kiro -c` resumes the most recent session in this directory. `-m` passes the model through. `--add-dir` is not supported.
+- `cw kiro --ide` opens the Kiro IDE on this directory. It takes no session flags, because the IDE cannot open a single session from a terminal.
+- Handoffs to and from Kiro work like the other tools: the full transcript goes to an export file, and the new session reads that file.
 
 ## How session listing works
 

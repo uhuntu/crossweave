@@ -25,6 +25,8 @@ USAGE = f"""Usage: cw <{'|'.join(TOOLS)}> [common-options] [prompt] [-- extra na
        cw export --all [--since 7d] [--older-than 1d] [--cwd [DIR]] [--dry-run] [-y] --llm-wiki DIR [--rescan]
                   [--content notes|transcript] [--judge TOOL]
        cw chat <tool> <session-id-or-prefix>
+       cw kiro [-p "prompt"] [-c] [-m M] [-y]   # Kiro CLI; -y approves tool calls (needed for -p tool use)
+       cw kiro --ide            # open the Kiro IDE on this directory
        cw web [--port 8765] [--no-open]   # local browser workspace
        cw tray [--port 8765] [--open]     # system tray host for the local workspace
        cw <N> <{'|'.join(TOOLS)}> [native-options]
