@@ -285,3 +285,57 @@ def test_codex_override_does_not_disable_other_tools_continue():
     # the override rule is codex-only: claude keeps -c as --continue
     cmd = build_command("claude", ["-c", "model=o3"])
     assert cmd == ["claude", "--continue", "model=o3"]
+
+
+def test_kiro_is_a_known_tool():
+    assert "kiro" in cli.TOOLS
+
+
+def test_kiro_interactive_with_first_question():
+    assert build_command("kiro", ["hello"]) == ["kiro-cli", "chat", "hello"]
+    assert build_command("kiro", []) == ["kiro-cli", "chat"]
+
+
+def test_kiro_print_runs_no_interactive_with_prompt():
+    assert build_command("kiro", ["-p", "what is this"]) == [
+        "kiro-cli", "chat", "--no-interactive", "what is this"]
+
+
+def test_kiro_print_without_prompt_is_refused():
+    with pytest.raises(UsageError):
+        build_command("kiro", ["-p"])
+
+
+def test_kiro_continue_maps_to_resume():
+    assert build_command("kiro", ["-c"]) == ["kiro-cli", "chat", "--resume"]
+
+
+def test_kiro_yolo_maps_to_trust_all_tools():
+    assert build_command("kiro", ["-y", "fix it"]) == [
+        "kiro-cli", "chat", "--trust-all-tools", "fix it"]
+
+
+def test_kiro_model_is_passed_through():
+    assert build_command("kiro", ["-m", "claude-sonnet", "hi"]) == [
+        "kiro-cli", "chat", "--model", "claude-sonnet", "hi"]
+
+
+def test_kiro_refuses_add_dir():
+    with pytest.raises(UsageError):
+        build_command("kiro", ["--add-dir", "/tmp"])
+
+
+def test_kiro_ide_opens_the_current_directory(monkeypatch, tmp_path):
+    monkeypatch.setattr(cli.os, "getcwd", lambda: str(tmp_path))
+    assert build_command("kiro", ["--ide"]) == ["kiro", str(tmp_path)]
+
+
+@pytest.mark.parametrize("extra", [["-c"], ["-p", "x"], ["-y"], ["-m", "m"], ["hello"]])
+def test_kiro_ide_refuses_session_flags_and_prompts(extra):
+    with pytest.raises(UsageError):
+        build_command("kiro", ["--ide", *extra])
+
+
+def test_ide_flag_means_nothing_to_other_tools():
+    # only kiro knows --ide; for claude it is an ordinary argument, passed on
+    assert build_command("claude", ["--ide"]) == ["claude", "--ide"]

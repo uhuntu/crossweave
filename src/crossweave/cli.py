@@ -6,7 +6,7 @@ import sys
 
 from . import __version__, alias, autoexport, chat, common, delete, doctor, exporter, machines, note, rename, search, sessions, show, tray, ui, update, web, wiki
 
-TOOLS = ("claude", "codex", "kimi", "step", "pi", "opencode", "zcode", "agy")
+TOOLS = ("claude", "codex", "kimi", "step", "pi", "opencode", "zcode", "agy", "kiro")
 
 # USAGE is an f-string built from TOOLS, search.JUDGE_CMD and
 # search.DEFAULT_JUDGE for the same reason SUBCOMMANDS exists below: the
@@ -200,6 +200,7 @@ def build_command(tool, rest):
     model = None
     add_dirs = []
     yolo = False
+    ide = False
     trailing = []
 
     i = 0
@@ -208,6 +209,9 @@ def build_command(tool, rest):
         if _is_codex_override(tool, rest, i):
             trailing.extend(rest[i:i + 2])
             i += 2
+        elif a == "--ide" and tool == "kiro":
+            ide = True
+            i += 1
         elif a in ("-p", "--print"):
             print_ = True
             i += 1
@@ -341,6 +345,28 @@ def build_command(tool, rest):
             cmd = ["zcode"]
         else:
             cmd = ["zcode", sessions.zcode_workspace_link(os.getcwd())]
+    elif tool == "kiro":
+        # `--ide` opens the Kiro IDE on this directory. The IDE has no way to
+        # open one session from a terminal, so it takes no session flags.
+        if ide:
+            if print_ or continue_session or model or add_dirs or yolo or trailing:
+                raise UsageError("kiro --ide opens the IDE on this directory and takes no "
+                                 "session flags or prompt")
+            return ["kiro", os.getcwd()]
+        if add_dirs:
+            raise UsageError("--add-dir is not supported for kiro")
+        cmd = ["kiro-cli", "chat"]
+        if print_:
+            # the prompt is the positional INPUT; --no-interactive needs one
+            if not trailing:
+                raise UsageError("-p requires a prompt for kiro")
+            cmd.append("--no-interactive")
+        if continue_session:
+            cmd.append("--resume")
+        if model:
+            cmd += ["--model", model]
+        if yolo:
+            cmd.append("--trust-all-tools")
     else:  # kimi
         cmd = ["kimi"]
         if print_:

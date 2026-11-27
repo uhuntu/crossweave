@@ -14,11 +14,11 @@
 
 ## 2. 启动参数 `cli.build_command`（R1）
 
-- [ ] 2.1 `TOOLS` 加入 `kiro`。
-- [ ] 2.2 `build_command("kiro", ...)` 映射：无参数 → `kiro-cli chat`；`-p` → `--no-interactive`；`-c` → `--resume`；`-y` → `--trust-all-tools`；`-m` → `--model`。
-- [ ] 2.3 `--add-dir` 报错，与 step、pi 一致（R1.6）。
-- [ ] 2.4 `--ide`：调用 `kiro <目录>` 打开工作区；与 `-p`、`-c`、会话 id 同时出现时报错（R2）。
-- [ ] 2.5 测试：在 `tests/test_cli.py` 中增加上述映射的用例。
+- [x] 2.1 `TOOLS` 加入 `kiro`。
+- [x] 2.2 `build_command("kiro", ...)` 映射：无参数 → `kiro-cli chat`；`-p` → `--no-interactive`；`-c` → `--resume`；`-y` → `--trust-all-tools`；`-m` → `--model`。
+- [x] 2.3 `--add-dir` 报错，与 step、pi 一致（R1.6）。
+- [x] 2.4 `--ide`：调用 `kiro <目录>` 打开工作区；与 `-p`、`-c`、会话 id 同时出现时报错（R2）。
+- [x] 2.5 测试：在 `tests/test_cli.py` 中增加上述映射的用例。
 
 ## 3. 会话列表、恢复、查看（R3、R4、R5）
 
