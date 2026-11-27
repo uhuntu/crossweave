@@ -1,4 +1,5 @@
 """Tests for the cross-platform system tray host."""
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -202,6 +203,8 @@ def test_handler_send_bytes_ignores_connection_aborted():
     handler.send_bytes(b'{}', 'application/json; charset=utf-8')
 
 
+@pytest.mark.skipif(sys.platform != "win32",
+                    reason="instantiates WindowsPath; only runs on Windows (CI covers it)")
 def test_install_and_uninstall_windows_shortcut(monkeypatch, tmp_path, capsys):
     pytest.importorskip('PIL.Image')
     appdata = tmp_path / 'AppData' / 'Roaming'
