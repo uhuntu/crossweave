@@ -55,6 +55,8 @@ def _session_messages(tool, sid, record):
         return sessions.opencode_handoff_messages(sid)
     if tool == 'agy':
         return sessions.agy_handoff_messages(sid)
+    if tool == 'kiro':
+        return sessions.kiro_handoff_messages(record['path']) if record and record.get('path') else []
     return []
 
 

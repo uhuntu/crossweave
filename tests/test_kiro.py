@@ -241,3 +241,12 @@ def test_retrieval_context_names_the_matching_turn(store, tmp_path):
              turns=(("user", "hello"), ("assistant", "the zebra_marker_77 is in the config")))
     rec = next(r for r in search.gather_candidates("kiro") if r["id"] == "sess_ctx")
     assert "zebra_marker_77" in retrieval.context_for(rec, "zebra_marker_77")
+
+
+def test_web_conversation_view_shows_kiro_turns(store, tmp_path):
+    from crossweave import web
+    sdir = _session(store, "aaaa", "sess_web", cwd=str(tmp_path),
+                    turns=(("user", "where is the export"), ("assistant", "in the handoffs folder")))
+    record = {"tool": "kiro", "id": "sess_web", "path": str(sdir)}
+    assert web._session_messages("kiro", "sess_web", record) == [
+        ("user", "where is the export"), ("assistant", "in the handoffs folder")]
