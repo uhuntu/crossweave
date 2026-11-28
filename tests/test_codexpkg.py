@@ -3,6 +3,7 @@ import json
 import os
 import subprocess
 import tarfile
+import urllib.error
 
 import pytest
 
@@ -256,3 +257,75 @@ def test_repoint_current_restores_original_when_activation_fails(tmp_path, monke
     assert (old_release / "bin" / "codex.exe").is_file()
     assert new_release.is_dir()
     assert not list(standalone.glob(".cw-current-*"))
+
+
+class _FakeResp:
+    def __init__(self, body=b"", url=""):
+        self._body = io.BytesIO(body)
+        self._url = url
+
+    def read(self, *args):
+        return self._body.read(*args)
+
+    def geturl(self):
+        return self._url
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+
+def test_fetch_latest_version_uses_github_token(monkeypatch):
+    seen = []
+
+    class FakeOpener:
+        def open(self, request, timeout=30):
+            seen.append((request.full_url, dict(request.header_items())))
+            return _FakeResp(json.dumps({"tag_name": "rust-v0.165.0"}).encode())
+
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_secret")
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.setattr(codexpkg.urllib.request, "build_opener", lambda *h: FakeOpener())
+
+    assert codexpkg.fetch_latest_version() == ("0.165.0", "rust-v0.165.0")
+    assert seen[0][0] == codexpkg.RELEASES_API
+    assert seen[0][1]["Authorization"] == "Bearer ghp_secret"
+
+
+@pytest.mark.parametrize("status_code", [403, 429])
+def test_fetch_latest_version_falls_back_to_redirect_on_rate_limit(monkeypatch, status_code):
+    seen = []
+
+    class FakeOpener:
+        def open(self, request, timeout=30):
+            seen.append((request.full_url, request.get_method()))
+            if request.full_url == codexpkg.RELEASES_API:
+                raise urllib.error.HTTPError(
+                    request.full_url, status_code, "rate limit exceeded", {}, None
+                )
+            return _FakeResp(url="https://github.com/openai/codex/releases/tag/rust-v0.166.0")
+
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.setattr(codexpkg.urllib.request, "build_opener", lambda *h: FakeOpener())
+
+    assert codexpkg.fetch_latest_version() == ("0.166.0", "rust-v0.166.0")
+    assert seen == [
+        (codexpkg.RELEASES_API, "GET"),
+        (codexpkg.RELEASES_LATEST_URL, "HEAD"),
+    ]
+
+
+def test_fetch_latest_version_reraises_non_rate_limit_http_error(monkeypatch):
+    class FakeOpener:
+        def open(self, request, timeout=30):
+            raise urllib.error.HTTPError(
+                request.full_url, 404, "Not Found", {}, None
+            )
+
+    monkeypatch.setattr(codexpkg.urllib.request, "build_opener", lambda *h: FakeOpener())
+
+    with pytest.raises(urllib.error.HTTPError):
+        codexpkg.fetch_latest_version()

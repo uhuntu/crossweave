@@ -30,9 +30,12 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import urllib.error
+import urllib.parse
 import urllib.request
 
 RELEASES_API = "https://api.github.com/repos/openai/codex/releases/latest"
+RELEASES_LATEST_URL = "https://github.com/openai/codex/releases/latest"
 PACKAGE_URL = ("https://github.com/openai/codex/releases/download/"
                "{tag}/codex-package-{target}.tar.gz")
 
@@ -79,20 +82,56 @@ def parse_release_tag(tag):
     return tag.rsplit("v", 1)[-1]
 
 
-def fetch_latest_version(proxy=None):
-    """(version, tag) of openai/codex's latest GitHub release."""
-    from . import __version__
+def _build_opener(proxy=None):
     handlers = []
     if proxy:
         handlers.append(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
-    opener = urllib.request.build_opener(*handlers)
-    request = urllib.request.Request(RELEASES_API, headers={
-        "User-Agent": f"crossweave/{__version__}",
-        "Accept": "application/vnd.github+json",
-    })
+    return urllib.request.build_opener(*handlers)
+
+
+def _github_token():
+    for name in ("GITHUB_TOKEN", "GH_TOKEN"):
+        token = os.environ.get(name, "").strip()
+        if token:
+            return token
+    return None
+
+
+def _fetch_latest_tag_from_redirect(opener, user_agent):
+    request = urllib.request.Request(
+        RELEASES_LATEST_URL,
+        headers={"User-Agent": user_agent},
+        method="HEAD",
+    )
     with opener.open(request, timeout=30) as resp:
-        payload = json.load(resp)
-    tag = payload["tag_name"]
+        final_url = resp.geturl()
+    match = re.search(r"/releases/tag/([^/?#]+)", urllib.parse.urlparse(final_url).path)
+    if not match:
+        raise RuntimeError(f"unexpected codex release redirect URL {final_url!r}")
+    return urllib.parse.unquote(match.group(1))
+
+
+def fetch_latest_version(proxy=None):
+    """(version, tag) of openai/codex's latest GitHub release."""
+    from . import __version__
+    user_agent = f"crossweave/{__version__}"
+    opener = _build_opener(proxy)
+    headers = {
+        "User-Agent": user_agent,
+        "Accept": "application/vnd.github+json",
+    }
+    token = _github_token()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(RELEASES_API, headers=headers)
+    try:
+        with opener.open(request, timeout=30) as resp:
+            payload = json.load(resp)
+        tag = payload["tag_name"]
+    except urllib.error.HTTPError as exc:
+        if exc.code not in (403, 429):
+            raise
+        tag = _fetch_latest_tag_from_redirect(opener, user_agent)
     version = parse_release_tag(tag)
     if not re.match(r"^\d+\.\d+\.\d+", version):
         raise RuntimeError(f"unexpected codex release tag {tag!r}")
@@ -105,10 +144,7 @@ def download_package(tag, target, dest, proxy=None, out=print):
     connection that silence reads as a hang."""
     from . import __version__
     url = PACKAGE_URL.format(tag=tag, target=target)
-    handlers = []
-    if proxy:
-        handlers.append(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
-    opener = urllib.request.build_opener(*handlers)
+    opener = _build_opener(proxy)
     request = urllib.request.Request(url, headers={"User-Agent": f"crossweave/{__version__}"})
     with opener.open(request, timeout=60) as resp, open(dest, "wb") as fh:
         total = int(resp.headers.get("Content-Length") or 0)
