@@ -414,6 +414,15 @@ def update_self():
     return code
 
 
+def _is_relative_to(path, other):
+    """Python 3.8-compatible equivalent of Path.is_relative_to()."""
+    try:
+        path.relative_to(other)
+        return True
+    except ValueError:
+        return False
+
+
 def mise_upgrade_command(tool, executable):
     """Resolve a PATH executable to its active mise package."""
     data_home = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share")
@@ -421,7 +430,7 @@ def mise_upgrade_command(tool, executable):
     path = Path(executable).absolute()
     real_path = path.resolve()
     managed_dirs = [data_dir / name for name in ("installs", "shims", "command-wrappers")]
-    if not any(path.is_relative_to(root) or real_path.is_relative_to(root)
+    if not any(_is_relative_to(path, root) or _is_relative_to(real_path, root)
                for root in managed_dirs):
         return None
     mise = shutil.which("mise")
@@ -440,14 +449,14 @@ def mise_upgrade_command(tool, executable):
 
     resolved_path = Path(resolved).resolve()
     installs = data_dir / "installs"
-    if (path.is_relative_to(installs) or real_path.is_relative_to(installs)) and (
+    if (_is_relative_to(path, installs) or _is_relative_to(real_path, installs)) and (
         real_path != resolved_path
     ):
         return None
     for package, versions in packages.items():
         for version in versions:
-            if version.get("active") and resolved_path.is_relative_to(
-                Path(version["install_path"]).resolve()
+            if version.get("active") and _is_relative_to(
+                resolved_path, Path(version["install_path"]).resolve()
             ):
                 return [mise, "upgrade", package]
     return None

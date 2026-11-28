@@ -1043,3 +1043,68 @@ def test_cmd_update_rejects_unknown_target(capsys):
         update.cmd_update(["bogus"])
     assert exc_info.value.code == 1
     assert "unexpected argument" in capsys.readouterr().err
+
+
+# ---------- mise_upgrade_command ----------
+
+def test_mise_upgrade_command_returns_none_for_non_mise_binary(monkeypatch, tmp_path):
+    monkeypatch.setenv("MISE_DATA_DIR", str(tmp_path / "mise"))
+    assert update.mise_upgrade_command("codex", str(tmp_path / "usr/bin/codex")) is None
+
+
+def test_mise_upgrade_command_resolves_active_mise_install(monkeypatch, tmp_path):
+    mise_dir = tmp_path / "mise"
+    install_dir = mise_dir / "installs" / "npm-openai-codex" / "1.0.0"
+    exe = install_dir / "bin" / "codex"
+    exe.parent.mkdir(parents=True)
+    exe.write_text("")
+
+    monkeypatch.setenv("MISE_DATA_DIR", str(mise_dir))
+    monkeypatch.setattr(update.shutil, "which", lambda name: "/usr/bin/mise" if name == "mise" else None)
+
+    def fake_check_output(argv, **kwargs):
+        if argv[1] == "which":
+            return str(exe) + "\n"
+        if argv[1] == "ls":
+            return update.json.dumps({
+                "npm:@openai/codex": [
+                    {"active": True, "install_path": str(install_dir)},
+                ]
+            })
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    monkeypatch.setattr(update.subprocess, "check_output", fake_check_output)
+
+    assert update.mise_upgrade_command("codex", str(exe)) == [
+        "/usr/bin/mise", "upgrade", "npm:@openai/codex"
+    ]
+
+
+def test_mise_upgrade_command_ignores_inactive_mise_install(monkeypatch, tmp_path):
+    mise_dir = tmp_path / "mise"
+    old_dir = mise_dir / "installs" / "npm-openai-codex" / "0.9.0"
+    new_dir = mise_dir / "installs" / "npm-openai-codex" / "1.0.0"
+    old_exe = old_dir / "bin" / "codex"
+    new_exe = new_dir / "bin" / "codex"
+    old_exe.parent.mkdir(parents=True)
+    new_exe.parent.mkdir(parents=True)
+    old_exe.write_text("")
+    new_exe.write_text("")
+
+    monkeypatch.setenv("MISE_DATA_DIR", str(mise_dir))
+    monkeypatch.setattr(update.shutil, "which", lambda name: "/usr/bin/mise" if name == "mise" else None)
+
+    def fake_check_output(argv, **kwargs):
+        if argv[1] == "which":
+            return str(new_exe) + "\n"
+        if argv[1] == "ls":
+            return update.json.dumps({
+                "npm:@openai/codex": [
+                    {"active": True, "install_path": str(new_dir)},
+                ]
+            })
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    monkeypatch.setattr(update.subprocess, "check_output", fake_check_output)
+
+    assert update.mise_upgrade_command("codex", str(old_exe)) is None
