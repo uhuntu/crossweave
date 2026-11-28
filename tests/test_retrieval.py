@@ -152,3 +152,13 @@ def test_query_without_lexical_match_keeps_semantic_sample(monkeypatch):
     monkeypatch.setattr(search, 'run_judge_with_fallback', judge)
     search.find('rain mode')
     assert 'paraphrased discussion about touch hardware' in prompts[0]
+
+
+def test_rare_technical_term_is_not_drowned_by_repeated_chinese_bigrams():
+    data = texts(
+        *['服务器和设备正在重启网关'] * 20,
+        '仪器在 NAT 后面，用 autossh 反向 SSH 隧道连回服务器 2222 端口',
+    )
+    result = retrieval.excerpt(data, '从服务器ssh到设备?')
+    assert 'autossh' in result or 'SSH' in result
+

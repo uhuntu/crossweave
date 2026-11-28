@@ -16,22 +16,44 @@ STOP_WORDS = set('the a an of to in on for and or with about find search please 
 }
 
 
-def patterns_for(topic):
-    """Exact phrase first, then bounded identifier/Chinese query terms."""
+def _pattern_groups(topic):
+    """Exact phrase pattern plus per-token pattern groups (bounded to 16 total)."""
     topic = ' '.join(topic.split())
     if not topic:
-        return []
-    terms = []
+        return None, []
+    exact_pat = scan._literal_pattern(topic)
+    seen = {topic.lower()}
+    groups = []
+    total = 0
     for token in re.findall(r'[A-Za-z0-9_./:+-]+|[\u3400-\u9fff]+', topic):
-        if token.isascii():
-            terms.extend([token, *re.findall(r'[A-Za-z0-9_]+', token)])
-        else:
-            terms.append(token)
-            terms.extend(token[i:i + 2] for i in range(len(token) - 1))
-    terms = list(dict.fromkeys(t.lower() for t in terms
-                              if t.lower() not in STOP_WORDS and len(t) >= 2))[:16]
-    return [scan._literal_pattern(topic), *[scan._literal_pattern(t) for t in terms
-                                           if t != topic.lower()]]
+        if total >= 16:
+            break
+        raw_terms = (
+            [token, *re.findall(r'[A-Za-z0-9_]+', token)]
+            if token.isascii()
+            else [token, *(token[i:i + 2] for i in range(len(token) - 1))]
+        )
+        group = []
+        for raw in raw_terms:
+            low = raw.lower()
+            if low in STOP_WORDS or len(low) < 2 or low in seen:
+                continue
+            seen.add(low)
+            group.append(scan._literal_pattern(raw))
+            total += 1
+            if total >= 16:
+                break
+        if group:
+            groups.append(group)
+    return exact_pat, groups
+
+
+def patterns_for(topic):
+    """Exact phrase first, then bounded identifier/Chinese query terms."""
+    exact_pat, groups = _pattern_groups(topic)
+    if exact_pat is None:
+        return []
+    return [exact_pat, *(p for g in groups for p in g)]
 
 
 def record_texts(record):
@@ -73,31 +95,45 @@ def record_texts(record):
 def excerpt(texts, topic, max_chars=800):
     """Best two query windows with neighboring text, never a full transcript.
 
-    Exact-phrase hits outrank partial-term hits; more distinct query terms
-    outrank fewer. Stable source order breaks ties. Locations let the judge
-    distinguish extracted evidence from a general session summary.
+    Exact-phrase hits outrank partial-term hits. Query terms are grouped per
+    source token so overlapping Chinese 2-grams do not inflate scores, and
+    groups are weighted by inverse document frequency (1/df) so rare technical
+    terms (e.g. `ssh`) are not drowned out by high-frequency words.
     """
-    patterns = patterns_for(topic)
-    if not patterns or max_chars < 120:
+    exact_pat, groups = _pattern_groups(topic)
+    if exact_pat is None or max_chars < 120:
         return ''
-    hits = []
+    df = [0] * len(groups)
+    # Keep top 2 candidates per group (plus exact) in O(groups) memory.
+    buckets = {}
     previous = ('', '')
     pending = None
 
-    def keep(hit, following=''):
-        score, order, source, location, text, position, before = hit
-        # Capture a bounded region around the match, including late matches
-        # deep inside a long tool result. Adjacent blocks remain separate.
-        begin = max(0, position - 100)
+    def _window_for(text, pos, before, following):
+        begin = max(0, pos - 100)
         center = ('…' if begin else '') + text[begin:begin + 260]
         if begin + 260 < len(text):
             center += '…'
-        relative = position - begin + (1 if begin else 0)
-        item = (score, -order, location[:40], before[-65:], center, relative, following[:65])
-        if len(hits) < 2:
-            heapq.heappush(hits, item)
-        elif item[:2] > hits[0][:2]:
-            heapq.heapreplace(hits, item)
+        relative = pos - begin + (1 if begin else 0)
+        return center, relative, before[-65:], following[:65]
+
+    def keep(hit, following=''):
+        exact_pos, matched_groups, order, source, location, text, before = hit
+        if not matched_groups and exact_pos is None:
+            return
+        # Pre-slice windows per matched group so we don't retain huge `text`.
+        windows = {}
+        for gi, pos in matched_groups.items():
+            windows[gi] = _window_for(text, pos, before, following)
+        exact_win = _window_for(text, exact_pos, before, following) if exact_pos is not None else None
+        entry = (exact_win, matched_groups, windows, order, location[:40])
+        rank = (exact_pos is not None, len(matched_groups), -order)
+        target_keys = list(matched_groups.keys()) if matched_groups else ['exact']
+        for key in target_keys:
+            bucket = buckets.setdefault(key, [])
+            heapq.heappush(bucket, (rank, order, entry))
+            if len(bucket) > 2:
+                heapq.heappop(bucket)
 
     for order, (source, location, raw) in enumerate(texts):
         if not isinstance(raw, str) or not raw.strip():
@@ -109,25 +145,54 @@ def excerpt(texts, topic, max_chars=800):
         if not text:
             continue
         if pending:
-            keep(pending, text if pending[2] == source else '')
+            keep(pending, text if pending[3] == source else '')
             pending = None
-        matches = [p.search(text) for p in patterns]
-        if any(matches):
-            score = (bool(matches[0]), sum(m is not None for m in matches))
-            position = next(m.start() for m in matches if m is not None)
-            pending = (score, order, source, location, text, position,
-                       previous[1] if previous[0] == source else '')
+        exact_m = exact_pat.search(text)
+        matched_groups = {}
+        for gi, group in enumerate(groups):
+            for p in group:
+                m = p.search(text)
+                if m is not None:
+                    matched_groups[gi] = m.start()
+                    df[gi] += 1
+                    break
+        if exact_m is not None or matched_groups:
+            pending = (
+                exact_m.start() if exact_m is not None else None,
+                matched_groups,
+                order,
+                source,
+                location,
+                text,
+                previous[1] if previous[0] == source else '',
+            )
         previous = (source, text[-65:])
     if pending:
         keep(pending)
-    if not hits:
+    if not buckets:
         return ''
-    selected = sorted(hits, reverse=True)
+
+    unique = {}
+    for bucket in buckets.values():
+        for _, order, entry in bucket:
+            unique[order] = entry
+
+    def idf_score(entry):
+        exact_win, matched_groups, _, order, _ = entry
+        rarity = sum(1.0 / df[gi] for gi in matched_groups if df[gi] > 0)
+        return (exact_win is not None, rarity, len(matched_groups), -order)
+
+    selected = sorted(unique.values(), key=idf_score, reverse=True)[:2]
     prefix = '[query context] '
     budget = (max_chars - len(prefix) - 3 * (len(selected) - 1)) // len(selected)
     parts = []
-    for _, _, location, before, center, position, following in selected:
-        label = f'[{location[:min(40, budget // 4)]}] '
+    for exact_win, matched_groups, windows, _, location in selected:
+        if exact_win is not None:
+            center, position, before, following = exact_win
+        else:
+            rarest_gi = max(matched_groups, key=lambda gi: 1.0 / df[gi] if df[gi] > 0 else 0.0)
+            center, position, before, following = windows[rarest_gi]
+        label = f'[{location}] '
         neighbors = budget >= 300
         lead = ('Before: ' + before[-35:] + '\n') if before and neighbors else ''
         tail = ('\nAfter: ' + following[:35]) if following and neighbors else ''
